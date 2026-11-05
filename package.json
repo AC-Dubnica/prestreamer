@@ -1,27 +1,40 @@
 {
   "name": "prestreamer",
   "version": "0.1.0",
-  "description": "Presenter + streamer: multi-screen song presentation with live streaming",
+  "description": "PreStreamer: presenter + streamer for church services",
   "main": "dist/main/index.js",
   "private": true,
   "scripts": {
     "build": "node build.mjs",
-    "start": "node build.mjs && electron .",
+    "start": "node build.mjs && node scripts/brand-dev.mjs && electron .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "e2e:mixer": "node scripts/e2e-mixer.mjs",
     "e2e:stream": "node scripts/e2e-stream.mjs",
     "e2e:video": "node scripts/e2e-video.mjs",
-    "e2e": "npm run build && npm run e2e:mixer && npm run e2e:stream && npm run e2e:video",
+    "e2e:mixer-ui": "node scripts/e2e-mixer-ui.mjs",
+    "e2e:camera-only": "node scripts/e2e-camera-only.mjs",
+    "e2e:stage": "node scripts/e2e-stage.mjs",
+    "e2e:session": "node scripts/e2e-session.mjs",
+    "e2e:slides": "node scripts/e2e-slides.mjs",
+    "e2e:presentation": "node scripts/e2e-presentation.mjs",
+    "e2e:backgrounds": "node scripts/e2e-backgrounds.mjs",
+    "e2e": "npm run build && npm run e2e:ui && npm run e2e:bible && npm run e2e:announce && npm run e2e:sources && npm run e2e:mixer && npm run e2e:stream && npm run e2e:video && npm run e2e:mixer-ui && npm run e2e:camera-only && npm run e2e:stage && npm run e2e:session && npm run e2e:slides && npm run e2e:presentation && npm run e2e:backgrounds",
     "package": "npm run build && electron-builder --publish never",
-    "package:dir": "npm run build && electron-builder --dir --publish never"
+    "package:dir": "npm run build && electron-builder --dir --publish never",
+    "e2e:ui": "node scripts/e2e-ui.mjs",
+    "e2e:bible": "node scripts/e2e-bible.mjs",
+    "e2e:announce": "node scripts/e2e-announce.mjs",
+    "e2e:sources": "node scripts/e2e-sources.mjs"
   },
   "devDependencies": {
     "@vitest/coverage-v8": "^5.1.0",
     "electron": "^45.2.2",
     "electron-builder": "^26.18.0",
     "esbuild": "^0.28.2",
+    "pdfjs-dist": "4.10.38",
+    "pptx-preview": "1.0.7",
     "typescript": "^7.0.2",
     "vitest": "^5.1.0"
   },
@@ -37,7 +50,7 @@
   },
   "build": {
     "appId": "sk.acdubnica.prestreamer",
-    "productName": "prestreamer",
+    "productName": "PreStreamer",
     "directories": {
       "output": "release"
     },
@@ -58,8 +71,9 @@
       "category": "public.app-category.video",
       "identity": null,
       "extendInfo": {
-        "NSCameraUsageDescription": "prestreamer uses a camera or capture device (such as an ATEM Mini) as a live video source.",
-        "NSMicrophoneUsageDescription": "prestreamer receives audio from your mixer's USB interface for the stream."
+        "NSCameraUsageDescription": "PreStreamer uses a camera or capture device (such as an ATEM Mini) as a live video source.",
+        "NSMicrophoneUsageDescription": "PreStreamer receives audio from your mixer's USB interface for the stream.",
+        "NSAppleEventsUsageDescription": "PreStreamer asks Keynote or PowerPoint to turn a presentation into slides."
       }
     },
     "win": {

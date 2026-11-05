@@ -1,8 +1,18 @@
 import type { PrestreamerApi } from '../preload'
-import { parseSong } from '../shared/songs'
+import { appliesTo, type QuickMessage } from '../shared/announce'
+import { mediaThumb, pickBackground } from './background-picker'
+import { presentationSlides } from '../shared/presentation'
+import { parseSong, readingSlides, withSlideBackground } from '../shared/songs'
 import { defaultAudio, defaultLook, idleAudio, idlePlayback, idleStream, type PlaybackState, type AudioConfig, type Service, type ServiceItem, type AudioSource, type AudioStatus, type Background, type ScreenConfig, type ScreenState, type Slide, type Song, type StreamStatus, type VideoSource } from '../shared/types'
 import { iconButton, iconSvg, type IconName } from './icons'
-import { createMixerView } from './mixer'
+import { openAnnounceDialog } from './announce-dialog'
+import { createBibleView } from './bible'
+import { askText, confirmDialog } from './dialogs'
+import { createMixerView, type MixerDeps } from './mixer'
+import { openScreenDialog } from './screen-dialog'
+import { createSettingsView } from './settings'
+import { openStreamSettings } from './stream-dialog'
+import { ENCODER_CHOICES, defaultStreamSettings, type StreamSettings } from '../shared/stream-settings'
 import { scaledPreview, type ScaledPreview } from './slideview'
 
 declare const prestreamer: PrestreamerApi
@@ -28,10 +38,12 @@ const BACKGROUNDS = [
 const SECTION_COLORS: Record<string, string> = { verse: '#2563eb', chorus: '#dc2626', bridge: '#7c3aed' }
 const sectionColor = (label: string) => SECTION_COLORS[label.split(' ')[0].toLowerCase()] ?? '#475569'
 
-let state: ScreenState = { screens: [], displays: [], live: [], slide: null }
+let state: ScreenState = { screens: [], displays: [], live: [], slide: null, announcement: null, cameraOnly: false, next: null }
+let quickMessages: QuickMessage[] = []
+let streamSettings: StreamSettings = defaultStreamSettings
 let songs: Song[] = []
 let songId = ''
-type View = 'present' | 'songs' | 'mixer'
+type View = 'present' | 'songs' | 'bible' | 'mixer' | 'settings'
 let view: View = 'present'
 let songFilter = ''
 let services: Service[] = []
@@ -46,7 +58,19 @@ let keySaved = false
 let audioDevices: { deviceId: string; label: string }[] = []
 let audioStatus: AudioStatus = idleAudio
 let audioCfg: AudioConfig = structuredClone(defaultAudio)
-let selectedScreenId: string | null = null
+// What the operator left selected last time (the tab, the service, the screen whose look the thumbnails use).
+const MEMORY_KEYS = { view: 'prestreamer.view', service: 'prestreamer.service', screen: 'prestreamer.screen' } as const
+const recallText = (key: string): string => { try { return localStorage.getItem(key) ?? '' } catch { return '' } }
+const rememberText = (key: string, value: string) => { try { localStorage.setItem(key, value) } catch { /* only a convenience */ } }
+const VIEWS: readonly string[] = ['present', 'songs', 'bible', 'mixer', 'settings']
+const savedView = recallText(MEMORY_KEYS.view)
+const savedService = recallText(MEMORY_KEYS.service)
+let selectedScreenId: string | null = recallText(MEMORY_KEYS.screen) || null
+function rememberSelection(): void {
+  rememberText(MEMORY_KEYS.view, view)
+  if (serviceId) rememberText(MEMORY_KEYS.service, serviceId)
+  if (selectedScreenId) rememberText(MEMORY_KEYS.screen, selectedScreenId)
+}
 let cameras: { deviceId: string; label: string }[] = []
 let streamStatus: StreamStatus = idleStream
 
@@ -62,6 +86,8 @@ const currentSong = (): Song | undefined => {
 }
 const withItem = (slides: Slide[], itemId?: string): Slide[] => slides.map((sl) => ({ ...sl, itemId }))
 const currentSlides = (): Slide[] => {
+  const it = selectedItem()
+  if (it?.kind === 'scripture') return withItem(readingSlides(it.slides, it.background, it.slideBackgrounds), it.id)
   const c = currentSong()
   return c ? withItem(parseSong(c), selectedItemId ?? undefined) : []
 }
@@ -69,10 +95,12 @@ const currentSlides = (): Slide[] => {
 const serviceSlides = (): Slide[] =>
   (currentService()?.items ?? []).flatMap((it) => {
     if (it.kind === 'video') return [videoCue(it)]
+    if (it.kind === 'scripture') return withItem(readingSlides(it.slides, it.background, it.slideBackgrounds), it.id)
+    if (it.kind === 'presentation') return presentationSlides(it)
     const song = songOfItem(it)
     return song ? withItem(parseSong(song), it.id) : []
   })
-const sameSlide = (a: Slide | null, b: Slide) => !!a && a.label === b.label && a.text === b.text && a.itemId === b.itemId
+const sameSlide = (a: Slide | null, b: Slide) => !!a && a.label === b.label && a.text === b.text && a.itemId === b.itemId && a.picture?.file === b.picture?.file
 
 /** Physical screens use their bound display's size; otherwise the configured one. */
 function screenSize(sc: ScreenConfig): [number, number] {
@@ -93,19 +121,24 @@ async function mutateService(fn: (svc: Service) => void): Promise<void> {
 function renderSchedule(): void {
   const svc = currentService()
   const sel = $('servicesel') as HTMLSelectElement
-  sel.replaceChildren(...services.map((x) => el<HTMLOptionElement>('option', { value: x.id, textContent: x.name, selected: x.id === svc?.id })))
-  ;($('servicename') as HTMLInputElement).value = svc?.name ?? ''
-  if (!svc) return $('schedule').replaceChildren(el('div', { className: 'row', textContent: 'No service yet. Use the + icon above to create one.' }))
+  sel.replaceChildren(...services.map((x) => el<HTMLOptionElement>('option', { value: x.id, textContent: `${x.name} · ${x.items.length} item${x.items.length === 1 ? '' : 's'}`, selected: x.id === svc?.id })))
+  sel.disabled = !svc
+  for (const b of serviceButtons.needsService) b.disabled = !svc
+  if (!svc) {
+    return $('schedule').replaceChildren(
+      el('div', { className: 'emptystate' }, el('p', { textContent: 'No service yet.' }), el('button', { className: 'primary', textContent: 'Create a service', onclick: () => void newService() })),
+    )
+  }
 
   const liveItem = state.slide?.itemId
   const rows = svc.items.map((it, idx) => {
-    const kind: IconName = it.kind === 'video' ? 'film' : 'music'
-    const title = it.kind === 'video' ? it.title : (songOfItem(it)?.title ?? '(deleted song)')
+    const kind: IconName = it.kind === 'video' ? 'film' : it.kind === 'scripture' ? 'book' : it.kind === 'presentation' ? 'presentation' : 'music'
+    const title = it.kind === 'song' ? (songOfItem(it)?.title ?? '(deleted song)') : it.title
     const swap = (a: number, b: number) => void mutateService((d) => { [d.items[a], d.items[b]] = [d.items[b], d.items[a]] })
     const tool = (name: IconName, tip: string, fn: () => void, disabled = false) => iconButton(name, tip, (e) => { e.stopPropagation(); fn() }, { size: 14, disabled })
     const kindIcon = el('span', { className: 'kind' })
     kindIcon.innerHTML = iconSvg(kind, 15)
-    return el('div', { className: `srow ${it.id === selectedItemId ? 'sel' : ''}`, onclick: () => { selectedItemId = it.id; renderAll() } },
+    return el('div', { className: `srow ${it.id === selectedItemId ? 'sel' : ''}`, title: idx < 9 ? `Jump to this item: ${MOD_KEY}${idx + 1}. Then → or Space starts it.` : 'Jump to this item', onclick: () => jumpToItem(it.id) },
       el('span', { className: `n ${it.id === liveItem ? 'livemark' : ''}`, textContent: it.id === liveItem ? '●' : String(idx + 1) }),
       kindIcon,
       el('span', { className: 't', textContent: title }),
@@ -170,44 +203,187 @@ async function addVideoToService(): Promise<void> {
   try {
     const v = await prestreamer.videoImport()
     if (v) await mutateService((svc) => { svc.items.push({ id: crypto.randomUUID(), kind: 'video', ...v }) })
-    status.textContent = v ? `Added ${v.title}` : ''
+    status.textContent = ''
   } catch (err) {
     status.className = 'status error'
     status.textContent = `Import failed: ${(err as Error).message.replace(/^Error invoking remote method '[^']*': (Error: )?/, '')}`
   }
 }
 
+/** A picture or video was deleted from the library: songs and readings that used it go back to the plain background. */
+async function forgetMedia(file: string): Promise<void> {
+  const uses = (b?: Background | null): boolean => !!b && b.kind !== 'css' && b.file === file
+  const drop = (b: Background | null | undefined): Background | null | undefined => (uses(b) ? null : b)
+  for (const s of songs) {
+    if (uses(s.background) || s.slideBackgrounds?.some(uses)) songs = await prestreamer.songsSave({ ...s, background: drop(s.background) ?? null, slideBackgrounds: s.slideBackgrounds?.map((b) => drop(b) ?? null) })
+  }
+  for (const svc of services) {
+    const touches = svc.items.some((i) => i.kind === 'scripture' && (uses(i.background) || i.slideBackgrounds?.some(uses)))
+    if (!touches) continue
+    const draft = structuredClone(svc)
+    for (const i of draft.items) if (i.kind === 'scripture') { i.background = drop(i.background); i.slideBackgrounds = i.slideBackgrounds?.map((b) => drop(b) ?? null) }
+    services = await prestreamer.servicesSave(draft)
+  }
+  if (editing?.song && uses(editing.song.background)) editing.song.background = null
+  renderAll()
+}
+
+/** Adds one or more pictures, each shown whole as a slide, like a presentation. */
+async function addPicturesToService(): Promise<void> {
+  const status = $('videostatus')
+  if (!currentService()) { status.textContent = 'Create a service first'; return }
+  status.className = 'status'
+  try {
+    const pics = await prestreamer.picturesImport()
+    if (pics) await mutateService((svc) => { svc.items.push({ id: crypto.randomUUID(), kind: 'presentation', title: pics.title, slides: pics.slides }) })
+    status.textContent = ''
+  } catch (err) {
+    status.className = 'status error'
+    status.textContent = `Import failed: ${(err as Error).message.replace(/^Error invoking remote method '[^']*': (Error: )?/, '')}`
+  }
+}
+
+/** Adds a PowerPoint / Keynote / PDF deck: each slide becomes a picture, shown whole on every screen. */
+async function addPresentationToService(): Promise<void> {
+  const status = $('videostatus')
+  if (!currentService()) { status.textContent = 'Create a service first'; return }
+  status.className = 'status'
+  status.textContent = 'Choosing…'
+  try {
+    const deck = await prestreamer.presentationImport()
+    if (deck) await mutateService((svc) => { svc.items.push({ id: crypto.randomUUID(), kind: 'presentation', title: deck.title, slides: deck.slides }) })
+    status.textContent = '' // the new item in the run sheet is the confirmation
+  } catch (err) {
+    status.className = 'status error'
+    status.textContent = `Import failed: ${(err as Error).message.replace(/^Error invoking remote method '[^']*': (Error: )?/, '')}`
+  }
+}
+
+/** The slides the arrow keys walk through: the whole service in order, or the browsed song when the service is empty. */
+const navSlides = (): Slide[] => ((currentService()?.items.length ?? 0) > 0 ? serviceSlides() : currentSlides())
+
+/** Item that was just clicked in the run sheet: the slide view scrolls to it and its title pins to the top. */
+let jumpTo: string | null = null
+/** After a jump, the next arrow key starts that item (its first slide) instead of carrying on from where the show was. */
+let pendingStart: string | null = null
+const MOD_KEY = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl+'
+
+/** Selects a run-sheet item, scrolls the slide view to it, and arms it to start with the next arrow key. */
+function jumpToItem(id: string): void {
+  selectedItemId = id
+  jumpTo = id
+  pendingStart = id
+  if (view !== 'present') setView('present')
+  else renderAll()
+}
+let lastLiveKey = ''
+
+/**
+ * The slide view shows the whole service as one list: each item's title (it stays pinned at the top while you scroll
+ * through that item) and all its slides in one grid that uses the full width. The next song is right below, so the
+ * arrow keys flow from one into the next without changing the view.
+ */
 function renderCenter(): void {
-  const song = currentSong()
   const ref = state.screens.find((s) => s.id === selectedScreenId) ?? state.screens[0]
   const root = $('center')
   transport = null
-  const sel = selectedItem()
-  if (sel?.kind === 'video') return renderVideoPanel(root, sel, ref)
-  if (!song) return root.replaceChildren(el('div', { className: 'row', textContent: 'Select an item in the run sheet, or add songs in the Songs tab.' }))
-  root.replaceChildren(
-    el('h1', {}, song.title, iconButton('pencil', 'Edit this song', () => startEdit(song), { className: 'ml' })),
-  )
+  const top = root.scrollTop
+  const items = currentService()?.items ?? []
 
-  // Group consecutive slides by label like ProPresenter's groups.
-  const groups: { label: string; slides: Slide[] }[] = []
-  for (const sl of currentSlides()) {
-    const g = groups[groups.length - 1]
-    if (g && g.label === sl.label) g.slides.push(sl)
-    else groups.push({ label: sl.label, slides: [sl] })
-  }
-  for (const g of groups) {
+  /** What can be changed about the pictures behind a song's or reading's slides. */
+  interface BgEdit { name: string; ownOf(index: number): Background | null; forSlide(index: number): void; forAll(): void }
+  const slideGrid = (slides: Slide[], edit?: BgEdit): HTMLElement => {
     const grid = el('div', { className: 'grid' })
-    for (const sl of g.slides) {
+    slides.forEach((sl, i) => {
       const pv = scaledPreview()
       if (ref) pv.update(ref.look, sl, 1920, 1080, false) // thumbnails stay static
       const card = el('div', { className: `card ${sameSlide(state.slide, sl) ? 'live' : ''}`, onclick: () => prestreamer.showSlide(sl) })
       const tag = el('div', { className: 'tag', textContent: sl.label })
       tag.style.background = sectionColor(sl.label)
       card.append(tag, pv.box)
+      if (edit) {
+        const own = !!edit.ownOf(i)
+        card.append(iconButton('image', own ? 'This slide has its own picture or video. Click to change or remove it.' : 'A picture or video behind this slide only', (e) => { e.stopPropagation(); edit.forSlide(i) }, { size: 13, className: `cardbg ${own ? 'on' : ''}` }))
+      }
       grid.append(card)
+    })
+    return grid
+  }
+  /** The button in a section's title that sets one picture or video for all its slides at once. */
+  const allSlidesButton = (edit: BgEdit): HTMLElement => iconButton('image', `A picture or video behind all slides of ${edit.name}`, edit.forAll, { size: 14, label: 'Background' })
+
+  const songEdit = (song: Song): BgEdit => ({
+    name: song.title,
+    ownOf: (i) => song.slideBackgrounds?.[i] ?? null,
+    forSlide: async (i) => {
+      const bg = await pickBackground(prestreamer, song.slideBackgrounds?.[i] && song.slideBackgrounds[i]!.kind !== 'css' ? song.slideBackgrounds[i] : null, { title: `Background for slide ${i + 1} only`, noneLabel: "Use the song's background", noneHint: 'This slide goes back to the background of the whole song', onDeleted: (f) => void forgetMedia(f) })
+      if (bg === undefined) return
+      songs = await prestreamer.songsSave({ ...song, slideBackgrounds: withSlideBackground(song.slideBackgrounds, i, bg) })
+      renderAll()
+    },
+    forAll: async () => {
+      const bg = await pickBackground(prestreamer, song.background && song.background.kind !== 'css' ? song.background : null, { title: `Background for all slides of ${song.title}`, onDeleted: (f) => void forgetMedia(f) })
+      if (bg === undefined) return
+      songs = await prestreamer.songsSave({ ...song, background: bg, slideBackgrounds: [] }) // one picture for every slide: the single-slide ones are reset
+      renderAll()
+    },
+  })
+  const readingEdit = (it: Extract<ServiceItem, { kind: 'scripture' }>): BgEdit => ({
+    name: it.title,
+    ownOf: (i) => it.slideBackgrounds?.[i] ?? null,
+    forSlide: async (i) => {
+      const bg = await pickBackground(prestreamer, it.slideBackgrounds?.[i] && it.slideBackgrounds[i]!.kind !== 'css' ? it.slideBackgrounds[i] : null, { title: `Background for slide ${i + 1} only`, noneLabel: "Use the reading's background", onDeleted: (f) => void forgetMedia(f) })
+      if (bg === undefined) return
+      void mutateService((svc) => { const x = svc.items.find((n) => n.id === it.id); if (x?.kind === 'scripture') x.slideBackgrounds = withSlideBackground(x.slideBackgrounds, i, bg) })
+    },
+    forAll: async () => {
+      const bg = await pickBackground(prestreamer, it.background && it.background.kind !== 'css' ? it.background : null, { title: `Background for all slides of ${it.title}`, onDeleted: (f) => void forgetMedia(f) })
+      if (bg === undefined) return
+      void mutateService((svc) => { const x = svc.items.find((n) => n.id === it.id); if (x?.kind === 'scripture') { x.background = bg; x.slideBackgrounds = [] } })
+    },
+  })
+  const section = (id: string | null, title: (Node | string)[], body: HTMLElement[]): HTMLElement => {
+    const sec = el('section', { className: `slist ${id !== null && id === selectedItemId ? 'sel' : ''}` }, el('h1', {}, ...title), ...body)
+    if (id) sec.dataset.item = id
+    return sec
+  }
+
+  const sections: HTMLElement[] = []
+  if (!items.length) {
+    // No service items yet: show the song being browsed, so there is always something to look at.
+    const song = currentSong()
+    if (!song) return root.replaceChildren(el('div', { className: 'row', textContent: 'Select an item in the run sheet, or add songs in the Songs tab.' }))
+    sections.push(section(null, [song.title, iconButton('pencil', 'Edit this song', () => startEdit(song), { className: 'ml' })], [slideGrid(withItem(parseSong(song)))]))
+  }
+  for (const it of items) {
+    if (it.kind === 'video') {
+      sections.push(section(it.id, [`🎬 ${it.title}`], [renderVideoPanel(it, ref, it.id === selectedItemId)]))
+    } else if (it.kind === 'presentation') {
+      sections.push(section(it.id, [it.title], [slideGrid(presentationSlides(it))]))
+    } else if (it.kind === 'scripture') {
+      const edit = readingEdit(it)
+      sections.push(section(it.id, [it.title, allSlidesButton(edit)], [slideGrid(withItem(readingSlides(it.slides, it.background, it.slideBackgrounds), it.id), edit)]))
+    } else {
+      const song = songOfItem(it)
+      if (!song) continue
+      const edit = songEdit(song)
+      sections.push(section(it.id, [song.title, iconButton('pencil', 'Edit this song', () => startEdit(song), { className: 'ml' }), allSlidesButton(edit)], [slideGrid(withItem(parseSong(song), it.id), edit)]))
     }
-    root.append(grid)
+  }
+  // Room after the last item, so that item too can be scrolled up to the top.
+  root.replaceChildren(...sections, el('div', { className: 'slistend' }))
+  root.scrollTop = top
+
+  const target = jumpTo ? sections.find((x) => x.dataset.item === jumpTo) : undefined
+  jumpTo = null
+  if (target) {
+    root.scrollTop = target.offsetTop - root.offsetTop
+  } else {
+    // The live slide changed (arrow keys, a click elsewhere): bring it into view if it is not.
+    const live = root.querySelector<HTMLElement>('.card.live:not(.vcard)')
+    const key = state.slide ? `${state.slide.itemId ?? ''}|${state.slide.label}|${state.slide.text}` : ''
+    if (live && key !== lastLiveKey) live.scrollIntoView({ block: 'nearest' })
+    lastLiveKey = key
   }
 }
 
@@ -232,7 +408,8 @@ function updateTransport(): void {
 }
 setInterval(updateTransport, 250)
 
-function renderVideoPanel(root: HTMLElement, it: Extract<ServiceItem, { kind: 'video' }>, ref: ScreenConfig | undefined): void {
+/** One video item's card and transport controls. Only the selected video's controls follow the playback position. */
+function renderVideoPanel(it: Extract<ServiceItem, { kind: 'video' }>, ref: ScreenConfig | undefined, selected: boolean): HTMLElement {
   const cue = videoCue(it)
   const isLive = () => playback.file === it.file && sameSlide(state.slide, cue)
 
@@ -261,14 +438,10 @@ function renderVideoPanel(root: HTMLElement, it: Extract<ServiceItem, { kind: 'v
     if (!isLive()) await prestreamer.showSlide(cue)
     await prestreamer.playbackCommand({ type: 'seek', sec: Number(seek.value) })
   }
-  transport = t
-
-  root.replaceChildren(
-    el('h1', {}, `🎬 ${it.title}`),
-    el('div', { className: 'vpanel' }, card, el('div', { className: 'vt' }, toggle, stop, show, seek, time)),
-    el('div', { className: 'row', textContent: 'Space plays or pauses a video that is on screen. → moves on to the next item and stops it. Sound plays from the screen with "Play video sound" on.' }),
-  )
+  if (selected || !transport) transport = t
+  const panel = el('div', {}, el('div', { className: 'vpanel' }, card, el('div', { className: 'vt' }, toggle, stop, show, seek, time)), el('div', { className: 'row', textContent: 'Space plays or pauses a video that is on screen. → moves on to the next item and stops it. Sound plays from the screen with "Play video sound" on.' }))
   updateTransport()
+  return panel
 }
 
 /** Renders the editor into the Songs view. Not part of renderAll: it holds unsaved text. */
@@ -296,10 +469,13 @@ function renderEditor(root: HTMLElement, ref: ScreenConfig | undefined): void {
   }
 
   const setBackground = (bg: Background | null) => { draft.background = bg; updatePreview(); renderBgLabel() }
-  const bgLabel = el('span', { className: 'meta' })
+  const bgLabel = el('span', { className: 'meta bgcur' })
+  let mediaNames = new Map<string, string>()
+  void prestreamer.mediaList().then((list) => { mediaNames = new Map(list.map((m) => [m.file, m.name])); renderBgLabel() })
   const renderBgLabel = () => {
     const b = draft.background
-    bgLabel.textContent = !b ? 'none' : b.kind === 'css' ? 'gradient / colour' : `${b.kind}: ${b.file.slice(0, 8)}…`
+    if (b && b.kind !== 'css') bgLabel.replaceChildren(mediaThumb(b), el('span', { textContent: `${b.kind === 'image' ? 'Picture' : 'Video'}: ${mediaNames.get(b.file) ?? b.file.slice(0, 8)}` }))
+    else bgLabel.replaceChildren(el('span', { textContent: !b ? 'none' : 'gradient / colour' }))
   }
   const swatches = el('div', { className: 'sw nopad' })
   for (const css of BACKGROUNDS) {
@@ -307,11 +483,10 @@ function renderEditor(root: HTMLElement, ref: ScreenConfig | undefined): void {
     b.style.background = css
     swatches.append(b)
   }
-  const importBtn = (kind: 'image' | 'video') =>
-    iconButton(kind === 'image' ? 'screen' : 'film', kind === 'image' ? 'Import a background image' : 'Import a background video', async () => {
-      const bg = await prestreamer.mediaImport(kind)
-      if (bg) setBackground(bg)
-    }, { badge: true, label: kind === 'image' ? 'Image' : 'Video' })
+  const chooseBtn = iconButton('screen', 'Choose a picture or a looping video from your library, or import a new one', async () => {
+    const bg = await pickBackground(prestreamer, draft.background && draft.background.kind !== 'css' ? draft.background : null, { title: 'Background for all slides of this song', onDeleted: (f) => void forgetMedia(f) })
+    if (bg !== undefined) { setBackground(bg); void prestreamer.mediaList().then((list) => { mediaNames = new Map(list.map((m) => [m.file, m.name])); renderBgLabel() }) }
+  }, { badge: true, label: 'Picture or video…' })
 
   const del = iconButton('trash', 'Delete song (click twice)', async () => {
     if (!armed) { armed = true; del.className = 'ib danger'; setTimeout(() => { armed = false; del.className = 'ib' }, 3000); return }
@@ -337,15 +512,15 @@ function renderEditor(root: HTMLElement, ref: ScreenConfig | undefined): void {
     renderAll()
     showEditor()
   }, { label: 'Revert' })
-  const addToService = iconButton('plus', 'Add this song to the current service', () => addSongToService(draft.id), { label: 'Add to service', disabled: editing!.isNew })
+  const addToService = iconButton('music', 'Add this song to the current service', () => addSongToService(draft.id), { badge: true, label: 'Add to service', className: 'primary', disabled: editing!.isNew })
 
   const form = el('div', { className: 'editor' })
   form.append(
     el('div', { className: 'field' }, el('label', { textContent: 'Title' }), title),
     el('div', { className: 'field' }, el('label', { textContent: 'Background' }), bgLabel, swatches,
-      el('div', { className: 'btns' }, el('button', { textContent: 'None', onclick: () => setBackground(null) }), importBtn('image'), importBtn('video'))),
+      el('div', { className: 'btns' }, el('button', { textContent: 'None', onclick: () => setBackground(null) }), chooseBtn)),
     el('div', { className: 'field' }, el('label', { textContent: 'Text — [Label] starts a section, a blank line starts a new slide' }), body),
-    el('div', { className: 'btns' }, save, revert, addToService, el('span', { className: 'grow' }), ...(editing!.isNew ? [] : [del])),
+    el('div', { className: 'btns' }, save, revert, ...(editing!.isNew ? [] : [del]), el('span', { className: 'grow' }), addToService),
   )
   root.replaceChildren(el('h1', { textContent: editing!.isNew ? 'New song' : draft.title }), el('div', { className: 'editorwrap' }, form, el('div', { className: 'editorprev' }, el('label', { textContent: 'Preview' }), pv.box)))
   renderBgLabel()
@@ -367,8 +542,29 @@ function createCard(): Card {
   return { root, bar, off, pv }
 }
 
+let screenDialog: ReturnType<typeof openScreenDialog> | null = null
+
+/** Opens the settings popup of one specific screen. */
+function configureScreen(id: string): void {
+  screenDialog?.close()
+  screenDialog = openScreenDialog(id, {
+    api: prestreamer,
+    getState: () => state,
+    getPlayback: () => playback,
+    getCameras: () => cameras,
+    getOutputs: () => audioOutputs,
+    detectCameras,
+    screenSize,
+    backgrounds: BACKGROUNDS,
+    openSettings: () => setView('settings'),
+    reopen: () => configureScreen(id),
+    onMediaDeleted: (file) => void forgetMedia(file),
+    onClose: () => { screenDialog = null },
+  })
+}
+
 function renderScreens(): void {
-  if (!selectedScreenId && state.screens.length) selectedScreenId = state.screens[0].id
+  if ((!selectedScreenId || !state.screens.some((s) => s.id === selectedScreenId)) && state.screens.length) selectedScreenId = state.screens[0].id
   const container = $('screens')
   const ids = new Set(state.screens.map((s) => s.id))
   for (const [id, c] of cards) {
@@ -387,93 +583,33 @@ function renderScreens(): void {
     }
     const live = state.live.includes(sc.id)
     const [w, h] = screenSize(sc)
-    c.pv.update(sc.look, state.slide, w, h, true)
+    // A mirror looks like the screen it follows (its own display only decides the size and where it opens).
+    const shown = (sc.mirrorOf && state.screens.find((x) => x.id === sc.mirrorOf)) || sc
+    c.pv.update(shown.look, state.slide, w, h, true, state.cameraOnly && shown.kind === 'virtual') // the stream's card shows what the stream shows
+    c.pv.setNext(state.next)
     c.pv.setPlayback(playback)
+    c.pv.setAnnouncement(appliesTo(state.announcement, shown.id) ? state.announcement : null) // the operator sees what each screen shows
     c.off.style.display = live ? 'none' : 'flex'
     c.root.className = `screen ${sc.id === selectedScreenId ? 'sel' : ''}`
-
-    const bar = c.bar
-    bar.replaceChildren(
-      el('span', { className: `dot ${live ? 'on' : ''}` }),
-      el('span', { className: 'name', textContent: sc.name, onclick: () => { selectedScreenId = sc.id; renderAll() } }),
-      el('span', { className: 'meta', textContent: sc.kind === 'virtual' ? `virtual ${w}×${h}` : `${w}×${h}` }),
-    )
-    if (sc.kind === 'display') {
-      const sel = el<HTMLSelectElement>('select')
-      sel.append(el<HTMLOptionElement>('option', { value: '', textContent: 'window' }))
-      for (const d of state.displays) {
-        sel.append(el<HTMLOptionElement>('option', { value: String(d.id), textContent: d.label, selected: sc.displayId === d.id }))
-      }
-      sel.onchange = () => prestreamer.updateScreen(sc.id, { displayId: sel.value ? Number(sel.value) : null })
-      bar.append(sel)
+    // Clicking anywhere on the card selects it (its look is used for the slide thumbnails); the buttons do their own thing.
+    c.root.onclick = (e) => {
+      if ((e.target as HTMLElement).closest('button')) return
+      if (selectedScreenId !== sc.id) { selectedScreenId = sc.id; renderAll() }
     }
-    bar.append(
-      el('button', { className: live ? 'danger' : 'primary', textContent: live ? 'Stop' : 'Live', onclick: () => prestreamer.setLive(sc.id, !live) }),
-      el('button', { textContent: '✕', title: 'Remove', onclick: () => prestreamer.removeScreen(sc.id) }),
+
+    const target = shown !== sc ? `mirrors ${shown.name}` : sc.kind === 'virtual' ? `virtual ${w}×${h}` : sc.displayId === null ? 'window' : (state.displays.find((d) => d.id === sc.displayId)?.label ?? sc.displayLabel ?? 'display')
+    c.bar.replaceChildren(
+      el('span', { className: `dot ${live ? 'on' : ''}` }),
+      el('span', { className: 'name', textContent: sc.name }),
+      el('span', { className: 'meta', textContent: target, title: `${w}×${h}` }),
+      iconButton('gear', shown !== sc ? `${sc.name} mirrors ${shown.name}: opens the settings of ${shown.name}` : `Settings for ${sc.name}: background, text, video, sound`, () => configureScreen(shown.id), { size: 15 }),
+      el('button', { className: live ? 'danger' : 'primary', textContent: live ? 'Close' : 'Open', title: live ? `Close ${sc.name}` : `Open ${sc.name} on its display (or in a window)`, onclick: () => void toggleScreen(sc.id) }),
     )
   }
-}
 
-function sourceValue(s: VideoSource): string {
-  return s.type === 'camera' ? `camera:${s.deviceId}` : s.type
-}
-
-function renderLook(): void {
-  const sc = state.screens.find((s) => s.id === selectedScreenId)
-  $('lookname').textContent = sc?.name ?? ''
-  if (!sc) return $('look').replaceChildren()
-
-  const swatches = el('div', { className: 'sw' })
-  for (const bg of BACKGROUNDS) {
-    const b = el('button', { title: bg, onclick: () => prestreamer.updateScreen(sc.id, { look: { ...sc.look, background: bg } }) })
-    b.style.background = bg
-    swatches.append(b)
-  }
-  const size = el<HTMLInputElement>('input', { type: 'number', value: String(sc.look.fontSize), min: '16', max: '200' })
-  size.onchange = () => prestreamer.updateScreen(sc.id, { look: { ...sc.look, fontSize: Number(size.value) } })
-  const color = el<HTMLInputElement>('input', { type: 'color', value: sc.look.textColor })
-  color.onchange = () => prestreamer.updateScreen(sc.id, { look: { ...sc.look, textColor: color.value } })
-  const media = el<HTMLInputElement>('input', { type: 'checkbox', checked: sc.look.showMedia })
-  media.onchange = () => prestreamer.updateScreen(sc.id, { look: { ...sc.look, showMedia: media.checked } })
-  const vsound = el<HTMLInputElement>('input', { type: 'checkbox', checked: sc.look.videoAudio })
-  vsound.onchange = () => prestreamer.updateScreen(sc.id, { look: { ...sc.look, videoAudio: vsound.checked } })
-  const outSel = el<HTMLSelectElement>('select')
-  outSel.append(el<HTMLOptionElement>('option', { value: '', textContent: 'System default', selected: !sc.look.audioOutput }))
-  for (const d of audioOutputs) outSel.append(el<HTMLOptionElement>('option', { value: d.deviceId, textContent: d.label || d.deviceId, selected: d.deviceId === sc.look.audioOutput }))
-  outSel.onchange = () => prestreamer.updateScreen(sc.id, { look: { ...sc.look, audioOutput: outSel.value } })
-  const label = el<HTMLInputElement>('input', { type: 'checkbox', checked: sc.look.showLabel })
-  label.onchange = () => prestreamer.updateScreen(sc.id, { look: { ...sc.look, showLabel: label.checked } })
-
-  // Video source: none, simulated pattern, or any camera (an ATEM Mini appears here when attached).
-  const options: { value: string; text: string; source: VideoSource }[] = [
-    { value: 'none', text: 'None', source: { type: 'none' } },
-    { value: 'testpattern', text: 'Test pattern (simulated camera)', source: { type: 'testpattern' } },
-    ...cameras.map((c) => ({ value: `camera:${c.deviceId}`, text: c.label || c.deviceId, source: { type: 'camera', ...c } as VideoSource })),
-  ]
-  const cur = sc.look.source
-  if (cur.type === 'camera' && !options.some((o) => o.value === sourceValue(cur))) {
-    options.push({ value: sourceValue(cur), text: `${cur.label} (not detected)`, source: cur })
-  }
-  const source = el<HTMLSelectElement>('select')
-  for (const o of options) source.append(el<HTMLOptionElement>('option', { value: o.value, textContent: o.text, selected: o.value === sourceValue(cur) }))
-  source.onchange = () => {
-    const picked = options.find((o) => o.value === source.value)
-    if (picked) prestreamer.updateScreen(sc.id, { look: { ...sc.look, source: picked.source } })
-  }
-  const detect = el('button', { textContent: 'Detect cameras', onclick: detectCameras })
-
-  const form = el('div', { className: 'form' })
-  form.append(
-    el('span', { textContent: 'Video source' }), source,
-    el('span'), detect,
-    el('span', { textContent: 'Font size' }), size,
-    el('span', { textContent: 'Text color' }), color,
-    el('span', { textContent: 'Section label' }), label,
-    el('span', { textContent: 'Show backgrounds' }), media,
-    el('span', { textContent: 'Play video sound' }), vsound,
-    el('span', { textContent: 'Sound output' }), outSel,
-  )
-  $('look').replaceChildren(swatches, form)
+  // Cards follow the order set in Settings. Only move them when it actually changed, so previews are not disturbed.
+  const wanted = state.screens.map((sc) => cards.get(sc.id)!.root)
+  if (wanted.some((root, i) => container.children[i] !== root)) container.append(...wanted)
 }
 
 /** Labels are only exposed after camera permission is granted, so open and close one stream first. */
@@ -488,7 +624,7 @@ async function detectCameras(): Promise<void> {
   }
   const devices = await navigator.mediaDevices.enumerateDevices()
   cameras = devices.filter((d) => d.kind === 'videoinput').map((d) => ({ deviceId: d.deviceId, label: d.label }))
-  renderLook()
+  screenDialog?.refresh()
 }
 
 // --- Stream panel ---------------------------------------------------------------------------
@@ -499,11 +635,171 @@ const streamUi = {
   key: el<HTMLInputElement>('input', { type: 'password', placeholder: 'YouTube stream key' }),
   forget: el<HTMLButtonElement>('button', { textContent: 'Forget saved key' }),
   hint: el('div', { className: 'status' }),
+  sound: el<HTMLSelectElement>('select', { title: 'What the stream carries as sound' }),
+  audio: el('div', { className: 'status' }),
   button: el<HTMLButtonElement>('button'),
   status: el('div', { className: 'status' }),
+  cameraNote: el('div', { className: 'status' }),
+}
+
+// --- Stream health (what OBS calls the Stats dock) -------------------------------------------------------------------
+
+const cell = (label: string) => {
+  const value = el('div', { className: 'hv', textContent: '—' })
+  const sub = el('div', { className: 'hs' })
+  return { root: el('div', { className: 'hcell' }, el('div', { className: 'hl', textContent: label }), value, sub), value, sub }
+}
+const healthUi = {
+  dot: el('span', { className: 'hdot' }),
+  label: el('b', { textContent: 'Not streaming' }),
+  sub: el('span', { className: 'hsub' }),
+  bitrate: cell('Bitrate'),
+  fps: cell('Frame rate'),
+  dropped: cell('Dropped frames'),
+  speed: cell('Encoding speed'),
+  data: cell('Sent'),
+  canvas: el<HTMLCanvasElement>('canvas', { className: 'spark', title: 'Bitrate over the last two minutes; the dashed line is the target' }),
+  advice: el('div', { className: 'hadvice' }),
+}
+// The compact view: shown instead of the full panel when the statistics (or the whole Stream section) are collapsed.
+const miniUi = {
+  dot: el('span', { className: 'hdot' }),
+  label: el('b', { textContent: 'Not streaming' }),
+  live: el('span', { className: 'dim' }),
+  dropped: el('span', { className: 'mdrop', title: 'Share of frames dropped in the last 60 seconds' }),
+  bitrate: el('span', { className: 'dim' }),
+}
+const healthMini = el('div', { className: 'healthmini' }, miniUi.dot, miniUi.label, miniUi.live, el('span', { className: 'grow' }), miniUi.dropped, miniUi.bitrate)
+
+/** Camera only: the stream shows nothing but the live camera (no text, slide media, videos or announcements). */
+const cameraButton = iconButton('camera', 'Camera only: stream just the live camera, without text, slide backgrounds, videos or announcements. The room screens are not affected. Click again to bring them back.', () => void prestreamer.setCameraOnly(!state.cameraOnly), { size: 15 })
+
+const COLLAPSE_KEY = 'prestreamer.streamCollapsed'
+const STATS_KEY = 'prestreamer.statsCollapsed'
+const recall = (key: string): boolean => { try { return localStorage.getItem(key) === '1' } catch { return false } }
+let streamCollapsed = recall(COLLAPSE_KEY)
+let statsCollapsed = recall(STATS_KEY)
+const remember = (key: string, on: boolean) => { try { localStorage.setItem(key, on ? '1' : '0') } catch { /* only a convenience */ } }
+/** Makes a title act as a disclosure control: click or Enter/Space toggles it; buttons inside it keep their own job. */
+function disclosure(titleEl: HTMLElement, toggle: () => void): void {
+  titleEl.classList.add('disclosure')
+  titleEl.tabIndex = 0
+  titleEl.setAttribute('role', 'button')
+  titleEl.addEventListener('click', (e) => { if (!(e.target as HTMLElement).closest('button')) toggle() })
+  titleEl.addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target === titleEl) { e.preventDefault(); toggle() } })
+}
+const toggleSection = () => { streamCollapsed = !streamCollapsed; remember(COLLAPSE_KEY, streamCollapsed); applyCollapse() }
+const toggleStats = () => { statsCollapsed = !statsCollapsed; remember(STATS_KEY, statsCollapsed); applyCollapse() }
+function applyCollapse(): void {
+  const box = $('stream')
+  box.classList.toggle('collapsed', streamCollapsed)
+  box.classList.toggle('stats-collapsed', statsCollapsed)
+  const sectionHead = $('streamtools').parentElement!
+  sectionHead.classList.toggle('closed', streamCollapsed)
+  sectionHead.setAttribute('aria-expanded', String(!streamCollapsed))
+  sectionHead.title = streamCollapsed ? 'Click to show the Stream section' : 'Click to collapse the Stream section'
+  healthHead.classList.toggle('closed', statsCollapsed)
+  healthHead.setAttribute('aria-expanded', String(!statsCollapsed))
+  healthHead.title = 'Click to collapse the statistics to a one-line summary'
+  healthMini.title = streamCollapsed ? 'Click to show the Stream section' : 'Click to show the full statistics'
+  healthMini.setAttribute('aria-expanded', String(!streamCollapsed && !statsCollapsed))
+}
+
+// The title sits above the panel like "Stream" does; the rating (dot and word) is on its right.
+const healthHead = el('div', { className: 'head', id: 'healthtitle' }, el('span', { textContent: 'Stream health' }), el('span', { className: 'tools hrating' }, healthUi.dot, healthUi.label))
+const healthRoot = el('div', { className: 'health' },
+  el('div', { className: 'hhead' }, healthUi.sub),
+  el('div', { className: 'hgrid' }, healthUi.bitrate.root, healthUi.fps.root, healthUi.dropped.root, healthUi.speed.root, healthUi.data.root),
+  healthUi.canvas,
+  healthUi.advice,
+)
+
+const fmt = (n: number) => n.toLocaleString('en-US')
+const clock = (sec: number) => [Math.floor(sec / 3600), Math.floor(sec / 60) % 60, sec % 60].map((n) => String(n).padStart(2, '0')).join(':')
+
+function drawSpark(history: number[], target: number): void {
+  const canvas = healthUi.canvas
+  const dpr = window.devicePixelRatio || 1
+  const w = canvas.clientWidth || 300
+  const h = canvas.clientHeight || 46
+  canvas.width = Math.round(w * dpr)
+  canvas.height = Math.round(h * dpr)
+  const ctx = canvas.getContext('2d')!
+  ctx.scale(dpr, dpr)
+  ctx.clearRect(0, 0, w, h)
+  const max = Math.max(target * 1.25, ...history, 1)
+  const y = (v: number) => h - 3 - (v / max) * (h - 6)
+  ctx.setLineDash([4, 4])
+  ctx.strokeStyle = '#475569'
+  ctx.beginPath(); ctx.moveTo(0, y(target)); ctx.lineTo(w, y(target)); ctx.stroke()
+  ctx.setLineDash([])
+  if (history.length < 2) return
+  ctx.strokeStyle = '#38bdf8'
+  ctx.lineWidth = 1.5
+  ctx.beginPath()
+  history.forEach((v, i) => { const x = w - (history.length - 1 - i) * (w / 120); if (i === 0) ctx.moveTo(x, y(v)); else ctx.lineTo(x, y(v)) })
+  ctx.stroke()
+}
+
+/** Health rating, then the numbers behind it: bitrate against target, frame rate, dropped frames, encoder speed. */
+function renderHealth(): void {
+  const st = streamStatus.stats
+  const s = streamSettings
+  const encoderLabel = ENCODER_CHOICES.find((e) => e.value === s.encoder)?.label ?? s.encoder
+  const bad = (cellEl: { root: HTMLElement }, isBad: boolean) => cellEl.root.classList.toggle('bad', isBad)
+  const mini = () => {
+    const live = streamStatus.state === 'running' && st
+    miniUi.dot.className = `hdot ${live ? st.health : ''}`
+    miniUi.label.textContent = live ? { good: 'Good', warn: 'Unstable', poor: 'Poor', idle: 'Not streaming' }[st.health] : 'Not streaming'
+    miniUi.live.textContent = live ? `LIVE ${clock(st.uptimeSec)}` : ''
+    miniUi.dropped.textContent = live ? `Dropped ${st.dropPercent60.toFixed(1)}% (60 s)` : ''
+    miniUi.dropped.classList.toggle('bad', !!live && st.dropPercent60 > 1)
+    miniUi.bitrate.textContent = live ? `${fmt(st.bitrateKbps)} kb/s` : ''
+  }
+  mini()
+  if (streamStatus.state !== 'running' || !st) {
+    healthUi.dot.className = 'hdot'
+    healthUi.label.textContent = 'Not streaming'
+    healthUi.sub.textContent = `${s.height}p${s.fps} · ${fmt(s.videoKbps)} kb/s video + ${s.audioKbps} kb/s audio · ${encoderLabel}`
+    for (const c of [healthUi.bitrate, healthUi.fps, healthUi.dropped, healthUi.speed, healthUi.data]) { c.value.textContent = '—'; c.sub.textContent = ''; bad(c, false) }
+    healthUi.bitrate.sub.textContent = `target ${fmt(s.videoKbps + s.audioKbps)} kb/s`
+    healthUi.advice.textContent = ''
+    drawSpark([], s.videoKbps + s.audioKbps)
+    return
+  }
+  healthUi.dot.className = `hdot ${st.health}`
+  healthUi.label.textContent = { good: 'Good', warn: 'Unstable', poor: 'Poor', idle: 'Not streaming' }[st.health]
+  healthUi.sub.textContent = `LIVE ${clock(st.uptimeSec)} · ${st.encoder} · ${st.width}×${st.height} @ ${st.targetFps}`
+  healthUi.bitrate.value.textContent = `${fmt(st.bitrateKbps)} kb/s`
+  healthUi.bitrate.sub.textContent = `target ${fmt(st.targetKbps)} kb/s`
+  healthUi.fps.value.textContent = `${st.fps.toFixed(1)} fps`
+  healthUi.fps.sub.textContent = `target ${st.targetFps}`
+  healthUi.dropped.value.textContent = fmt(st.droppedFrames)
+  healthUi.dropped.sub.textContent = `${st.recentDropPercent}% in 30 s · ${st.dropPercent60}% in 60 s`
+  healthUi.speed.value.textContent = st.speed === null ? '—' : `${st.speed.toFixed(2)}×`
+  healthUi.speed.sub.textContent = '1.00× is real time'
+  healthUi.data.value.textContent = `${(st.sizeBytes / 1e6).toFixed(1)} MB`
+  bad(healthUi.dropped, st.recentDropPercent > 1)
+  bad(healthUi.speed, st.speed !== null && st.speed < 0.98)
+  healthUi.advice.textContent =
+    st.health === 'good' ? ''
+    : st.speed !== null && st.speed < 0.98 ? 'The encoder is falling behind. In Stream settings, lower the resolution, frame rate or bitrate, or choose hardware encoding.'
+    : 'Frames are being dropped, so the connection may be too slow for this bitrate. In Stream settings, lower the bitrate.'
+  drawSpark(st.history, st.targetKbps)
+}
+
+const SOUND_KEY = 'prestreamer.streamSound'
+function recallSound(): 'mixer' | 'none' {
+  try { return localStorage.getItem(SOUND_KEY) === 'none' ? 'none' : 'mixer' } catch { return 'mixer' }
 }
 
 function buildStream(): void {
+  streamUi.sound.append(
+    el<HTMLOptionElement>('option', { value: 'mixer', textContent: 'Mixer master' }),
+    el<HTMLOptionElement>('option', { value: 'none', textContent: 'No sound' }),
+  )
+  streamUi.sound.value = recallSound()
+  streamUi.sound.onchange = () => { try { localStorage.setItem(SOUND_KEY, streamUi.sound.value) } catch { /* only a convenience */ } renderStream() }
   streamUi.mode.append(
     el<HTMLOptionElement>('option', { value: 'file', textContent: 'Local test file' }),
     el<HTMLOptionElement>('option', { value: 'youtube', textContent: 'YouTube (RTMP)' }),
@@ -515,7 +811,8 @@ function buildStream(): void {
     try {
       if (active) await prestreamer.streamStop()
       else {
-        await prestreamer.streamStart({ screenId: streamUi.screen.value, mode: streamUi.mode.value as 'file' | 'youtube', streamKey: streamUi.key.value.trim() || undefined })
+        if (streamUi.sound.value === 'mixer' && audioStatus.state !== 'running') await setMixerRunning(true) // start the mixer first if it has something to run
+        await prestreamer.streamStart({ screenId: streamUi.screen.value, mode: streamUi.mode.value as 'file' | 'youtube', streamKey: streamUi.key.value.trim() || undefined, audio: streamUi.sound.value as 'mixer' | 'none' })
         streamUi.key.value = ''
         keySaved = await prestreamer.streamKeySaved()
         renderStream()
@@ -526,8 +823,10 @@ function buildStream(): void {
     }
   }
   const form = el('div', { className: 'form' })
-  form.append(el('span', { textContent: 'Screen' }), streamUi.screen, el('span', { textContent: 'Target' }), streamUi.mode, el('span', { textContent: 'Stream key' }), streamUi.key)
-  $('stream').replaceChildren(form, el('div', { className: 'form' }, el('span'), streamUi.button, el('span'), streamUi.forget), streamUi.status, streamUi.hint)
+  form.append(el('span', { textContent: 'Screen' }), streamUi.screen, el('span', { textContent: 'Target' }), streamUi.mode, el('span', { textContent: 'Stream key' }), streamUi.key, el('span', { textContent: 'Sound' }), streamUi.sound)
+  // The controls sit in a panel that looks like the health panel below it.
+  const panel = el('div', { className: 'panelbox' }, form, el('div', { className: 'form' }, el('span'), streamUi.button, el('span'), streamUi.forget), streamUi.audio, streamUi.cameraNote, streamUi.status, streamUi.hint)
+  $('stream').replaceChildren(panel, healthHead, healthMini, healthRoot)
 }
 
 function renderStream(): void {
@@ -544,9 +843,25 @@ function renderStream(): void {
   streamUi.hint.textContent = youtube
     ? 'The key is stored encrypted by the OS. In YouTube Studio, enable auto-start on the broadcast bound to this key (or schedule one), otherwise the stream connects but does not go live.'
     : ''
-  streamUi.mode.disabled = streamUi.screen.disabled = active
+  streamUi.mode.disabled = streamUi.screen.disabled = streamUi.sound.disabled = active
   streamUi.button.textContent = active ? 'Stop streaming' : 'Start streaming'
   streamUi.button.className = active ? 'danger' : 'primary'
+  // Say plainly what the stream carries right now.
+  const mixer = streamUi.sound.value === 'mixer'
+  // Only said when something is wrong or unusual: normally the mixer's master simply is the stream's sound.
+  const audioOk = mixer && audioStatus.state === 'running'
+  streamUi.audio.hidden = audioOk
+  streamUi.audio.className = 'status warn'
+  streamUi.audio.textContent = !mixer ? 'The stream will have no sound.' : 'The mixer has not started, so the stream is silent. Open the Mixer tab to see why.'
+  cameraButton.classList.toggle('primary', state.cameraOnly)
+  cameraButton.setAttribute('aria-pressed', String(state.cameraOnly))
+  const target = state.screens.find((s) => s.id === streamUi.screen.value)
+  const noCamera = target && target.look.source.type === 'none'
+  streamUi.cameraNote.className = `status ${state.cameraOnly && noCamera ? 'warn' : ''}`
+  streamUi.cameraNote.textContent = state.cameraOnly
+    ? noCamera ? `Camera only is ON, but "${target.name}" has no live source, so the stream is black. Pick a camera in its screen settings.` : 'Camera only is ON: the stream shows just the camera. Text, videos and announcements still show in the room.'
+    : ''
+  renderHealth()
   streamUi.status.className = `status ${streamStatus.state}`
   const secs = streamStatus.startedAt ? Math.floor((Date.now() - streamStatus.startedAt) / 1000) : 0
   streamUi.status.textContent =
@@ -557,97 +872,92 @@ function renderStream(): void {
         : streamStatus.message
 }
 
-// --- Audio panel ----------------------------------------------------------------------------
-// A Behringer Wing's USB interface shows up as one multichannel input device (48 channels at 48 kHz).
-// Route the STREAM bus to USB outputs 1-2 on the console, or pick any other channel pair here.
+// --- Audio -------------------------------------------------------------------------------------
+// Inputs, levels and the delay live on the Mixer tab. The Stream panel only chooses what the stream carries.
 
-const audioUi = {
-  source: el<HTMLSelectElement>('select'),
-  delay: el<HTMLInputElement>('input', { type: 'number', value: '0', step: '10', min: '0', max: '2000' }),
-  detect: el<HTMLButtonElement>('button', { textContent: 'Detect audio devices' }),
-  apply: el<HTMLButtonElement>('button', { className: 'primary', textContent: 'Apply' }),
-  status: el('div', { className: 'status' }),
-}
-
-const audioSourceValue = (s: AudioSource) => (s.type === 'device' ? `device:${s.deviceId}` : s.type)
-
-function buildAudio(): void {
-  audioUi.detect.onclick = detectAudio
-  audioUi.apply.onclick = async () => {
-    const value = audioUi.source.value
-    const device = audioDevices.find((d) => `device:${d.deviceId}` === value)
-    const source: AudioSource = device ? { type: 'device', ...device } : value === 'test' ? { type: 'test' } : value === 'multitest' ? { type: 'multitest' } : { type: 'silence' }
-    audioCfg = { source, delayMs: Number(audioUi.delay.value) }
-    audioStatus = { ...audioStatus, state: 'idle', message: 'Applying…' }
-    renderAudio()
+/**
+ * Reads every audio input on the machine. Names stay hidden until microphone permission is given, so when asked to
+ * (opening the Mixer tab, pressing Detect) this requests it once; otherwise it only reads what is already visible.
+ */
+async function refreshAudioDevices(requestPermission: boolean): Promise<void> {
+  let devices = await navigator.mediaDevices.enumerateDevices()
+  if (requestPermission && devices.some((d) => d.kind === 'audioinput' && !d.label)) {
     try {
-      audioStatus = await prestreamer.audioConfigure(audioCfg)
+      const probe = await navigator.mediaDevices.getUserMedia({ audio: true })
+      probe.getTracks().forEach((t) => t.stop())
+      devices = await navigator.mediaDevices.enumerateDevices()
     } catch (err) {
-      audioStatus = { state: 'error', message: (err as Error).message, channelCount: 0 }
+      audioStatus = { state: 'error', message: `Microphone access failed: ${(err as Error).message}`, channelCount: 0 }
+      return renderAudio()
     }
-    renderAudio()
   }
-  const form = el('div', { className: 'form' })
-  form.append(
-    el('span', { textContent: 'Source' }), audioUi.source,
-    el('span'), audioUi.detect,
-    el('span', { textContent: 'A/V delay (ms)' }), audioUi.delay,
-    el('span'), audioUi.apply,
-  )
-  $('audio').replaceChildren(form, audioUi.status)
+  const usable = (kind: MediaDeviceKind) => devices.filter((d) => d.kind === kind && d.deviceId !== 'default' && d.deviceId !== 'communications').map((d) => ({ deviceId: d.deviceId, label: d.label || d.deviceId }))
+  audioOutputs = usable('audiooutput')
+  audioDevices = usable('audioinput') // every input, not only USB ones
+  renderAudio()
+}
+// Plug something in (or out) and the lists follow by themselves. On the Mixer tab the first unnamed device also asks for the
+// microphone permission that makes names visible, so no button is needed.
+navigator.mediaDevices.addEventListener('devicechange', () => void refreshAudioDevices(view === 'mixer'))
+
+/** How many channels an input offers, found by opening it briefly. 0 if it cannot be opened. */
+async function probeChannels(deviceId: string): Promise<number> {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: deviceId }, channelCount: { ideal: 48 }, echoCancellation: false, noiseSuppression: false, autoGainControl: false } })
+  const n = stream.getAudioTracks()[0]?.getSettings().channelCount ?? 0
+  stream.getTracks().forEach((t) => t.stop())
+  return n
 }
 
-async function detectAudio(): Promise<void> {
+/** Starts or stops the mixer: it captures the inputs of its strips. (The engine's old "default source" is no longer used by the interface.) */
+async function setMixerRunning(on: boolean): Promise<void> {
+  audioCfg = { source: { type: 'silence' }, mixerSources: on }
   try {
-    const probe = await navigator.mediaDevices.getUserMedia({ audio: true })
-    probe.getTracks().forEach((t) => t.stop())
+    audioStatus = await prestreamer.audioConfigure(audioCfg)
   } catch (err) {
-    audioStatus = { state: 'error', message: `Microphone access failed: ${(err as Error).message}`, channelCount: 0 }
-    return renderAudio()
+    audioStatus = { state: 'error', message: (err as Error).message, channelCount: 0 }
   }
-  const devices = await navigator.mediaDevices.enumerateDevices()
-  audioOutputs = devices.filter((d) => d.kind === 'audiooutput' && d.deviceId !== 'default' && d.deviceId !== 'communications').map((d) => ({ deviceId: d.deviceId, label: d.label }))
-  audioDevices = devices.filter((d) => d.kind === 'audioinput' && d.deviceId !== 'default' && d.deviceId !== 'communications').map((d) => ({ deviceId: d.deviceId, label: d.label }))
   renderAudio()
 }
 
 function renderAudio(): void {
   mixerView.setStatus(audioStatus)
-  const keep = audioUi.source.value || audioSourceValue(audioCfg.source)
-  const options = [
-    { value: 'silence', text: 'Silence' },
-    { value: 'test', text: 'Test beep (A/V sync check)' },
-    { value: 'multitest', text: 'Multichannel test tones (mixer check)' },
-    ...audioDevices.map((d) => ({ value: `device:${d.deviceId}`, text: d.label || d.deviceId })),
-  ]
-  audioUi.source.replaceChildren(...options.map((o) => el<HTMLOptionElement>('option', { value: o.value, textContent: o.text, selected: o.value === keep })))
-  audioUi.status.className = `status ${audioStatus.state === 'running' ? 'running' : audioStatus.state}`
-  audioUi.status.textContent = audioStatus.message + (audioStatus.state === 'running' && audioCfg.source.type === 'device' ? '\n(Switching between silence and a live source takes effect on the next stream start.)' : '')
+  renderStream()
 }
 
-function renderDisplays(): void {
-  $('displays').replaceChildren(
-    ...state.displays.map((d) => el('div', { className: 'row', textContent: `${d.label} — ${d.width}×${d.height}${d.primary ? ' (primary)' : ''}` })),
-  )
+/** Tells the main process which slide follows the live one, so stage monitors can show it. */
+function syncNextSlide(): void {
+  const list = navSlides()
+  const i = state.slide ? list.findIndex((s) => sameSlide(state.slide, s)) : -1
+  const next = i >= 0 ? list[i + 1] ?? null : null
+  if (JSON.stringify(next) !== JSON.stringify(state.next)) void prestreamer.setNextSlide(next)
 }
 
 function renderAll(): void {
+  rememberSelection()
+  syncNextSlide()
   renderTabs()
   applyView()
+  settingsView.render(state)
   renderSchedule()
   renderLibrary()
   renderCenter()
   renderScreens()
-  renderLook()
+  renderAnnounceIndicator()
+  screenDialog?.refresh()
   renderStream()
   renderAudio()
-  renderDisplays()
 }
 
 function step(delta: number): void {
   // Inside a service, keep going across items; otherwise stay within the browsed song.
-  const list = selectedItemId ? serviceSlides() : currentSlides()
+  const list = navSlides()
   if (!list.length) return
+  if (pendingStart) {
+    const start = list.find((s) => s.itemId === pendingStart)
+    const armed = state.slide?.itemId !== pendingStart
+    pendingStart = null
+    if (start && armed) { void prestreamer.showSlide(start); return }
+  }
   let i = list.findIndex((s) => sameSlide(state.slide, s))
   if (i < 0) i = delta > 0 ? -1 : list.length
   const next = list[Math.min(list.length - 1, Math.max(0, i + delta))]
@@ -655,23 +965,54 @@ function step(delta: number): void {
   void prestreamer.showSlide(next)
 }
 
+// Cmd+1…9 (Ctrl+1…9 on Windows) jump to the Nth item of the run sheet, from any tab.
+window.addEventListener('keydown', (e) => {
+  if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey || !/^[1-9]$/.test(e.key) || !$('modal').hidden) return
+  const item = currentService()?.items[Number(e.key) - 1]
+  if (!item) return
+  e.preventDefault()
+  jumpToItem(item.id)
+})
+
 window.addEventListener('keydown', (e) => {
   if ((e.target as HTMLElement).matches('input, select, textarea')) return
-  if (view !== 'present' || !$('modal').hidden) return
+  if (!$('modal').hidden) return
+  // A is always one key away, on every tab: urgent information must not wait for the right screen to be open.
+  if (e.key.toLowerCase() === 'a' && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); openAnnounce(); return }
+  if (view !== 'present') return
   if (e.key === ' ' && state.slide?.video) { e.preventDefault(); void prestreamer.playbackCommand({ type: playback.playing ? 'pause' : 'play' }) }
   else if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ') { e.preventDefault(); step(1) }
   else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); step(-1) }
   else if (e.key === 'Escape') prestreamer.showSlide(null)
 })
 
-const mixerView = createMixerView($('view-mixer'), prestreamer)
+const mixerDeps: MixerDeps = {
+  getDevices: () => audioDevices,
+  probeChannels,
+  startAudio: () => setMixerRunning(true),
+}
+const mixerView = createMixerView($('view-mixer'), prestreamer, mixerDeps)
+const settingsView = createSettingsView($('view-settings'), prestreamer, (id) => void toggleScreen(id))
+const bibleView = createBibleView($('view-bible'), {
+  api: prestreamer,
+  getLook: () => (state.screens.find((x) => x.id === selectedScreenId) ?? state.screens[0])?.look ?? defaultLook,
+  present: (slide) => void prestreamer.showSlide(slide),
+  addReading: async (title, slides) => {
+    const svc = currentService()
+    if (!svc) return null
+    await mutateService((d) => { d.items.push({ id: crypto.randomUUID(), kind: 'scripture', title, slides }) })
+    return svc.name
+  },
+})
 
 // --- Tabs, toolbars and global handlers ----------------------------------------------------------
 
 const TABS: { view: View; icon: IconName; label: string }[] = [
   { view: 'present', icon: 'present', label: 'Present' },
   { view: 'songs', icon: 'songs', label: 'Songs' },
+  { view: 'bible', icon: 'book', label: 'Bible' },
   { view: 'mixer', icon: 'sliders', label: 'Mixer' },
+  { view: 'settings', icon: 'gear', label: 'Settings' },
 ]
 
 function renderTabs(): void {
@@ -690,55 +1031,169 @@ function setView(next: View): void {
   }
   renderAll()
   if (next === 'songs') showEditor()
-  if (next === 'mixer') mixerView.show()
+  if (next === 'mixer') { mixerView.show(); void refreshAudioDevices(true).then(() => mixerView.show()) }
+  if (next === 'settings') settingsView.render(state, true)
+  if (next === 'bible') void bibleView.show()
 }
 
 $('servicesel').onchange = (e) => { serviceId = (e.target as HTMLSelectElement).value; selectedItemId = null; renderAll() }
-$('servicename').onchange = (e) => { const name = (e.target as HTMLInputElement).value.trim(); if (name) void mutateService((d) => { d.name = name }) }
 $('songfilter').oninput = (e) => { songFilter = (e.target as HTMLInputElement).value; renderLibrary() }
 
-async function newService(): Promise<void> {
-  const svc: Service = { id: crypto.randomUUID(), name: `Service ${new Date().toISOString().slice(0, 10)}`, items: [] }
+const today = () => new Date().toISOString().slice(0, 10)
+
+/** Adds (or replaces) a service, makes it the current one, and refreshes the UI. */
+async function saveAndSelect(svc: Service): Promise<void> {
   services = await prestreamer.servicesSave(svc)
   serviceId = svc.id
   selectedItemId = null
   renderAll()
 }
 
-let delArmed = false
-const delService = iconButton('trash', 'Delete this service (click twice)', async () => {
+async function newService(): Promise<void> {
+  const name = await askText({ title: 'New service', label: 'Name of the service', value: `Sunday ${today()}`, confirm: 'Create' })
+  if (name) await saveAndSelect({ id: crypto.randomUUID(), name, items: [] })
+}
+
+async function renameService(): Promise<void> {
   const svc = currentService()
   if (!svc) return
-  if (!delArmed) { delArmed = true; delService.className = 'ib danger'; setTimeout(() => { delArmed = false; delService.className = 'ib' }, 3000); return }
-  delArmed = false
-  delService.className = 'ib'
+  const name = await askText({ title: 'Rename service', label: 'Name of the service', value: svc.name, confirm: 'Rename' })
+  if (name && name !== svc.name) await mutateService((d) => { d.name = name })
+}
+
+/** A copy of the current service (new item ids), e.g. to start next Sunday from last Sunday's run sheet. */
+async function duplicateService(): Promise<void> {
+  const svc = currentService()
+  if (!svc) return
+  const name = await askText({ title: 'Duplicate service', label: 'Name for the copy', value: `${svc.name} (copy)`, confirm: 'Duplicate' })
+  if (name) await saveAndSelect({ id: crypto.randomUUID(), name, items: svc.items.map((it) => ({ ...it, id: crypto.randomUUID() })) })
+}
+
+async function deleteService(): Promise<void> {
+  const svc = currentService()
+  if (!svc) return
+  const n = svc.items.length
+  const ok = await confirmDialog({
+    title: `Delete "${svc.name}"?`,
+    message: `This removes the service and its run sheet (${n} item${n === 1 ? '' : 's'}). The songs and videos themselves stay in your library.`,
+    confirm: 'Delete service',
+    danger: true,
+  })
+  if (!ok) return
   services = await prestreamer.servicesDelete(svc.id)
   serviceId = services[0]?.id ?? ''
   selectedItemId = null
   renderAll()
-})
+}
 
-$('svctools').append(iconButton('plus', 'New service', () => void newService()), delService)
-$('addtools').append(iconButton('music', 'Add a song to the run sheet', openSongPicker, { badge: true }), iconButton('film', 'Add a video to the run sheet', () => void addVideoToService(), { badge: true }))
-$('screentools').append(iconButton('screen', 'Add a virtual screen', () => void prestreamer.addVirtual(`Virtual ${state.screens.length + 1}`, 1920, 1080), { badge: true }))
+const serviceButtons = {
+  needsService: [] as HTMLButtonElement[],
+}
+{
+  const rename = iconButton('pencil', 'Rename this service', () => void renameService())
+  const duplicate = iconButton('copy', 'Duplicate this service (start from a copy)', () => void duplicateService())
+  const remove = iconButton('trash', 'Delete this service', () => void deleteService())
+  serviceButtons.needsService.push(rename, duplicate, remove)
+  $('svctools').append(iconButton('plus', 'New service', () => void newService()), rename, duplicate, remove)
+}
+$('addtools').append(iconButton('music', 'Add a song to the run sheet', openSongPicker, { badge: true }), iconButton('film', 'Add a video to the run sheet', () => void addVideoToService(), { badge: true }), iconButton('presentation', 'Add a presentation (PowerPoint, Keynote or PDF) to the run sheet', () => void addPresentationToService(), { badge: true }), iconButton('image', 'Add pictures to the run sheet: each is shown whole, as a slide', () => void addPicturesToService(), { badge: true }))
 $('songtools').append(iconButton('plus', 'New song', () => startEdit({ id: crypto.randomUUID(), title: 'New song', body: '[Verse 1]\n\n', background: { kind: 'css', css: BACKGROUNDS[0] } }, true)))
+/** Opens the live announcement popup. */
+function openAnnounce(): void {
+  openAnnounceDialog({ api: prestreamer, getState: () => state, getQuick: () => quickMessages, setQuick: (list) => { quickMessages = list } })
+}
+
+/** Opening or closing one screen. Closing the screen a stream is being made from would cut the picture, so that asks first. */
+async function toggleScreen(id: string): Promise<void> {
+  const sc = state.screens.find((s) => s.id === id)
+  if (!sc) return
+  if (!state.live.includes(id)) return void prestreamer.setLive(id, true)
+  const streaming = streamStatus.state === 'running' || streamStatus.state === 'starting'
+  if (streaming && sc.kind === 'virtual' && streamUi.screen.value === id) {
+    const ok = await confirmDialog({ title: `Close ${sc.name}?`, message: 'The stream is being made from this screen. Closing it stops the picture going out. Stop the stream first unless you mean it.', confirm: `Close ${sc.name}`, danger: true })
+    if (!ok) return
+  }
+  void prestreamer.setLive(id, false)
+}
+
+/** One click opens every screen that is closed. A screen on the display this window is on would hide the controls, so that asks first. */
+async function openAllScreens(): Promise<void> {
+  const closed = state.screens.filter((s) => !state.live.includes(s.id))
+  if (!closed.length) return
+  const mainDisplay = state.displays.find((d) => d.primary)
+  const covering = closed.filter((s) => s.kind === 'display' && s.displayId !== null && s.displayId === mainDisplay?.id)
+  if (covering.length) {
+    const ok = await confirmDialog({
+      title: 'Open all screens?',
+      message: `${covering.map((s) => s.name).join(', ')} is set to your main display, which is where this window is. Once open, it covers these controls. Change its display in Settings first, or continue.`,
+      confirm: 'Open them all',
+    })
+    if (!ok) return
+  }
+  for (const s of closed) await prestreamer.setLive(s.id, true)
+}
+
+/** Closing every screen also closes the stream's screen, so it asks first and says what will happen. */
+async function closeAllScreens(): Promise<void> {
+  const open = state.screens.filter((s) => state.live.includes(s.id))
+  if (!open.length) return
+  const streaming = streamStatus.state === 'running' || streamStatus.state === 'starting'
+  const ok = await confirmDialog({
+    title: 'Close all screens?',
+    message: `This closes ${open.map((s) => s.name).join(', ')}. The audience loses the picture.${streaming ? '\n\nYou are streaming right now: closing the stream screen stops the picture going out. Stop the stream first unless you mean it.' : ''}`,
+    confirm: 'Close all screens',
+    danger: true,
+  })
+  if (ok) for (const s of open) await prestreamer.setLive(s.id, false)
+}
+const openAllButton = iconButton('screen', 'Open every screen that is closed: audience displays and the stream screen', () => void openAllScreens(), { label: 'Open all screens', className: 'openall' })
+const closeAllButton = iconButton('stop', 'Close every open screen, including the stream screen. Asks first.', () => void closeAllScreens(), { label: 'Close all screens', className: 'closeall' })
+
+/** The red "announcement live" button stays in the header, on every tab, for as long as one is on air. */
+function renderAnnounceIndicator(): void {
+  closeAllButton.disabled = state.live.length === 0 // nothing to close
+  openAllButton.disabled = state.screens.every((s) => state.live.includes(s.id)) // everything is already open
+  const btn = $('announcelive')
+  const a = state.announcement
+  btn.hidden = !a
+  if (!a) return
+  btn.textContent = `● ANNOUNCEMENT LIVE · Clear`
+  btn.title = `On air: ${a.text}`
+}
+$('announcelive').onclick = () => void prestreamer.announceClear()
+
 $('headbtns').append(
-  iconButton('x', 'Clear all screens (Esc)', () => void prestreamer.showSlide(null), { label: 'Clear' }),
-  iconButton('stop', 'Turn all screens off', () => state.live.forEach((id) => void prestreamer.setLive(id, false)), { label: 'All off' }),
+  iconButton('bell', 'Live announcement (A)', openAnnounce, { label: 'Announce', className: 'announcebtn' }),
+  iconButton('x', 'Take the current slide off every screen. The screens stay open. (Esc)', () => void prestreamer.showSlide(null), { label: 'Clear slide' }),
+  openAllButton,
+  closeAllButton,
 )
 
+prestreamer.onPresentationStatus((message) => { $('videostatus').className = 'status'; $('videostatus').textContent = message })
 prestreamer.onVideoProgress((pct) => { $('videostatus').className = 'status'; $('videostatus').textContent = `Converting… ${pct}%` })
 prestreamer.onPlayback((st) => { playback = st; cards.forEach((c) => c.pv.setPlayback(st)); updateTransport(); renderSchedule() })
 prestreamer.playbackGet().then((st) => { playback = st })
-void navigator.mediaDevices.enumerateDevices().then((d) => { audioOutputs = d.filter((x) => x.kind === 'audiooutput' && x.deviceId !== 'default' && x.deviceId !== 'communications').map((x) => ({ deviceId: x.deviceId, label: x.label })) })
+void refreshAudioDevices(false)
+void setMixerRunning(true) // the mixer always runs: changes in the Mixer tab are heard at once, and the stream can use it any time
+$('streamtools').append(cameraButton, iconButton('gear', 'Stream settings: resolution, frame rate, bitrate, encoder', () => openStreamSettings({
+  api: prestreamer,
+  getSettings: () => streamSettings,
+  setSettings: (next) => { streamSettings = next; renderStream() },
+  isStreaming: () => streamStatus.state === 'running' || streamStatus.state === 'starting',
+}), { label: 'Settings' }))
+disclosure($('streamtools').parentElement!, toggleSection)
+disclosure(healthHead, toggleStats)
+disclosure(healthMini, () => { if (streamCollapsed) toggleSection(); else toggleStats() })
+applyCollapse()
+void prestreamer.streamSettingsGet().then((next) => { streamSettings = next; renderStream() })
 buildStream()
-buildAudio()
 prestreamer.onAudio((s) => { audioStatus = s; renderAudio() })
 prestreamer.audioGetStatus().then((s) => { audioStatus = s; renderAudio() })
 prestreamer.onState((s) => { state = s; renderAll() })
 prestreamer.onStream((s) => { streamStatus = s; renderStream() })
-prestreamer.servicesList().then((l) => { services = l; serviceId = l[0]?.id ?? ''; renderAll() })
-prestreamer.songsList().then((l) => { songs = l; songId = l[0]?.id ?? ''; renderAll() })
+prestreamer.announceQuickList().then((l) => { quickMessages = l })
+prestreamer.servicesList().then((l) => { services = l; serviceId = l.find((x) => x.id === savedService)?.id ?? l[0]?.id ?? ''; renderAll() })
+prestreamer.songsList().then((l) => { songs = l; songId = l[0]?.id ?? ''; renderAll(); if (VIEWS.includes(savedView) && savedView !== 'present') setView(savedView as View) })
 prestreamer.streamKeySaved().then((v) => { keySaved = v; renderStream() })
 prestreamer.getState().then((s) => { state = s; renderAll() })
 prestreamer.streamGetStatus().then((s) => { streamStatus = s; renderStream() })

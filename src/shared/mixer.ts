@@ -9,9 +9,17 @@ export interface GateConfig { on: boolean; thresholdDb: number; rangeDb: number;
 export interface CompConfig { on: boolean; thresholdDb: number; ratio: number; attackMs: number; releaseMs: number; kneeDb: number; makeupDb: number }
 export interface LimiterConfig { on: boolean; ceilingDb: number }
 
+/** An audio input on this machine. Test sources use ids starting with "test:". */
+export interface StripSource {
+  deviceId: string
+  label: string
+}
+
 export interface Strip {
-  /** Zero-based device channel this strip reads. */
+  /** Zero-based channel of the source this strip reads. */
   channel: number
+  /** Which input device the channel comes from. Absent = the default source chosen in the Audio panel. */
+  source?: StripSource
   name: string
   trimDb: number
   faderDb: number
@@ -30,11 +38,13 @@ export interface MixerConfig {
   strips: Strip[]
   masterDb: number
   masterLimiter: LimiterConfig
+  /** Delays the whole mix so the sound lines up with the picture (camera and encoding delay the picture). */
+  delayMs: number
 }
 
 /** [min, max] per parameter: used by the UI sliders and to clamp anything read from disk. */
 export const RANGES = {
-  trimDb: [-24, 24], faderDb: [-100, 10], pan: [-1, 1], masterDb: [-100, 10],
+  trimDb: [-24, 24], faderDb: [-100, 10], pan: [-1, 1], masterDb: [-100, 10], delayMs: [0, 2000],
   hpfFreq: [20, 500],
   eqFreq: [20, 20000], eqGainDb: [-18, 18], eqQ: [0.1, 10],
   gateThresholdDb: [-80, 0], gateRangeDb: [0, 80], gateAttackMs: [0.1, 100], gateHoldMs: [0, 1000], gateReleaseMs: [5, 2000],
@@ -44,6 +54,26 @@ export const RANGES = {
 
 export const MAX_CHANNELS = 48
 
+/**
+ * The sound of the video that is playing in the service. It is an input like any device, so it has strips in the mixer
+ * (level, EQ, mute) and reaches the stream through the master.
+ */
+export const VIDEO_SOURCE: StripSource & { channels: number } = { deviceId: 'app:video', label: 'Video playback (stereo)', channels: 2 }
+
+/** Left and right strips for the video's sound, panned hard left and right. */
+export function videoStrips(): Strip[] {
+  return [
+    { ...defaultStrip(0, 'Video L', VIDEO_SOURCE), pan: -1 },
+    { ...defaultStrip(1, 'Video R', VIDEO_SOURCE), pan: 1 },
+  ]
+}
+
+/** Synthetic inputs for trying the mixer without hardware. */
+export const TEST_SOURCES: (StripSource & { channels: number })[] = [
+  { deviceId: 'test:tones', label: 'Test tones (4 channels)', channels: 4 },
+  { deviceId: 'test:beep', label: 'Test beep (stereo)', channels: 2 },
+]
+
 export const clamp = (v: number, [lo, hi]: readonly [number, number]): number => Math.min(hi, Math.max(lo, v))
 
 /** Decibels to linear gain; anything at or below -100 dB is treated as silence. */
@@ -51,10 +81,23 @@ export const dbToGain = (db: number): number => (db <= -100 ? 0 : 10 ** (db / 20
 
 export const gainToDb = (gain: number): number => (gain <= 1e-5 ? -100 : 20 * Math.log10(gain))
 
-export function defaultStrip(channel: number, name = `USB ${channel + 1}`): Strip {
+/** "MacBook Pro Microphone (Built-in)" -> "MacBook Pro Microphone": the part of a device label that fits on a strip. */
+export function shortDeviceName(label: string): string {
+  const base = label.replace(/^default\s*-\s*/i, '').replace(/\s*\([^)]*\)\s*$/, '').trim()
+  return base || label.trim() || 'Input'
+}
+
+/** Strips are told apart by device AND channel: channel 1 of two different devices are two different strips. */
+export const stripKey = (s: { channel: number; source?: StripSource }): string => `${s.source?.deviceId ?? ''}#${s.channel}`
+
+const stripName = (channel: number, source?: StripSource): string =>
+  source ? `${shortDeviceName(source.label)} ${channel + 1}`.slice(0, 24) : `USB ${channel + 1}`
+
+export function defaultStrip(channel: number, name?: string, source?: StripSource): Strip {
   return {
     channel,
-    name,
+    ...(source ? { source } : {}),
+    name: name ?? stripName(channel, source),
     trimDb: 0,
     faderDb: 0,
     pan: 0,
@@ -68,12 +111,13 @@ export function defaultStrip(channel: number, name = `USB ${channel + 1}`): Stri
   }
 }
 
-/** A stereo pair on USB 1-2 panned hard left/right: what you get from a console's stereo stream bus. */
+/** A new installation's mixer has the sound of the service's videos in it and nothing else: inputs are added by the user. */
 export function defaultMixer(): MixerConfig {
   return {
-    strips: [{ ...defaultStrip(0), pan: -1 }, { ...defaultStrip(1), pan: 1 }],
+    strips: videoStrips(),
     masterDb: 0,
     masterLimiter: { on: true, ceilingDb: -1 },
+    delayMs: 0,
   }
 }
 
@@ -94,11 +138,14 @@ const obj = (v: unknown): Record<string, unknown> => (v && typeof v === 'object'
 function sanitizeStrip(raw: unknown): Strip | null {
   const r = obj(raw)
   if (typeof r.channel !== 'number' || !Number.isInteger(r.channel) || r.channel < 0 || r.channel >= MAX_CHANNELS) return null
-  const d = defaultStrip(r.channel)
+  const rs = obj(r.source)
+  const source: StripSource | undefined = typeof rs.deviceId === 'string' && rs.deviceId && rs.deviceId.length <= 300 ? { deviceId: rs.deviceId, label: typeof rs.label === 'string' ? rs.label.slice(0, 120) : rs.deviceId } : undefined
+  const d = defaultStrip(r.channel, undefined, source)
   const hpf = obj(r.hpf), eq = obj(r.eq), gate = obj(r.gate), comp = obj(r.comp), lim = obj(r.limiter)
   return {
     channel: r.channel,
-    name: typeof r.name === 'string' && r.name.trim() ? r.name.slice(0, 24) : `USB ${r.channel + 1}`,
+    ...(source ? { source } : {}),
+    name: typeof r.name === 'string' && r.name.trim() ? r.name.slice(0, 24) : d.name,
     trimDb: num(r.trimDb, d.trimDb, RANGES.trimDb),
     faderDb: num(r.faderDb, d.faderDb, RANGES.faderDb),
     pan: num(r.pan, d.pan, RANGES.pan),
@@ -130,12 +177,12 @@ function sanitizeStrip(raw: unknown): Strip | null {
 export function sanitizeMixer(raw: unknown): MixerConfig {
   const r = obj(raw)
   if (!Array.isArray(r.strips)) return defaultMixer()
-  const seen = new Set<number>()
+  const seen = new Set<string>()
   const strips: Strip[] = []
   r.strips.forEach((s) => {
     const strip = sanitizeStrip(s)
-    if (strip && !seen.has(strip.channel)) {
-      seen.add(strip.channel)
+    if (strip && !seen.has(stripKey(strip))) {
+      seen.add(stripKey(strip))
       strips.push(strip)
     }
   })
@@ -144,5 +191,6 @@ export function sanitizeMixer(raw: unknown): MixerConfig {
     strips,
     masterDb: num(r.masterDb, 0, RANGES.masterDb),
     masterLimiter: { on: bool(lim.on, true), ceilingDb: num(lim.ceilingDb, -1, RANGES.limiterCeilingDb) },
+    delayMs: num(r.delayMs, 0, RANGES.delayMs),
   }
 }

@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>PreStreamer</title>
+  <defs>
+    <linearGradient id="bg" x1="0.1" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#3b82f6"/><stop offset="0.55" stop-color="#1d4ed8"/><stop offset="1" stop-color="#1e1b4b"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.18" r="0.7">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.28"/><stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="display" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#172554"/><stop offset="1" stop-color="#0b1020"/>
+    </linearGradient>
+    <linearGradient id="wave" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#bae6fd"/>
+    </linearGradient>
+    <filter id="drop" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#020617" flood-opacity="0.45"/></filter>
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#020617" flood-opacity="0.4"/></filter>
+    <filter id="blur" x="-150%" y="-150%" width="400%" height="400%"><feGaussianBlur stdDeviation="14"/></filter>
+  </defs>
+
+  <!-- app tile: the macOS template is an 824 px rounded square centred on a 1024 px canvas -->
+  <g filter="url(#drop)"><rect x="100" y="100" width="824" height="824" rx="186" fill="url(#bg)"/></g>
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#glow)"/>
+
+  <g transform="translate(0 -14.0)">
+    <!-- monitor -->
+    <g filter="url(#soft)">
+      <rect x="476" y="684" width="72" height="48" fill="#cbd5e1"/>
+      <rect x="384" y="722" width="256" height="38" rx="19" fill="#e2e8f0"/>
+      <rect x="192" y="292" width="640" height="392" rx="48" fill="#f8fafc"/>
+    </g>
+    <rect x="220" y="320" width="584" height="336" rx="26" fill="url(#display)"/>
+
+    <!-- the broadcast signal, centred in the screen: waves above a red "live" dot -->
+    <g fill="none" stroke="#f0f9ff" stroke-width="28" stroke-linecap="round">
+      <path d="M461.4 515.1 A66 66 0 0 1 562.6 515.1" opacity="1.0"/>
+      <path d="M426.2 485.5 A112 112 0 0 1 597.8 485.5" opacity="0.85"/>
+      <path d="M391.0 455.9 A158 158 0 0 1 633.0 455.9" opacity="0.68"/>
+    </g>
+    <circle cx="512" cy="557.5" r="46" fill="#ef4444" opacity="0.5" filter="url(#blur)"/>
+    <circle cx="512" cy="557.5" r="28" fill="#ef4444" stroke="#fff" stroke-width="10"/>
+  </g>
+</svg>

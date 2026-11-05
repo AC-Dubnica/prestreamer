@@ -1,6 +1,6 @@
 import type { AudioApi } from '../preload/audio'
-import { dbToGain, effectiveGains, gainToDb, type MixerConfig, type Strip } from '../shared/mixer'
-import type { AudioConfig, Meters } from '../shared/types'
+import { dbToGain, effectiveGains, gainToDb, stripKey, type MixerConfig, type Strip } from '../shared/mixer'
+import { mediaUrl, type AudioConfig, type Meters, type PlaybackState } from '../shared/types'
 
 declare const audioBridge: AudioApi
 
@@ -10,7 +10,10 @@ const METER_INTERVAL_MS = 50
 const SMOOTH_S = 0.01 // parameter changes glide over ~10 ms, so moving a fader does not click
 
 interface StripNodes {
+  key: string
   channel: number
+  /** The source this strip is currently wired to (null until its device is open). */
+  from: Source | null
   trim: GainNode
   hpf: BiquadFilterNode
   low: BiquadFilterNode
@@ -27,41 +30,66 @@ interface StripNodes {
   reductionDb: number
 }
 
+/** One open input: a real device, or a synthetic test source. */
+interface Source {
+  key: string
+  label: string
+  channelCount: number
+  splitter: ChannelSplitterNode | null
+  stream: MediaStream | null
+  error?: string
+  stop: () => void
+}
+
 interface Graph {
   ctx: AudioContext
-  stream: MediaStream | null
-  channelCount: number
-  splitter: ChannelSplitterNode
   sum: GainNode
   masterLimiter: AudioWorkletNode
   masterGain: GainNode
+  delay: DelayNode
   masterMeters: [AnalyserNode, AnalyserNode]
   mute: GainNode
-  strips: Map<number, StripNodes>
+  strips: Map<string, StripNodes>
+  sources: Map<string, Source>
+  opening: Map<string, Promise<void>>
+  /** What strips without a device of their own read from (null = nothing). */
+  defaultKey: string | null
+  defaultLabel: string
   timers: ReturnType<typeof setInterval>[]
-  stop: (() => void)[]
 }
 
 let graph: Graph | null = null
 let mixer: MixerConfig | null = null
+/** The shared video clock, and the element that plays the current video's soundtrack into the mixer (while that input is open). */
+let playback: PlaybackState | null = null
+let videoEl: HTMLAudioElement | null = null
 
 function teardown(): void {
   const g = graph
   graph = null
   if (!g) return
   g.timers.forEach(clearInterval)
-  g.stop.forEach((fn) => fn())
-  g.stream?.getTracks().forEach((t) => t.stop())
+  for (const src of g.sources.values()) closeSource(src)
   void g.ctx.close()
+}
+
+function closeSource(src: Source): void {
+  src.stop()
+  src.stream?.getTracks().forEach((t) => t.stop())
+  src.splitter?.disconnect()
 }
 
 const param = (p: AudioParam, value: number, ctx: BaseAudioContext) => p.setTargetAtTime(value, ctx.currentTime, SMOOTH_S)
 
-function createStrip(g: Graph, channel: number): StripNodes {
+const sourceKeyOf = (g: Graph, strip: Strip): string | null => strip.source?.deviceId ?? g.defaultKey
+
+function createStrip(g: Graph, strip: Strip): StripNodes {
   const { ctx } = g
   const filter = (type: BiquadFilterType) => Object.assign(ctx.createBiquadFilter(), { type })
   const n: StripNodes = {
-    channel,
+    key: stripKey(strip),
+    channel: strip.channel,
+    from: null,
     trim: ctx.createGain(),
     hpf: filter('highpass'),
     low: filter('lowshelf'),
@@ -79,16 +107,28 @@ function createStrip(g: Graph, channel: number): StripNodes {
   n.comp.port.onmessage = (e: MessageEvent<number>) => { n.reductionDb = e.data }
   n.meter.fftSize = 1024
   n.hpf.Q.value = Math.SQRT1_2
-  if (channel < g.channelCount) g.splitter.connect(n.trim, channel, 0) // a channel the device does not have stays silent
   n.trim.connect(n.hpf).connect(n.low).connect(n.mid).connect(n.high).connect(n.gate).connect(n.comp).connect(n.limiter).connect(n.fader).connect(n.pan)
   n.pan.connect(n.meter)
   n.pan.connect(g.sum)
   n.meter.connect(g.mute) // analysers are only pulled when something downstream consumes them
+  wireInput(g, n, strip)
   return n
+}
+
+/** Connects a strip's input to its source's channel, if that source is open and has the channel (else it stays silent). */
+function wireInput(g: Graph, n: StripNodes, strip: Strip): void {
+  const key = sourceKeyOf(g, strip)
+  const src = key === null ? undefined : g.sources.get(key)
+  if (n.from && n.from !== src) { try { n.from.splitter?.disconnect(n.trim) } catch { /* already gone */ } n.from = null }
+  if (src?.splitter && !n.from && strip.channel < src.channelCount) {
+    src.splitter.connect(n.trim, strip.channel, 0)
+    n.from = src
+  }
 }
 
 function destroyStrip(n: StripNodes): void {
   for (const node of [n.trim, n.hpf, n.low, n.mid, n.high, n.gate, n.comp, n.limiter, n.fader, n.pan, n.meter]) node.disconnect()
+  try { n.from?.splitter?.disconnect(n.trim) } catch { /* the source may already be closed */ }
 }
 
 /** Pushes one strip's settings into its nodes. "Off" sections are set to be transparent rather than rewired. */
@@ -138,29 +178,67 @@ function configureLimiter(ctx: BaseAudioContext, node: AudioWorkletNode, on: boo
   param(p('makeup'), 0, ctx)
 }
 
-/** Brings the graph in line with the mixer: adds/removes strips, then updates every parameter. */
+/**
+ * Brings the graph in line with the mixer: adds/removes strips, updates every parameter, and opens or closes the input
+ * devices strips need (a strip added while running opens its device on the fly).
+ */
 function applyMixer(m: MixerConfig): void {
   mixer = m
   const g = graph
   if (!g) return
-  const wanted = new Set(m.strips.map((s) => s.channel))
-  for (const [channel, nodes] of g.strips) {
-    if (!wanted.has(channel)) {
+  const wanted = new Set(m.strips.map(stripKey))
+  for (const [key, nodes] of g.strips) {
+    if (!wanted.has(key)) {
       destroyStrip(nodes)
-      g.strips.delete(channel)
+      g.strips.delete(key)
     }
   }
   const gains = effectiveGains(m)
   m.strips.forEach((s, i) => {
-    let nodes = g.strips.get(s.channel)
+    const key = stripKey(s)
+    let nodes = g.strips.get(key)
     if (!nodes) {
-      nodes = createStrip(g, s.channel)
-      g.strips.set(s.channel, nodes)
+      nodes = createStrip(g, s)
+      g.strips.set(key, nodes)
     }
     applyStrip(g.ctx, nodes, s, gains[i])
   })
   param(g.masterGain.gain, dbToGain(m.masterDb), g.ctx)
+  param(g.delay.delayTime, Math.min(5, Math.max(0, m.delayMs / 1000)), g.ctx) // changes live, from the mixer's master section
   configureLimiter(g.ctx, g.masterLimiter, m.masterLimiter.on, m.masterLimiter.ceilingDb)
+
+  // Close inputs no strip uses any more; open the ones that are new.
+  const needed = new Map<string, string>()
+  for (const s of m.strips) {
+    const key = sourceKeyOf(g, s)
+    if (key !== null) needed.set(key, s.source?.label ?? g.defaultLabel)
+  }
+  let changed = false
+  for (const [key, src] of g.sources) {
+    if (!needed.has(key)) { closeSource(src); g.sources.delete(key); changed = true }
+  }
+  for (const [key, label] of needed) {
+    if (g.sources.has(key) || g.opening.has(key)) continue
+    const task = openSource(g, key, label).then((src) => {
+      if (graph !== g) return closeSource(src) // torn down while the device was opening
+      g.sources.set(key, src)
+      for (const strip of m.strips) { const n = g.strips.get(stripKey(strip)); if (n && sourceKeyOf(g, strip) === key) wireInput(g, n, strip) }
+    }).finally(() => { g.opening.delete(key); if (graph === g) reportStatus(g) })
+    g.opening.set(key, task)
+  }
+  if (changed) reportStatus(g)
+}
+
+/** Reports every open input and what it delivered, so the interface can show them and offer the right channels. */
+function reportStatus(g: Graph): void {
+  const devices = [...g.sources.values()].map((s) => ({ id: s.key, label: s.label, channels: s.channelCount, ...(s.error ? { error: s.error } : {}) }))
+  const failed = devices.filter((d) => d.error)
+  const allFailed = devices.length > 0 && failed.length === devices.length
+  const message = devices.length
+    ? devices.map((d) => `${d.label}: ${d.error ? `cannot open (${d.error})` : `${d.channels} channel${d.channels === 1 ? '' : 's'}`}`).join(' · ')
+    : 'Running, no inputs in the mix yet'
+  const def = g.defaultKey ? g.sources.get(g.defaultKey) : undefined
+  audioBridge.report({ state: allFailed ? 'error' : 'running', message, channelCount: def?.channelCount ?? 0, devices })
 }
 
 const peakOf = (buf: Float32Array): number => {
@@ -174,7 +252,7 @@ const peakOf = (buf: Float32Array): number => {
 
 function readMeters(g: Graph, m: MixerConfig): Meters {
   const strips = m.strips.map((s) => {
-    const n = g.strips.get(s.channel)
+    const n = g.strips.get(stripKey(s))
     if (!n) return { peakDb: -100, rmsDb: -100, reductionDb: 0 }
     n.meter.getFloatTimeDomainData(n.buf)
     let sumSq = 0
@@ -211,25 +289,112 @@ function startBeeps(c: AudioContext, out: AudioNode): () => void {
   }
   schedule()
   const timer = setInterval(schedule, 500)
-  return () => clearInterval(timer)
+  return () => { clearInterval(timer); osc.stop() }
 }
 
 /** Four steady tones on four channels (220, 440, 880, 1760 Hz at -12 dBFS): lets the mixer be tested without hardware. */
-function startMultiTones(c: AudioContext, merger: ChannelMergerNode): void {
-  ;[220, 440, 880, 1760].forEach((freq, ch) => {
+function startMultiTones(c: AudioContext, merger: ChannelMergerNode): () => void {
+  const oscs = [220, 440, 880, 1760].map((freq, ch) => {
     const osc = c.createOscillator()
     osc.frequency.value = freq
     const level = c.createGain()
     level.gain.value = 0.25
     osc.connect(level).connect(merger, 0, ch)
     osc.start()
+    return osc
   })
+  return () => oscs.forEach((o) => o.stop())
+}
+
+/** Opens one input. A device that cannot be opened (permission, unplugged, busy) comes back with an error instead of throwing. */
+/**
+ * Makes the current video cue's soundtrack follow the shared clock (play, pause, seek), so it can be mixed. The picture is
+ * shown by the output windows; this is a second, audio-only player for the same file, kept within ~150 ms of the clock.
+ */
+function applyVideoPlayback(): void {
+  const el = videoEl
+  if (!el) return
+  const st = playback
+  if (!st?.file) {
+    if (el.dataset.file) { el.pause(); el.removeAttribute('src'); delete el.dataset.file; el.load() }
+    return
+  }
+  if (el.dataset.file !== st.file) { el.src = mediaUrl(st.file); el.dataset.file = st.file }
+  const expected = st.playing ? Math.min(st.durationSec, st.positionSec + (Date.now() - st.atMs) / 1000) : st.positionSec
+  if (Math.abs(el.currentTime - expected) > (st.playing ? 0.15 : 0.05)) el.currentTime = expected
+  if (st.playing && el.paused && expected < st.durationSec) void el.play().catch(() => {})
+  else if (!st.playing && !el.paused) el.pause()
+}
+
+async function openSource(g: Graph, key: string, label: string): Promise<Source> {
+  const { ctx } = g
+  const finish = (node: AudioNode, channelCount: number, stop: () => void, stream: MediaStream | null = null): Source => {
+    const splitter = ctx.createChannelSplitter(Math.max(channelCount, 1))
+    node.connect(splitter)
+    return { key, label, channelCount, splitter, stream, stop }
+  }
+  if (key === 'app:video') {
+    // crossOrigin is required, or the browser would deliver silence from a media element on another origin
+    const el = new Audio()
+    el.crossOrigin = 'anonymous'
+    el.preload = 'auto'
+    videoEl = el
+    const upmix = ctx.createGain() // a mono soundtrack is spread over both channels
+    upmix.channelCount = 2
+    upmix.channelCountMode = 'explicit'
+    upmix.channelInterpretation = 'speakers'
+    ctx.createMediaElementSource(el).connect(upmix)
+    const timer = setInterval(applyVideoPlayback, 250) // also corrects drift while playing
+    applyVideoPlayback()
+    return finish(upmix, 2, () => {
+      clearInterval(timer)
+      el.pause()
+      el.removeAttribute('src')
+      el.load()
+      if (videoEl === el) videoEl = null
+    })
+  }
+  if (key === 'test:beep') {
+    const merger = ctx.createChannelMerger(2)
+    const mono = ctx.createGain()
+    mono.connect(merger, 0, 0)
+    mono.connect(merger, 0, 1)
+    return finish(merger, 2, startBeeps(ctx, mono))
+  }
+  if (key === 'test:tones') {
+    const merger = ctx.createChannelMerger(4)
+    return finish(merger, 4, startMultiTones(ctx, merger))
+  }
+  try {
+    // Processing constraints can force mono/stereo downmix, so they are all switched off.
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { deviceId: { exact: key }, channelCount: { ideal: 48 }, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+    })
+    const channelCount = stream.getAudioTracks()[0].getSettings().channelCount ?? 2
+    return finish(ctx.createMediaStreamSource(stream), channelCount, () => {}, stream)
+  } catch (err) {
+    return { key, label, channelCount: 0, splitter: null, stream: null, error: (err as Error).message, stop: () => {} }
+  }
+}
+
+/** Which input strips without a device of their own use: the Audio panel's source. */
+function defaultSource(cfg: AudioConfig): { key: string | null; label: string } {
+  switch (cfg.source.type) {
+    case 'device': return { key: cfg.source.deviceId, label: cfg.source.label }
+    case 'test': return { key: 'test:beep', label: 'Test beep (stereo)' }
+    case 'multitest': return { key: 'test:tones', label: 'Test tones (4 channels)' }
+    default: return { key: null, label: '' }
+  }
 }
 
 async function apply(cfg: AudioConfig, initialMixer: MixerConfig): Promise<void> {
   teardown()
   mixer = initialMixer
-  if (cfg.source.type === 'silence') return audioBridge.report({ state: 'idle', message: 'Silence', channelCount: 0 })
+  const def = defaultSource(cfg)
+  // The engine runs for a default source, or when the mixer's Start was pressed and strips name devices of their own.
+  if (def.key === null && !(cfg.mixerSources && initialMixer.strips.some((s) => s.source))) {
+    return audioBridge.report({ state: 'idle', message: 'Audio is off', channelCount: 0, devices: [] })
+  }
 
   let ctx: AudioContext | null = null
   try {
@@ -238,44 +403,12 @@ async function apply(cfg: AudioConfig, initialMixer: MixerConfig): Promise<void>
     await ctx.audioWorklet.addModule('gate-worklet.js')
     await ctx.audioWorklet.addModule('comp-worklet.js')
     const c = ctx
-    const stop: (() => void)[] = []
-    let stream: MediaStream | null = null
-    let sourceNode: AudioNode
-    let channelCount: number
-    let message: string
 
-    if (cfg.source.type === 'test') {
-      const merger = c.createChannelMerger(2)
-      const mono = c.createGain()
-      mono.connect(merger, 0, 0)
-      mono.connect(merger, 0, 1)
-      stop.push(startBeeps(c, mono))
-      sourceNode = merger
-      channelCount = 2
-      message = 'Test beep (1 kHz each second)'
-    } else if (cfg.source.type === 'multitest') {
-      const merger = c.createChannelMerger(4)
-      startMultiTones(c, merger)
-      sourceNode = merger
-      channelCount = 4
-      message = 'Multichannel test: 220 / 440 / 880 / 1760 Hz on channels 1-4'
-    } else {
-      // Processing constraints can force mono/stereo downmix, so they are all switched off.
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: { deviceId: { exact: cfg.source.deviceId }, channelCount: { ideal: 48 }, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-      })
-      channelCount = stream.getAudioTracks()[0].getSettings().channelCount ?? 2
-      sourceNode = c.createMediaStreamSource(stream)
-      message = `${cfg.source.label}: ${channelCount} channel(s) delivered`
-    }
-
-    const splitter = c.createChannelSplitter(Math.max(channelCount, 1))
-    sourceNode.connect(splitter)
     const sum = c.createGain()
     const masterLimiter = new AudioWorkletNode(c, 'compressor', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCount: 2, channelCountMode: 'explicit' })
     const masterGain = c.createGain()
     const delay = c.createDelay(5)
-    delay.delayTime.value = Math.min(5, Math.max(0, cfg.delayMs / 1000))
+    delay.delayTime.value = Math.min(5, Math.max(0, initialMixer.delayMs / 1000))
     const tap = new AudioWorkletNode(c, 'pcm-tap', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCount: 2, channelCountMode: 'explicit' })
     const mute = c.createGain()
     mute.gain.value = 0 // keeps analysers and the tap pulled by the graph without playing anything out loud
@@ -286,9 +419,10 @@ async function apply(cfg: AudioConfig, initialMixer: MixerConfig): Promise<void>
     const masterMeters = [c.createAnalyser(), c.createAnalyser()] as [AnalyserNode, AnalyserNode]
     masterMeters.forEach((a, i) => { a.fftSize = 1024; masterSplit.connect(a, i); a.connect(mute) })
 
-    const g: Graph = { ctx: c, stream, channelCount, splitter, sum, masterLimiter, masterGain, masterMeters, mute, strips: new Map(), timers: [], stop }
+    const g: Graph = { ctx: c, sum, masterLimiter, masterGain, delay, masterMeters, mute, strips: new Map(), sources: new Map(), opening: new Map(), defaultKey: def.key, defaultLabel: def.label, timers: [] }
     graph = g
     applyMixer(initialMixer)
+    await Promise.allSettled([...g.opening.values()]) // wait for the first devices so the status already says what each delivered
 
     let batch: Float32Array[] = []
     let frames = 0
@@ -305,14 +439,14 @@ async function apply(cfg: AudioConfig, initialMixer: MixerConfig): Promise<void>
       audioBridge.pcm(out.buffer)
     }
     g.timers.push(setInterval(() => { if (mixer) audioBridge.meters(readMeters(g, mixer)) }, METER_INTERVAL_MS))
-
-    audioBridge.report({ state: 'running', message, channelCount })
+    reportStatus(g)
   } catch (err) {
     teardown()
     void ctx?.close()
-    audioBridge.report({ state: 'error', message: (err as Error).message, channelCount: 0 })
+    audioBridge.report({ state: 'error', message: (err as Error).message, channelCount: 0, devices: [] })
   }
 }
 
 audioBridge.onApply(({ config, mixer: m }) => void apply(config, m))
+audioBridge.onPlayback((st) => { playback = st; applyVideoPlayback() })
 audioBridge.onMixer((m) => applyMixer(m))

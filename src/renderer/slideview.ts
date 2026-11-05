@@ -1,3 +1,4 @@
+import { TONE_COLORS, announceFontPx, type Announcement } from '../shared/announce'
 import { mediaUrl, type Background, type Look, type PlaybackState, type Slide, type VideoSource } from '../shared/types'
 
 /** Reference height that `Look.fontSize` is authored against; text scales with output height. */
@@ -8,6 +9,8 @@ export interface RenderOptions {
   liveVideo?: boolean
   /** Only real output windows may play video sound; operator previews are always silent. */
   audioAllowed?: boolean
+  /** Show only the live source (the stream's camera-only mode). */
+  cameraOnly?: boolean
 }
 
 /**
@@ -20,12 +23,28 @@ export class SlideView {
   private readonly backdrop = document.createElement('div')
   private readonly media = document.createElement('div')
   private readonly videoLayer = document.createElement('div')
+  private readonly pictureLayer = document.createElement('div')
+  private pictureFile = ''
+  private readonly announceLayer = document.createElement('div')
+  private readonly liveBadge = document.createElement('div')
+  private readonly stageClock = document.createElement('div')
+  private readonly stageNext = document.createElement('div')
+  private clockTimer: ReturnType<typeof setInterval> | null = null
+  private nextSlide: Slide | null = null
+  private stage = false
+  private cameraOnlyOn = false
+  private hasText = false
+  private streamLive = false
+  private badgeWanted = false
   private readonly content = document.createElement('div')
   private readonly label = document.createElement('div')
   private readonly text = document.createElement('div')
   private sourceKey = ''
   private backdropKey = ''
   private videoKey = ''
+  private announcement: Announcement | null = null
+  private lastW = 1920
+  private lastH = 1080
   private video: HTMLVideoElement | null = null
   private videoFile = ''
   private playback: PlaybackState | null = null
@@ -48,30 +67,158 @@ export class SlideView {
     Object.assign(this.media.style, { position: 'absolute', inset: '0' })
     Object.assign(this.videoLayer.style, { position: 'absolute', inset: '0', background: '#000' })
     this.videoLayer.hidden = true
+    // A presentation slide: the whole picture on black (never cropped), above the camera, below text and announcements.
+    Object.assign(this.pictureLayer.style, { position: 'absolute', inset: '0', background: '#000' })
+    this.pictureLayer.hidden = true
+    // The announcement sits above everything and ignores the mouse: it never changes what is underneath.
+    Object.assign(this.announceLayer.style, { position: 'absolute', inset: '0', pointerEvents: 'none', zIndex: '10' })
+    this.announceLayer.dataset.announcement = ''
+    this.announceLayer.hidden = true
     Object.assign(this.content.style, { position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center' })
     Object.assign(this.label.style, { opacity: '.6', fontSize: '.4em', marginBottom: '.5em', textTransform: 'uppercase', letterSpacing: '.1em' })
     Object.assign(this.text.style, { whiteSpace: 'pre-wrap', lineHeight: '1.25', textShadow: '0 2px 12px rgba(0,0,0,.6)' })
+    this.content.dataset.slideText = ''
     this.content.append(this.label, this.text)
-    this.root.append(this.backdrop, this.media, this.videoLayer, this.content)
+    // A small "LIVE" pill in the corner, below the announcement. Ignores the mouse like the announcement does.
+    Object.assign(this.liveBadge.style, {
+      position: 'absolute', zIndex: '9', pointerEvents: 'none', display: 'flex', alignItems: 'center', gap: '0.45em',
+      background: 'rgba(200,20,20,.92)', color: '#fff', fontWeight: '800', letterSpacing: '.12em', borderRadius: '0.4em', boxShadow: '0 2px 10px rgba(0,0,0,.4)',
+    })
+    this.liveBadge.dataset.liveBadge = ''
+    this.liveBadge.hidden = true
+    // Stage monitor extras: the clock and the "next" box are only shown by the 'stage' layout.
+    Object.assign(this.stageClock.style, { position: 'absolute', fontWeight: '700', fontVariantNumeric: 'tabular-nums', opacity: '.85' })
+    Object.assign(this.stageNext.style, { position: 'absolute', textAlign: 'left', whiteSpace: 'pre-wrap', lineHeight: '1.25', borderTop: '2px solid rgba(255,255,255,.25)', paddingTop: '0.5em', overflow: 'hidden', color: '#cbd5e1' })
+    this.stageClock.dataset.stageClock = ''
+    this.stageNext.dataset.stageNext = ''
+    this.stageClock.hidden = true
+    this.stageNext.hidden = true
+    this.root.append(this.backdrop, this.media, this.videoLayer, this.pictureLayer, this.content, this.stageClock, this.stageNext, this.liveBadge, this.announceLayer)
   }
 
   render(look: Look, slide: Slide | null, baseW: number, baseH: number, opts: RenderOptions = { liveVideo: true }): void {
+    this.lastW = baseW
+    this.lastH = baseH
     const s = this.root.style
     s.width = `${baseW}px`
     s.height = `${baseH}px`
     s.padding = `${baseW * 0.04}px`
-    s.background = look.background
+    s.background = opts.cameraOnly ? '#000' : look.background
     s.color = look.textColor
     s.fontSize = `${(look.fontSize * baseH) / REFERENCE_HEIGHT}px`
-    this.label.textContent = look.showLabel && slide ? slide.label : ''
-    this.text.textContent = slide?.text ?? ''
+    // Layout: centred, or a caption bar along the bottom (for text over live video). An optional dark box keeps
+    // text readable on top of camera pictures.
+    const lower = look.layout === 'lower-third'
+    const stage = look.layout === 'stage'
+    this.stage = stage
+    const boxed = look.textBoxOpacity > 0
+    s.justifyContent = lower ? 'flex-end' : 'center'
+    s.alignItems = stage ? 'stretch' : 'center'
+    s.textAlign = stage ? 'left' : 'center'
+    if (stage) s.background = '#000' // a stage monitor is always high-contrast on black
+    Object.assign(this.content.style, {
+      width: lower || stage ? '100%' : 'auto',
+      alignItems: stage ? 'flex-start' : 'center',
+      marginBottom: lower ? `${baseH * 0.04}px` : stage ? `${baseH * 0.26}px` : '0',
+      padding: boxed ? '0.3em 0.7em' : '0',
+      borderRadius: boxed ? '0.25em' : '0',
+      background: boxed ? `rgba(0,0,0,${look.textBoxOpacity})` : 'transparent',
+      boxSizing: 'border-box',
+    })
+    this.label.textContent = (look.showLabel || stage) && slide ? slide.label : ''
+    // The stage monitor never plays the video: it says what is on and shows the clock.
+    this.text.textContent = stage && slide?.video ? `▶ ${slide.video.title}` : stage && slide?.picture ? slide.label : slide?.text ?? ''
+    this.hasText = this.text.textContent.trim() !== ''
+    this.syncContent()
     const live = opts.liveVideo !== false
-    this.setBackdrop(look.showMedia ? (slide?.background ?? null) : null, live)
-    this.setSource(look.source, live)
-    this.setVideo(slide?.video ?? null, look, live, opts.audioAllowed === true)
+    // A picture or video: the slide's own first, then the screen's, then a colour the slide brings. Stage monitors stay plain.
+    const own = slide?.background ?? null
+    const wanted = own && own.kind !== 'css' ? own : look.backgroundMedia ?? own
+    this.setBackdrop(look.showMedia && !stage ? wanted : null, live)
+    this.setSource(stage ? { type: 'none' } : look.source, live)
+    this.setVideo(stage ? null : slide?.video ?? null, look, live, opts.audioAllowed === true)
+    this.setPicture(stage ? null : slide?.picture?.file ?? null)
+    this.drawStage()
+    this.setCameraOnly(opts.cameraOnly === true)
+    this.badgeWanted = look.liveBadge
+    this.drawBadge()
+    this.drawAnnouncement(false) // the screen may have been resized
+  }
+
+  private setPicture(file: string | null): void {
+    if ((file ?? '') === this.pictureFile) return
+    this.pictureFile = file ?? ''
+    this.pictureLayer.hidden = !file
+    if (!file) return this.pictureLayer.replaceChildren()
+    const img = document.createElement('img')
+    img.src = mediaUrl(file)
+    Object.assign(img.style, { position: 'absolute', inset: '0', width: '100%', height: '100%', objectFit: 'contain' })
+    this.pictureLayer.replaceChildren(img)
+  }
+
+  /** The slide that comes after this one, for the stage monitor. */
+  setNext(slide: Slide | null): void {
+    this.nextSlide = slide
+    this.drawStage()
+  }
+
+  private drawStage(): void {
+    const on = this.stage
+    this.stageClock.hidden = !on
+    this.stageNext.hidden = !on
+    if (!on) {
+      if (this.clockTimer) clearInterval(this.clockTimer)
+      this.clockTimer = null
+      return
+    }
+    const H = this.lastH
+    const W = this.lastW
+    const tick = () => { this.stageClock.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
+    tick()
+    if (!this.clockTimer) this.clockTimer = setInterval(tick, 1000)
+    Object.assign(this.stageClock.style, { top: `${H * 0.03}px`, right: `${W * 0.04}px`, fontSize: `${H * 0.07}px` })
+    const tag = document.createElement('div')
+    tag.textContent = 'NEXT'
+    Object.assign(tag.style, { fontSize: '.6em', letterSpacing: '.12em', fontWeight: '800', opacity: '.6', marginBottom: '.2em' })
+    const body = document.createElement('div')
+    body.textContent = this.nextSlide ? (this.nextSlide.video ? `▶ ${this.nextSlide.video.title}` : this.nextSlide.picture ? this.nextSlide.label : this.nextSlide.text) : 'End of the list'
+    if (!this.nextSlide) body.style.opacity = '.5'
+    this.stageNext.replaceChildren(tag, body)
+    Object.assign(this.stageNext.style, { left: `${W * 0.04}px`, right: `${W * 0.04}px`, bottom: `${H * 0.03}px`, height: `${H * 0.22}px`, fontSize: `${H * 0.05}px` })
+  }
+
+  /** Camera-only: hides everything except the live source layer (text, slide media, cue videos and announcements). */
+  private setCameraOnly(on: boolean): void {
+    for (const layer of [this.backdrop, this.videoLayer, this.pictureLayer, this.announceLayer]) layer.style.display = on ? 'none' : ''
+    this.cameraOnlyOn = on
+    this.syncContent()
+  }
+
+  /** The text block is only there when there is something to say: an empty one would leave its dark box on screen. */
+  private syncContent(): void {
+    this.content.style.display = this.cameraOnlyOn || !this.hasText ? 'none' : 'flex'
+  }
+
+  /** Whether the stream is on air; the badge shows only on screens whose look asks for it. */
+  setStreamLive(live: boolean): void {
+    this.streamLive = live
+    this.drawBadge()
+  }
+
+  private drawBadge(): void {
+    const b = this.liveBadge
+    b.hidden = !(this.badgeWanted && this.streamLive)
+    if (b.hidden) return
+    const px = this.lastH * 0.035
+    const dot = document.createElement('span')
+    Object.assign(dot.style, { width: '0.6em', height: '0.6em', borderRadius: '50%', background: '#fff' })
+    b.replaceChildren(dot, document.createTextNode('LIVE'))
+    Object.assign(b.style, { top: `${this.lastH * 0.03}px`, right: `${this.lastH * 0.03}px`, fontSize: `${px}px`, padding: '0.3em 0.7em' })
   }
 
   dispose(): void {
+    if (this.clockTimer) clearInterval(this.clockTimer)
+    this.clockTimer = null
     this.teardownVideo()
     this.stopSource()
     this.media.replaceChildren()
@@ -79,6 +226,48 @@ export class SlideView {
     this.sourceKey = ''
     this.backdropKey = ''
     this.videoKey = ''
+  }
+
+  /** Puts a live announcement over everything (or removes it). Pass null for screens it does not apply to. */
+  setAnnouncement(a: Announcement | null): void {
+    const isNew = a?.id !== this.announcement?.id
+    this.announcement = a
+    this.drawAnnouncement(isNew)
+  }
+
+  private drawAnnouncement(animate: boolean): void {
+    const a = this.announcement
+    const layer = this.announceLayer
+    if (!a) {
+      layer.hidden = true
+      layer.replaceChildren()
+      return
+    }
+    const W = this.lastW
+    const H = this.lastH
+    const box = document.createElement('div')
+    box.textContent = a.text
+    Object.assign(box.style, {
+      position: 'absolute',
+      background: TONE_COLORS[a.tone],
+      color: '#fff',
+      fontFamily: 'system-ui, sans-serif',
+      fontWeight: '800',
+      lineHeight: '1.2',
+      textAlign: 'center',
+      whiteSpace: 'pre-wrap',
+      textShadow: '0 2px 8px rgba(0,0,0,.35)',
+      fontSize: `${announceFontPx(a.text, a.style, H)}px`,
+      boxSizing: 'border-box',
+    })
+    if (a.style === 'fullscreen') {
+      Object.assign(box.style, { inset: '0', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: `${H * 0.06}px ${W * 0.06}px` })
+    } else {
+      Object.assign(box.style, { left: '0', right: '0', [a.style === 'banner-top' ? 'top' : 'bottom']: '0', padding: `${H * 0.025}px ${W * 0.04}px`, boxShadow: '0 0 24px rgba(0,0,0,.45)' })
+    }
+    layer.replaceChildren(box)
+    layer.hidden = false
+    if (animate && typeof box.animate === 'function') box.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 150 }) // appears at once, just not abruptly
   }
 
   /** Latest shared clock; the video follows it (see applyPlayback). */
@@ -272,8 +461,11 @@ function mountCamera(host: HTMLElement, source: Extract<VideoSource, { type: 'ca
 
 export interface ScaledPreview {
   box: HTMLElement
-  update(look: Look, slide: Slide | null, baseW: number, baseH: number, liveVideo?: boolean): void
+  update(look: Look, slide: Slide | null, baseW: number, baseH: number, liveVideo?: boolean, cameraOnly?: boolean): void
   setPlayback(state: PlaybackState): void
+  setAnnouncement(a: Announcement | null): void
+  setStreamLive(live: boolean): void
+  setNext(slide: Slide | null): void
   dispose(): void
 }
 
@@ -294,13 +486,16 @@ export function scaledPreview(): ScaledPreview {
 
   return {
     box,
-    update(look, slide, w, h, liveVideo = false) {
+    update(look, slide, w, h, liveVideo = false, cameraOnly = false) {
       baseW = w
       box.style.aspectRatio = `${w} / ${h}`
-      view.render(look, slide, w, h, { liveVideo, audioAllowed: false })
+      view.render(look, slide, w, h, { liveVideo, audioAllowed: false, cameraOnly })
       applyScale()
     },
     setPlayback: (state) => view.setPlayback(state),
+    setAnnouncement: (a) => view.setAnnouncement(a),
+    setStreamLive: (live) => view.setStreamLive(live),
+    setNext: (s) => view.setNext(s),
     dispose() {
       observer.disconnect()
       view.dispose()

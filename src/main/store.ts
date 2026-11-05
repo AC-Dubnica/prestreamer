@@ -44,6 +44,12 @@ export class ListStore<T extends { id: string }> {
     return this.items
   }
 
+  /** Replaces the whole list (used when the owner keeps its own ordered copy, such as the screens). */
+  replaceAll(items: T[]): void {
+    this.items = items
+    this.persist()
+  }
+
   remove(id: string): T[] {
     this.items = this.items.filter((x) => x.id !== id)
     this.persist()

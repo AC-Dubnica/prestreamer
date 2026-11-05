@@ -59,6 +59,8 @@ const checks = [
   ['gate closes below its threshold', L('gate', 440) < base - 30, fmt(L('gate', 440) - base)],
   ['mute silences the strip', L('mute', 440) < base - 60, fmt(L('mute', 440) - base)],
   ['solo lets only the soloed strip through', L('solo-880', 880) > L('solo-880', 440) + 40, `880 Hz ${fmt(L('solo-880', 880))} vs 440 Hz ${fmt(L('solo-880', 440))}`],
+  ['strips from two different inputs mix together: the default source\'s 440 Hz tone is still there', Math.abs(L('two-sources', 440) - base) < 1.5, fmt(L('two-sources', 440) - base)],
+  ['...and the other input (a 1 kHz beep) is heard too, while it is absent from the single-source mix', L('two-sources', 1000) > -40 && L('baseline', 1000) < -70, `${fmt(L('two-sources', 1000))} vs ${fmt(L('baseline', 1000))}`],
   ['high-pass at 500 Hz cuts a 220 Hz tone', L('ch0-hpf500', 220) < L('ch0-baseline', 220) - 8, fmt(L('ch0-hpf500', 220) - L('ch0-baseline', 220))],
 ]
 

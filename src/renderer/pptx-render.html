@@ -1,0 +1,15 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>PowerPoint renderer</title>
+    <style>
+      html, body { margin: 0; background: #fff; overflow: hidden }
+      /* only the slide is wanted in the screenshot: hide the previewer's own page buttons and counter */
+      .pptx-preview-wrapper > :not(.pptx-preview-slide-wrapper) { display: none !important }
+    </style>
+  </head>
+  <body>
+    <script src="pptx-render.js"></script>
+  </body>
+</html>

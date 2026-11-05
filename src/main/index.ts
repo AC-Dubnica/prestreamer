@@ -1,31 +1,47 @@
-import { app, BrowserWindow, ipcMain, protocol, session } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, protocol, session } from 'electron'
+import { homedir } from 'node:os'
+import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { AUDIO_IPC, IPC, type PlaybackCommand, MEDIA_SCHEME, type AudioConfig, type MediaKind, type ScreenConfig, type Service, type Slide, type Song, type StreamStartRequest } from '../shared/types'
-import { pickMedia, serveMedia } from './library'
-import { ListStore } from './store'
+import { deleteFromLibrary, listLibrary, pickMedia, pickPictures, serveMedia } from './library'
+import { ListStore, writeJsonAtomic } from './store'
 import { streamKey } from './secrets'
+import { SEED_QUICK_MESSAGES, sanitizeAnnounceRequest, sanitizeQuickMessage, type QuickMessage } from '../shared/announce'
+import { defaultScreens } from '../shared/screens'
 import { SEED_SERVICES, SEED_SONGS } from '../shared/songs'
 import { ScreenManager } from './screens'
 import { AudioBridge } from './audio'
+import { defaultStreamSettings, sanitizeStreamSettings, type StreamSettings } from '../shared/stream-settings'
+import { BibleStore, autoImportFromQuelea, findBibleFiles, queleaBibleFolders } from './bibles'
 import { Playback } from './playback'
+import { readFileSync } from 'node:fs'
 import { setBundledToolsEnabled } from './tools'
 import { pickVideo } from './video'
+import { pickPresentation } from './presentations'
 import { runDevHooks } from './devhooks'
+import { defaultSession, fitBounds, safeToRestore, sanitizeSession, type Session } from '../shared/session'
 import { Streamer, fileTarget, youtubeTarget } from './streamer'
 
-// Tests and CI point this at a scratch folder so they never touch real songs, services, mixer or stream key.
-// (resolved first: Chromium aborts without a message on a path containing "..")
-if (process.env.PRESTREAMER_USER_DATA) app.setPath('userData', resolve(process.env.PRESTREAMER_USER_DATA))
+app.setName('PreStreamer')
+const APP_ICON = join(__dirname, '..', '..', 'build', 'icon.png')
+// Data stays in the folder named "prestreamer" (what earlier versions used), whatever the display name is, so
+// renaming the app does not hide existing songs and settings. Tests and CI point PRESTREAMER_USER_DATA at a scratch
+// folder so they never touch real data. Resolved first: Chromium aborts without a message on a path containing "..".
+app.setPath('userData', process.env.PRESTREAMER_USER_DATA ? resolve(process.env.PRESTREAMER_USER_DATA) : join(app.getPath('appData'), 'prestreamer'))
 
 // Must run before app ready. 'stream' lets <video> seek/loop via range requests.
 protocol.registerSchemesAsPrivileged([
-  { scheme: MEDIA_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } },
+  // corsEnabled: the mixer's audio window plays video soundtracks from here, and the browser delivers silence unless CORS allows it
+  { scheme: MEDIA_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true } },
 ])
 
 let operator: BrowserWindow | null = null
 const userData = () => app.getPath('userData')
 const songStore = new ListStore<Song>('songs.json', SEED_SONGS, userData)
 const serviceStore = new ListStore<Service>('services.json', SEED_SERVICES, userData)
+const screenStore = new ListStore<ScreenConfig>('screens.json', defaultScreens(), userData)
+const quickStore = new ListStore<QuickMessage>('announcements.json', SEED_QUICK_MESSAGES, userData)
+const bibleStore = new BibleStore(() => join(userData(), 'bibles'))
 
 // Created in whenReady: Electron's `screen` module is unusable before then.
 let screens: ScreenManager
@@ -33,19 +49,76 @@ let streamer: Streamer
 let audio: AudioBridge
 let playback: Playback
 
+const streamSettingsPath = () => join(userData(), 'stream-settings.json')
+let streamSettings: StreamSettings = defaultStreamSettings
+
+/** Settings saved last time (validated), then PRESTREAMER_STREAM_SETTINGS, a test knob that overrides them. */
+function loadStreamSettings(): void {
+  try {
+    streamSettings = sanitizeStreamSettings(JSON.parse(readFileSync(streamSettingsPath(), 'utf8')))
+  } catch {
+    streamSettings = defaultStreamSettings
+  }
+  if (process.env.PRESTREAMER_STREAM_SETTINGS) streamSettings = sanitizeStreamSettings(JSON.parse(process.env.PRESTREAMER_STREAM_SETTINGS))
+}
+
+// --- Remembering how the app was left: window position and open screens -----------------------------------------------------
+const sessionPath = () => join(userData(), 'session.json')
+let sessionState: Session = defaultSession()
+let quitting = false
+let sessionTimer: ReturnType<typeof setTimeout> | null = null
+
+function loadSession(): void {
+  try { sessionState = sanitizeSession(JSON.parse(readFileSync(sessionPath(), 'utf8'))) } catch { sessionState = defaultSession() }
+}
+/** Saved shortly after a change (dragging a window fires many events). Not while quitting: closing the screens must not forget them. */
+function saveSessionSoon(): void {
+  if (quitting) return
+  if (sessionTimer) clearTimeout(sessionTimer)
+  sessionTimer = setTimeout(() => { try { writeJsonAtomic(sessionPath(), sessionState) } catch { /* remembering is a convenience */ } }, 400)
+}
+function rememberWindow(win: BrowserWindow): void {
+  const note = () => {
+    if (win.isDestroyed() || quitting || win.isMinimized() || win.isFullScreen()) return
+    sessionState.maximized = win.isMaximized()
+    if (!sessionState.maximized) sessionState.bounds = win.getBounds()
+    saveSessionSoon()
+  }
+  win.on('resize', note)
+  win.on('move', note)
+  win.on('maximize', note)
+  win.on('unmaximize', note)
+}
+/** Opens the screens that were open last time, except those that would cover the controls. Never starts a stream. */
+function restoreScreens(): void {
+  const { screens: all, displays } = screens.getState()
+  for (const id of sessionState.liveScreens) {
+    const cfg = all.find((s) => s.id === id)
+    if (cfg && safeToRestore(cfg, displays)) screens.setLive(id, true)
+  }
+}
+
 function createOperator(): void {
+  loadSession()
+  const bounds = fitBounds(sessionState.bounds, screens.getState().displays)
   operator = new BrowserWindow({
-    width: 1400,
-    height: 860,
-    title: 'prestreamer',
+    width: bounds?.width ?? 1400,
+    height: bounds?.height ?? 860,
+    ...(bounds ? { x: bounds.x, y: bounds.y } : {}),
+    title: 'PreStreamer',
+    // Window/taskbar icon for Windows and Linux when running from source (installers carry the icon in the executable).
+    ...(existsSync(APP_ICON) ? { icon: APP_ICON } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       sandbox: true,
     },
   })
+  if (sessionState.maximized) operator.maximize()
+  rememberWindow(operator)
   operator.loadFile(join(__dirname, '../renderer/operator.html'))
   operator.on('closed', async () => {
+    quitting = true
     operator = null
     await streamer.stop()
     audio.close()
@@ -65,40 +138,95 @@ async function startStream(req: StreamStartRequest): Promise<void> {
   if (!cfg || cfg.kind !== 'virtual') throw new Error('Streaming needs a virtual screen')
   if (!screens.getState().live.includes(cfg.id)) screens.setLive(cfg.id, true)
 
+  // PRESTREAMER_RTMP_URL points the stream at a local RTMP server (the end-to-end tests run one), never at YouTube.
+  const testServer = process.env.PRESTREAMER_RTMP_URL
   let key = ''
-  if (req.mode === 'youtube') {
+  if (req.mode === 'youtube' && !testServer) {
     // A typed key is remembered (encrypted); otherwise the saved one is used.
     const typed = req.streamKey?.trim()
     if (typed) streamKey.save(typed)
     key = typed || streamKey.load() || ''
     if (!key) throw new Error('YouTube stream key is required (enter it once; it is then remembered)')
   }
-  const target =
-    req.mode === 'youtube' ? youtubeTarget(key) : fileTarget(req.filePath || join(app.getPath('videos'), 'prestreamer-test.mkv'))
-  await streamer.start(() => screens.lastFrame(cfg.id), target, key, audio.live ? audio.port : 0, (t) => audio.armSync(t))
+  const target = testServer
+    ? { url: testServer, format: 'flv' as const, label: 'Local RTMP server (test)' }
+    : req.mode === 'youtube'
+      ? youtubeTarget(key)
+      : fileTarget(req.filePath || join(app.getPath('videos'), 'PreStreamer-test.mkv'))
+  // Always the mixer's port: it carries silence while the mixer is off, so the mixer can be started at any time.
+  const settings = streamSettings // fixed for the whole stream, whatever is edited meanwhile
+  screens.setVirtualFrameRate(settings.fps)
+  await streamer.start(() => screens.lastFrame(cfg.id), target, key, req.audio === 'none' ? 0 : audio.port, (t) => audio.armSync(t), settings)
 }
 
 ipcMain.handle(IPC.getState, () => screens.getState())
 ipcMain.handle(IPC.addVirtual, (_e, name: string, w: number, h: number) => screens.addVirtual(name, w, h))
+ipcMain.handle(IPC.addDisplayScreen, (_e, name: string, opts?: { stage?: boolean; mirrorOf?: string }) => screens.addDisplayScreen(name, null, { stage: opts?.stage === true, mirrorOf: typeof opts?.mirrorOf === 'string' ? opts.mirrorOf : undefined }))
 ipcMain.handle(IPC.updateScreen, (_e, id: string, patch: Partial<ScreenConfig>) => screens.update(id, patch))
 ipcMain.handle(IPC.removeScreen, (_e, id: string) => screens.remove(id))
+ipcMain.handle(IPC.identifyDisplays, () => screens.identifyDisplays())
+ipcMain.handle(IPC.moveScreen, (_e, id: string, delta: number) => screens.move(id, delta < 0 ? -1 : 1))
 ipcMain.handle(IPC.setLive, (_e, id: string, live: boolean) => screens.setLive(id, live))
 ipcMain.handle(IPC.showSlide, (_e, slide: Slide | null) => presentSlide(slide))
 ipcMain.handle(IPC.playbackCommand, (_e, cmd: PlaybackCommand) => playback.command(cmd))
 ipcMain.handle(IPC.playbackGet, () => playback.get())
 ipcMain.on(IPC.playbackReport, (_e, id: string, pos: number) => screens.report(id, pos))
+ipcMain.handle(IPC.presentationImport, () => pickPresentation(operator, (msg) => operator?.webContents.send(IPC.presentationStatus, msg)))
 ipcMain.handle(IPC.videoImport, () => pickVideo(operator, (pct) => operator?.webContents.send(IPC.videoProgress, pct)))
 ipcMain.handle(IPC.outputInit, (_e, id: string) => screens.payloadFor(id))
 ipcMain.handle(IPC.streamStart, (_e, req: StreamStartRequest) => startStream(req))
 ipcMain.handle(IPC.streamStop, () => streamer.stop())
 ipcMain.handle(IPC.streamGetStatus, () => streamer.getStatus())
+ipcMain.handle(IPC.streamSettingsGet, () => streamSettings)
+ipcMain.handle(IPC.streamSettingsSet, (_e, raw: unknown) => {
+  streamSettings = sanitizeStreamSettings(raw)
+  writeJsonAtomic(streamSettingsPath(), streamSettings)
+  return streamSettings
+})
 ipcMain.handle(IPC.songsList, () => songStore.list())
 ipcMain.handle(IPC.songsSave, (_e, song: Song) => songStore.save(song))
 ipcMain.handle(IPC.songsDelete, (_e, id: string) => songStore.remove(id))
 ipcMain.handle(IPC.servicesList, () => serviceStore.list())
 ipcMain.handle(IPC.servicesSave, (_e, svc: Service) => serviceStore.save(svc))
 ipcMain.handle(IPC.servicesDelete, (_e, id: string) => serviceStore.remove(id))
+ipcMain.handle(IPC.announceShow, (_e, raw: unknown) => {
+  const req = sanitizeAnnounceRequest(raw)
+  if (!req) return false // nothing to show
+  screens.showAnnouncement(req)
+  return true
+})
+ipcMain.handle(IPC.announceClear, () => screens.clearAnnouncement())
+ipcMain.handle(IPC.setNextSlide, (_e, slide: Slide | null) => screens.setNextSlide(slide ?? null))
+ipcMain.handle(IPC.setCameraOnly, (_e, on: unknown) => screens.setCameraOnly(on === true))
+const quickList = (): QuickMessage[] => quickStore.list().map(sanitizeQuickMessage).filter((q): q is QuickMessage => q !== null)
+ipcMain.handle(IPC.announceQuickList, () => quickList())
+ipcMain.handle(IPC.announceQuickSave, (_e, raw: unknown) => {
+  const q = sanitizeQuickMessage(raw)
+  if (q) quickStore.save(q)
+  return quickList()
+})
+ipcMain.handle(IPC.announceQuickDelete, (_e, id: string) => { quickStore.remove(id); return quickList() })
+ipcMain.handle(IPC.bibleList, () => bibleStore.list())
+ipcMain.handle(IPC.bibleChapter, (_e, id: string, book: number, chapter: number) => bibleStore.chapter(id, book, chapter))
+ipcMain.handle(IPC.bibleRemove, (_e, id: string) => { bibleStore.remove(id); return bibleStore.list() })
+ipcMain.handle(IPC.bibleImportPaths, (_e, paths: string[]) => paths.map((p) => bibleStore.importFile(p)))
+ipcMain.handle(IPC.bibleImportDialog, async () => {
+  const options: Electron.OpenDialogOptions = { title: 'Choose Bible files (Zefania XML)', properties: ['openFile', 'multiSelections'], filters: [{ name: 'Zefania XML Bible', extensions: ['xml'] }] }
+  const result = operator ? await dialog.showOpenDialog(operator, options) : await dialog.showOpenDialog(options)
+  return result.canceled ? [] : result.filePaths.map((p) => bibleStore.importFile(p))
+})
+ipcMain.handle(IPC.bibleImportQuelea, () => {
+  const { folders, files } = findBibleFiles(queleaBibleFolders(homedir(), process.platform))
+  return { folders, results: files.map((f) => bibleStore.importFile(f)) }
+})
 ipcMain.handle(IPC.mediaImport, (_e, kind: MediaKind) => pickMedia(operator, kind))
+ipcMain.handle(IPC.mediaList, () => listLibrary())
+ipcMain.handle(IPC.mediaRemove, (_e, file: string) => {
+  const removed = deleteFromLibrary(file)
+  if (removed) screens.forgetBackgroundMedia(file) // a screen that used it goes back to its colour
+  return removed
+})
+ipcMain.handle(IPC.picturesImport, () => pickPictures(operator))
 ipcMain.handle(IPC.streamKeyState, () => streamKey.has())
 ipcMain.handle(IPC.streamKeyForget, () => streamKey.forget())
 ipcMain.handle(AUDIO_IPC.configure, (_e, cfg: AudioConfig) => audio.configure(cfg))
@@ -110,35 +238,45 @@ app.whenReady().then(() => {
   setBundledToolsEnabled(app.isPackaged)
   protocol.handle(MEDIA_SCHEME, (req) => serveMedia(req))
   songStore.load()
+  // Test and dev runs use their own data folder and must not pick up the real user's Quelea files.
+  if (!process.env.PRESTREAMER_USER_DATA) autoImportFromQuelea(bibleStore, join(userData(), 'bibles-auto-import.json'), homedir(), process.platform)
   serviceStore.load()
+  loadStreamSettings()
+  quickStore.load()
   // Only local app pages exist, so the one permission we grant is camera/mic (ATEM, mixer).
   session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => cb(permission === 'media'))
   session.defaultSession.setPermissionCheckHandler((_wc, permission) => permission === 'media')
 
   screens = new ScreenManager(
-    (state) => operator?.webContents.send(IPC.stateChanged, state),
+    (state) => {
+      operator?.webContents.send(IPC.stateChanged, state)
+      sessionState.liveScreens = state.live
+      saveSessionSoon()
+    },
     // Frames are pulled by the streamer via lastFrame(); NDI sinks can subscribe here later.
     () => {},
+    screenStore,
   )
   playback = new Playback((state) => {
     screens.setPlayback(state)
+    audio.sendPlayback(state)
     operator?.webContents.send(IPC.playbackState, state)
   })
-  streamer = new Streamer((status) => operator?.webContents.send(IPC.streamStatus, status))
+  streamer = new Streamer((status) => {
+    screens.setStreamLive(status.state === 'running')
+    operator?.webContents.send(IPC.streamStatus, status)
+  })
   audio = new AudioBridge(
     (status) => operator?.webContents.send(AUDIO_IPC.status, status),
     (meters) => operator?.webContents.send(AUDIO_IPC.metersOut, meters),
   )
   void audio.init()
 
-  // Seed screens: one display-bound "Audience" and one virtual "Stream".
-  // The audience screen plays the sound of video cues (point its output at the mixer's USB return).
-  const audience = screens.addDisplayScreen('Audience', null)
-  screens.update(audience.id, { look: { ...audience.look, videoAudio: true } })
-  screens.addVirtual('Stream', 1920, 1080)
   createOperator()
+  restoreScreens()
 
   runDevHooks({ screens, streamer, audio, playback, operator: () => operator, startStream, presentSlide })
 })
 
+app.on('before-quit', () => { quitting = true })
 app.on('window-all-closed', () => app.quit())

@@ -1,3 +1,6 @@
+import type { Announcement } from './announce'
+import type { StreamStats } from './stream-stats'
+
 /** A logical output, like a ProPresenter "screen". Independent of any physical display. */
 export type ScreenKind = 'display' | 'virtual'
 
@@ -16,11 +19,15 @@ export interface ScreenConfig {
   kind: ScreenKind
   /** For kind 'display': Electron display id this screen is bound to (null = unassigned). */
   displayId: number | null
+  /** Name of the bound display, so the binding survives a display id change (re-plugging, reboot). */
+  displayLabel?: string
   /** For kind 'virtual': render size. Physical screens use the display's own size. */
   width: number
   height: number
   /** Per-screen look so each output can render the same slide differently. */
   look: Look
+  /** A display screen that shows exactly what another screen shows (e.g. the stream's picture, on a monitor for the stage). */
+  mirrorOf?: string
 }
 
 export interface Look {
@@ -34,10 +41,25 @@ export interface Look {
   showMedia: boolean
   /** Play the sound of video cues from this screen's window (enable on exactly one screen). */
   videoAudio: boolean
+  /** Where the text sits: centred on the screen, or in a caption bar along the bottom (for text over live video). */
+  /** 'stage' is the monitor for the people on stage: current slide, the next one, and the clock. */
+  layout: 'full' | 'lower-third' | 'stage'
+  /** Opacity (0-1) of a dark box behind the text; 0 = none. Makes text readable over camera video. */
+  textBoxOpacity: number
   /** Output device id for that sound ('' = system default). Point it at the mixer's USB return. */
   audioOutput: string
+  /** A picture or looping video behind the text of this screen, for slides that bring no picture or video of their own. */
+  backgroundMedia: MediaBackground | null
+  /** Show a "LIVE" badge on this screen while the stream is running, so the room knows the service is being broadcast. */
+  liveBadge: boolean
   source: VideoSource
 }
+
+/** One picture or video in the media library (a possible background). */
+export interface MediaEntry { file: string; kind: MediaKind; name: string }
+
+/** A picture or video from the media library. */
+export type MediaBackground = { kind: 'image' | 'video'; file: string }
 
 /** Backdrop behind the text. Media files live in the app's media folder, referenced by file name. */
 export type Background =
@@ -53,6 +75,8 @@ export interface Slide {
   itemId?: string
   /** A video cue: shown full screen instead of text, driven by the shared PlaybackState. */
   video?: { file: string; title: string; durationSec: number }
+  /** A presentation slide: one picture shown whole, over everything but the announcement (never cropped). */
+  picture?: { file: string }
 }
 
 /**
@@ -86,13 +110,20 @@ export interface Song {
   id: string
   title: string
   body: string
+  /** Behind the text of every slide of the song (unless a slide has its own, below). */
   background: Background | null
+  /** A picture or video for one slide only, by position in the song; null or missing = the song's own background. */
+  slideBackgrounds?: (Background | null)[]
 }
 
 /** One entry in a service schedule. */
 export type ServiceItem =
   | { id: string; kind: 'song'; songId: string }
   | { id: string; kind: 'video'; file: string; title: string; durationSec: number }
+  /** A reading: a snapshot of the slides at the time it was added, so it does not depend on the Bible still being installed. */
+  | { id: string; kind: 'scripture'; title: string; slides: { label: string; text: string }[]; background?: Background | null; slideBackgrounds?: (Background | null)[] }
+  /** A PowerPoint / Keynote / PDF deck, kept as one picture (a file in the media folder) per slide. */
+  | { id: string; kind: 'presentation'; title: string; slides: string[] }
 
 /** A Sunday service: an ordered run sheet of items. */
 export interface Service {
@@ -109,6 +140,9 @@ export const mediaUrl = (file: string): string => `${MEDIA_SCHEME}://local/${enc
 export interface DisplayInfo {
   id: number
   label: string
+  /** Top-left corner in the desktop's coordinate space. */
+  x: number
+  y: number
   width: number
   height: number
   primary: boolean
@@ -120,6 +154,12 @@ export interface ScreenState {
   /** Screen ids currently live (window open). */
   live: string[]
   slide: Slide | null
+  /** The live announcement, if one is on air. Independent of the slide and the video. */
+  announcement: Announcement | null
+  /** The stream's screens show only the live camera: no text, slide media, video cues or announcements. */
+  cameraOnly: boolean
+  /** The slide after the current one, as the operator's list has it (for the stage monitor). */
+  next: Slide | null
 }
 
 export type StreamMode = 'file' | 'youtube'
@@ -132,6 +172,8 @@ export interface StreamStartRequest {
   streamKey?: string
   /** Output path for mode 'file'. */
   filePath?: string
+  /** What the stream's sound is: the mixer's master (default), or silence. */
+  audio?: 'mixer' | 'none'
 }
 
 export interface StreamStatus {
@@ -142,6 +184,8 @@ export interface StreamStatus {
   startedAt: number | null
   /** Human-readable destination without secrets. */
   target: string
+  /** Live health numbers while streaming (bitrate, frames, speed...). */
+  stats?: StreamStats
 }
 
 export const idleStream: StreamStatus = { state: 'idle', message: '', frames: 0, dropped: 0, startedAt: null, target: '' }
@@ -153,7 +197,11 @@ export const defaultLook: Look = {
   showLabel: false,
   showMedia: true,
   videoAudio: false,
+  layout: 'full',
+  textBoxOpacity: 0,
   audioOutput: '',
+  backgroundMedia: null,
+  liveBadge: false,
   source: { type: 'none' },
 }
 
@@ -162,6 +210,7 @@ export const IPC = {
   getState: 'state:get',
   stateChanged: 'state:changed',
   addVirtual: 'screen:add-virtual',
+  addDisplayScreen: 'screen:add-display',
   updateScreen: 'screen:update',
   removeScreen: 'screen:remove',
   setLive: 'screen:set-live',
@@ -179,20 +228,49 @@ export const IPC = {
   servicesSave: 'services:save',
   servicesDelete: 'services:delete',
   mediaImport: 'media:import',
+  mediaList: 'media:list',
+  mediaRemove: 'media:remove',
+  picturesImport: 'pictures:import',
   videoImport: 'video:import',
   videoProgress: 'video:progress',
+  presentationImport: 'presentation:import',
+  presentationStatus: 'presentation:status',
   playbackCommand: 'playback:command',
   playbackState: 'playback:state',
   playbackReport: 'playback:report',
   playbackGet: 'playback:get',
   streamKeyState: 'streamkey:state',
   streamKeyForget: 'streamkey:forget',
+  streamSettingsGet: 'streamsettings:get',
+  streamSettingsSet: 'streamsettings:set',
+  identifyDisplays: 'screens:identify',
+  moveScreen: 'screen:move',
+  announceShow: 'announce:show',
+  announceClear: 'announce:clear',
+  setCameraOnly: 'stream:camera-only',
+  setNextSlide: 'slide:next',
+  announceState: 'announce:state',
+  announceQuickList: 'announce:quick-list',
+  announceQuickSave: 'announce:quick-save',
+  announceQuickDelete: 'announce:quick-delete',
+  bibleList: 'bible:list',
+  bibleChapter: 'bible:chapter',
+  bibleImportDialog: 'bible:import-dialog',
+  bibleImportQuelea: 'bible:import-quelea',
+  bibleImportPaths: 'bible:import-paths',
+  bibleRemove: 'bible:remove',
 } as const
 
 export interface OutputPayload {
   screen: ScreenConfig
   slide: Slide | null
   playback: PlaybackState
+  announcement: Announcement | null
+  /** The stream is on air (drives the LIVE badge). */
+  streamLive: boolean
+  /** True on a virtual (stream) screen while camera-only is on. */
+  cameraOnly: boolean
+  next: Slide | null
 }
 
 /** Where stream audio comes from. A Behringer Wing's USB interface appears as a multichannel 'device'. */
@@ -203,19 +281,22 @@ export type AudioSource =
   | { type: 'device'; deviceId: string; label: string }
 
 export interface AudioConfig {
+  /** The default source: strips that name no device of their own read from it. */
   source: AudioSource
-  /** Delay applied to audio so it lines up with video that has encoding/capture latency. */
-  delayMs: number
+  /** Also run the devices that individual strips name. Set by the mixer's Start button. */
+  mixerSources?: boolean
 }
 
 export interface AudioStatus {
   state: 'idle' | 'running' | 'error'
   message: string
-  /** Channels the browser actually delivered; far fewer than 48 means the device is not exposing them all. */
+  /** Channels of the default source the browser actually delivered; far fewer than 48 means the device is not exposing them all. */
   channelCount: number
+  /** Every input that is open, with the channels it delivered, or why it could not be opened. */
+  devices?: { id: string; label: string; channels: number; error?: string }[]
 }
 
-export const defaultAudio: AudioConfig = { source: { type: 'silence' }, delayMs: 0 }
+export const defaultAudio: AudioConfig = { source: { type: 'silence' } }
 export const idleAudio: AudioStatus = { state: 'idle', message: 'Silence', channelCount: 0 }
 
 export const AUDIO_IPC = {
@@ -225,6 +306,7 @@ export const AUDIO_IPC = {
   apply: 'audio:apply',
   report: 'audio:report',
   pcm: 'audio:pcm',
+  playback: 'audio:playback',
   mixerGet: 'audio:mixer-get',
   mixerSet: 'audio:mixer-set',
   mixerPush: 'audio:mixer-push',

@@ -1,14 +1,12 @@
 import { app, dialog, type BrowserWindow } from 'electron'
 import { copyFileSync, createReadStream, existsSync, mkdirSync, statSync } from 'node:fs'
+import { IMAGE_EXT, VIDEO_EXT, listMedia, rememberMedia, removeMedia } from './media-library'
 import { Readable } from 'node:stream'
-import { extname, join } from 'node:path'
+import { basename, extname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { Background, MediaKind } from '../shared/types'
 import { mediaNameFromUrl } from './media-path'
 import { parseRange } from './range'
-
-const IMAGE_EXT = ['png', 'jpg', 'jpeg', 'webp', 'gif']
-const VIDEO_EXT = ['mp4', 'm4v', 'mov', 'webm']
 
 export const mediaDir = () => join(app.getPath('userData'), 'media')
 
@@ -17,6 +15,7 @@ export function importMediaFile(path: string, kind: MediaKind): Background {
   mkdirSync(mediaDir(), { recursive: true })
   const file = `${randomUUID()}${extname(path).toLowerCase()}`
   copyFileSync(path, join(mediaDir(), file))
+  rememberMedia(mediaDir(), file, kind, path)
   return { kind, file }
 }
 
@@ -26,9 +25,39 @@ export async function pickMedia(parent: BrowserWindow | null, kind: MediaKind): 
     properties: ['openFile'],
     filters: [{ name: kind === 'image' ? 'Images' : 'Videos', extensions: kind === 'image' ? IMAGE_EXT : VIDEO_EXT }],
   }
+  // PRESTREAMER_MEDIA_FILE stands in for the file dialog in the end-to-end tests.
+  if (process.env.PRESTREAMER_MEDIA_FILE) return importMediaFile(process.env.PRESTREAMER_MEDIA_FILE, kind)
   const result = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options)
   return result.canceled || !result.filePaths[0] ? null : importMediaFile(result.filePaths[0], kind)
 }
+
+/**
+ * One or more pictures for the run sheet, each shown whole as a slide (like a presentation). They are stored under generated
+ * names that keep them out of the backgrounds library: they are slides, not backgrounds.
+ */
+export async function pickPictures(parent: BrowserWindow | null): Promise<{ title: string; slides: string[] } | null> {
+  let paths: string[]
+  if (process.env.PRESTREAMER_PICTURE_FILES) {
+    paths = process.env.PRESTREAMER_PICTURE_FILES.split(',') // stands in for the file dialog in the end-to-end tests
+  } else {
+    const options: Electron.OpenDialogOptions = { title: 'Choose pictures to show', properties: ['openFile', 'multiSelections'], filters: [{ name: 'Pictures', extensions: IMAGE_EXT }] }
+    const result = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options)
+    if (result.canceled || !result.filePaths.length) return null
+    paths = [...result.filePaths].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })) // 2.png before 10.png
+  }
+  mkdirSync(mediaDir(), { recursive: true })
+  const stamp = randomUUID()
+  const slides = paths.map((p, i) => {
+    const file = `${stamp}-${String(i + 1).padStart(3, '0')}${extname(p).toLowerCase()}`
+    copyFileSync(p, join(mediaDir(), file))
+    return file
+  })
+  return { title: paths.length === 1 ? basename(paths[0], extname(paths[0])) : `${basename(paths[0], extname(paths[0]))} + ${paths.length - 1} more`, slides }
+}
+
+/** Every picture and video imported so far, for the background picker. */
+export const listLibrary = () => listMedia(mediaDir())
+export const deleteFromLibrary = (file: string) => removeMedia(mediaDir(), file)
 
 /** Resolves a media:// request to a file in the media folder; rejects anything outside it. */
 export function resolveMediaPath(requestUrl: string): string | null {
@@ -51,7 +80,7 @@ export function serveMedia(req: Request): Response {
   const path = resolveMediaPath(req.url)
   if (!path) return new Response('Not found', { status: 404 })
   const size = statSync(path).size
-  const base = { 'Content-Type': MIME[extname(path).toLowerCase()] ?? 'application/octet-stream', 'Accept-Ranges': 'bytes' }
+  const base = { 'Content-Type': MIME[extname(path).toLowerCase()] ?? 'application/octet-stream', 'Accept-Ranges': 'bytes', 'Access-Control-Allow-Origin': '*' }
   const toBody = (start: number, end: number) => Readable.toWeb(createReadStream(path, { start, end })) as unknown as ReadableStream
 
   const range = parseRange(req.headers.get('range'), size)

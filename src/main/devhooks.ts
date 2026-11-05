@@ -1,14 +1,16 @@
-import { app, type BrowserWindow } from 'electron'
-import { existsSync, writeFileSync } from 'node:fs'
+import { app, BrowserWindow, nativeImage } from 'electron'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { defaultMixer, defaultStrip, type MixerConfig } from '../shared/mixer'
+import { defaultMixer, defaultStrip, type MixerConfig, type StripSource } from '../shared/mixer'
 import { defaultAudio, type Slide, type StreamStartRequest } from '../shared/types'
 import type { AudioBridge } from './audio'
-import { importMediaFile } from './library'
+import { importMediaFile, mediaDir } from './library'
 import type { Playback } from './playback'
 import type { ScreenManager } from './screens'
 import type { Streamer } from './streamer'
 import { importVideoFile } from './video'
+import { renderPdfPages } from './pdf'
+import { renderPptxSlides } from './pptx'
 
 export interface DevContext {
   screens: ScreenManager
@@ -27,12 +29,29 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
  * variable, does its work against the real app, writes its evidence to disk and quits:
  *   PRESTREAMER_SNAPSHOT=out.png   capture the operator window
  *   PRESTREAMER_EVAL="js"          run JS in the operator before the snapshot (prints the result)
- *   PRESTREAMER_STREAMTEST=out.mkv stream the test pattern to a file (PRESTREAMER_SECONDS, PRESTREAMER_AUDIO=test)
+ *   PRESTREAMER_NO_AUTO_OPEN=1     with SNAPSHOT/EVAL: do not open the screens or show a slide first (to test how the app opens)
+ *   PRESTREAMER_STREAMTEST=out.mkv stream the test pattern to a file (PRESTREAMER_SECONDS, PRESTREAMER_AUDIO=test|multitest,
+ *                                  PRESTREAMER_AUDIO_STOP=seconds, PRESTREAMER_LAYOUT=lower-third)
+ *                                  PRESTREAMER_CAMERA_ONLY=1 streams in camera-only mode, PRESTREAMER_NO_SOURCE=1 leaves the camera out,
+ *                                  PRESTREAMER_ANNOUNCE="text" puts an announcement on air
+ *   PRESTREAMER_LOOK_BG=file       with STREAMTEST: a picture (.png) or video (.mp4) behind the text of the stream screen
+ *   PRESTREAMER_MEDIA_FILE=file    stands in for the picture/video file dialog
+ *   PRESTREAMER_MAKEPDF=file.pdf   writes a 3-page test PDF and quits; PRESTREAMER_PRESENTATION_FILE=file stands in for the import dialog;
+ *                                  PRESTREAMER_PICTURE_PDF=file.pdf shows its first page as a presentation slide (with STREAMTEST/SNAPSHOT)
  *   PRESTREAMER_BGTEST=dir         image/video slide backgrounds, with test.png and test.mp4 in dir
  *   PRESTREAMER_VIDEOTEST=dir      video import plans and synchronised playback, with t.* files in dir
  *   PRESTREAMER_MIXERTEST=out.f32  steps the mixer through a scripted sequence and records its PCM (scripts/e2e-mixer.mjs)
  * PRESTREAMER_FFMPEG_LOG=level prints ffmpeg's own log during any of them.
  */
+/** A PDF with one solid-colour page per colour, made by Chromium's own printer (so the tests need no external tools). */
+export async function makeTestPdf(path: string, colors: string[]): Promise<void> {
+  const win = new BrowserWindow({ show: false, webPreferences: { sandbox: true } })
+  const pages = colors.map((c, i) => `<div style="height:100vh;background:${c};page-break-after:always;display:flex;align-items:center;justify-content:center;font:200px sans-serif;color:#fff">${i + 1}</div>`).join('')
+  await win.loadURL(`data:text/html,<html><body style="margin:0">${encodeURIComponent(pages)}</body></html>`)
+  writeFileSync(path, await win.webContents.printToPDF({ landscape: true, pageSize: 'A4', printBackground: true, margins: { top: 0, bottom: 0, left: 0, right: 0 } }))
+  win.destroy()
+}
+
 export function runDevHooks(ctx: DevContext): void {
   const { screens, streamer, audio, playback, startStream, presentSlide } = ctx
   // Dev aid: PRESTREAMER_SNAPSHOT=/path/out.png captures the operator window and quits.
@@ -100,19 +119,63 @@ export function runDevHooks(ctx: DevContext): void {
   }
   if (snapshotPath || streamTestPath) {
     setTimeout(async () => {
+      // Keep the operator window above other windows without taking keyboard focus: macOS stops painting a window that is
+      // completely covered, and a capture of it would then show a stale picture.
+      ctx.operator()?.setAlwaysOnTop(true, 'floating')
+      ctx.operator()?.showInactive()
       const [first, second] = screens.getState().screens
       if (streamTestPath) {
-        screens.update(second.id, { look: { ...second.look, source: { type: 'testpattern' } } })
+        // PRESTREAMER_LAYOUT=lower-third puts the text in a caption bar over the (simulated) camera picture.
+        const lower = process.env.PRESTREAMER_LAYOUT === 'lower-third'
+        screens.update(second.id, {
+          look: { ...second.look, source: process.env.PRESTREAMER_NO_SOURCE ? { type: 'none' as const } : { type: 'testpattern' as const }, ...(lower ? { layout: 'lower-third' as const, textBoxOpacity: 0.6, fontSize: 48 } : {}) },
+        })
       }
-      screens.setLive(second.id, true)
-      screens.setLive(first.id, true)
-      screens.showSlide({ label: 'Verse 1', text: 'Amazing grace, how sweet the sound\nThat saved a wretch like me' })
+      // PRESTREAMER_LOOK_BG=file.png|file.mp4 puts that picture or video behind the text on the stream screen.
+      if (process.env.PRESTREAMER_LOOK_BG && streamTestPath) {
+        const p = process.env.PRESTREAMER_LOOK_BG
+        const bg = importMediaFile(p, /\.(mp4|mov|webm|m4v)$/i.test(p) ? 'video' : 'image') as { kind: 'image' | 'video'; file: string }
+        screens.update(second.id, { look: { backgroundMedia: bg } as never })
+      }
+      // PRESTREAMER_NO_AUTO_OPEN=1 leaves the screens as the app itself has them (to test how it opens).
+      if (!process.env.PRESTREAMER_NO_AUTO_OPEN) {
+        screens.setLive(second.id, true)
+        screens.setLive(first.id, true)
+        screens.showSlide({ label: 'Verse 1', text: 'Amazing grace, how sweet the sound\nThat saved a wretch like me' })
+      }
+      // PRESTREAMER_PICTURE_PDF=file.pdf puts the first page of that PDF on air as a presentation slide.
+      if (process.env.PRESTREAMER_PICTURE_PDF) {
+        const [file] = await renderPdfPages(readFileSync(process.env.PRESTREAMER_PICTURE_PDF), mediaDir(), (i) => `devpic-${i}.png`)
+        screens.showSlide({ label: 'Slide 1 / 3', text: '', picture: { file } })
+      }
       if (streamTestPath) {
         // PRESTREAMER_AUDIO=test adds the 1 kHz beep that pairs with the pattern's flash (A/V sync check).
         if (process.env.PRESTREAMER_AUDIO === 'test') console.log('AUDIO', JSON.stringify(await audio.configure({ ...defaultAudio, source: { type: 'test' } })))
+        // PRESTREAMER_AUDIO=multitest streams the MIXER's output: four tones in, only channel 2 (440 Hz) in the mix.
+        if (process.env.PRESTREAMER_AUDIO === 'multitest') {
+          audio.setMixer({ ...defaultMixer(), strips: [defaultStrip(1)], masterLimiter: { on: false, ceilingDb: -1 } })
+          console.log('AUDIO', JSON.stringify(await audio.configure({ ...defaultAudio, source: { type: 'multitest' } })))
+        }
         await new Promise((r) => setTimeout(r, 1000))
         await startStream({ screenId: second.id, mode: 'file', filePath: streamTestPath })
-        await new Promise((r) => setTimeout(r, Number(process.env.PRESTREAMER_SECONDS || 8) * 1000))
+      if (process.env.PRESTREAMER_CAMERA_ONLY) screens.setCameraOnly(true) // the stream shows only the camera
+      // PRESTREAMER_ANNOUNCE="text" puts a live announcement on every screen once the stream is running.
+      if (process.env.PRESTREAMER_ANNOUNCE) screens.showAnnouncement({ text: process.env.PRESTREAMER_ANNOUNCE, style: process.env.PRESTREAMER_ANNOUNCE_STYLE === 'fullscreen' ? 'fullscreen' : 'banner-bottom', tone: 'alert', screens: null, autoHideSec: null })
+        // PRESTREAMER_AUDIO_STOP=n stops the mixer n seconds into the stream, to prove the stream does not stall.
+        const total = Number(process.env.PRESTREAMER_SECONDS || 8) * 1000
+        const stopAt = Number(process.env.PRESTREAMER_AUDIO_STOP || 0) * 1000
+        if (stopAt) {
+          await new Promise((r) => setTimeout(r, stopAt))
+          await audio.configure({ ...defaultAudio, source: { type: 'silence' } })
+          await new Promise((r) => setTimeout(r, Math.max(0, total - stopAt)))
+        } else if (process.env.PRESTREAMER_EVAL_LIVE) {
+          // PRESTREAMER_EVAL_LIVE="js" runs in the operator window while the stream is running (prints EVAL_LIVE), to inspect the health panel.
+          await new Promise((r) => setTimeout(r, total * 0.7))
+          console.log('EVAL_LIVE', JSON.stringify(await ctx.operator()!.webContents.executeJavaScript(process.env.PRESTREAMER_EVAL_LIVE)))
+          await new Promise((r) => setTimeout(r, total * 0.3))
+        } else {
+          await new Promise((r) => setTimeout(r, total))
+        }
         console.log('STREAM STATUS', JSON.stringify(streamer.getStatus()))
         await streamer.stop()
         console.log('STREAM FINAL', JSON.stringify(streamer.getStatus()))
@@ -127,12 +190,55 @@ export function runDevHooks(ctx: DevContext): void {
       app.quit()
     }, 2000)
   }
+  // PRESTREAMER_PPTXTEST=dir with PRESTREAMER_PPTX=file.pptx: draws every slide with the built-in renderer into dir and reports.
+  if (process.env.PRESTREAMER_PPTXTEST && process.env.PRESTREAMER_PPTX) {
+    setTimeout(async () => {
+      try {
+        const { files, info } = await renderPptxSlides(readFileSync(process.env.PRESTREAMER_PPTX!), process.env.PRESTREAMER_PPTXTEST!, (i) => `slide-${i + 1}.png`)
+        console.log('PPTXTEST', JSON.stringify({ files, info }))
+      } catch (err) {
+        console.log('PPTXTEST', JSON.stringify({ error: (err as Error).message }))
+      }
+      app.quit()
+    }, 1500)
+  }
+  // PRESTREAMER_MAKEPDF=path.pdf: writes a 3-page (red, green, blue) PDF and quits, as a test deck for the other hooks.
+  if (process.env.PRESTREAMER_MAKEPDF) {
+    setTimeout(async () => {
+      await makeTestPdf(process.env.PRESTREAMER_MAKEPDF!, ['#ff0000', '#00ff00', '#0000ff'])
+      app.quit()
+    }, 800)
+  }
+  // PRESTREAMER_PDFTEST=dir: makes a 3-page PDF, draws it with the PDF renderer, and reports each page's size and colour.
+  const pdfTestDir = process.env.PRESTREAMER_PDFTEST
+  if (pdfTestDir) {
+    setTimeout(async () => {
+      try {
+        mkdirSync(pdfTestDir, { recursive: true })
+        const pdf = join(pdfTestDir, 'test.pdf')
+        await makeTestPdf(pdf, ['#ff0000', '#00ff00', '#0000ff'])
+        const files = await renderPdfPages(readFileSync(pdf), pdfTestDir, (i) => `page-${i + 1}.png`)
+        const pages = files.map((f) => {
+          const img = nativeImage.createFromPath(join(pdfTestDir, f))
+          const { width, height } = img.getSize()
+          const bmp = img.toBitmap() // BGRA
+          const o = (Math.floor(height / 8) * width + Math.floor(width / 8)) * 4 // near a corner, away from the page number
+          return { f, width, height, rgb: [bmp[o + 2], bmp[o + 1], bmp[o]] }
+        })
+        console.log('PDFTEST', JSON.stringify(pages))
+      } catch (err) {
+        console.log('PDFTEST', JSON.stringify({ error: (err as Error).message }))
+      }
+      app.quit()
+    }, 1500)
+  }
   const mixerTestPath = process.env.PRESTREAMER_MIXERTEST
   if (mixerTestPath) setTimeout(() => void mixerTest(ctx, mixerTestPath), 2000)
 }
 
 /** One mixer setting per segment, applied to a fresh base mix; the analysis script checks each segment's spectrum. */
-const MIXER_SEGMENTS: { name: string; channels: number[]; apply: (m: MixerConfig) => void }[] = [
+const BEEP: StripSource = { deviceId: 'test:beep', label: 'Test beep (stereo)' }
+const MIXER_SEGMENTS: { name: string; channels: (number | { channel: number; source: StripSource })[]; apply: (m: MixerConfig) => void }[] = [
   { name: 'baseline', channels: [1], apply: () => {} },
   { name: 'fader-12', channels: [1], apply: (m) => { m.strips[0].faderDb = -12 } },
   { name: 'eq+12', channels: [1], apply: (m) => { Object.assign(m.strips[0].eq, { on: true, midFreq: 440, midGainDb: 12, midQ: 1 }) } },
@@ -142,6 +248,8 @@ const MIXER_SEGMENTS: { name: string; channels: number[]; apply: (m: MixerConfig
   { name: 'gate', channels: [1], apply: (m) => { Object.assign(m.strips[0].gate, { on: true, thresholdDb: -6, rangeDb: 60 }) } },
   { name: 'mute', channels: [1], apply: (m) => { m.strips[0].mute = true } },
   { name: 'solo-880', channels: [1, 2], apply: (m) => { m.strips[1].solo = true } },
+  // Channel 2 of the default source (440 Hz tone) together with a channel of a different source (the 1 kHz beep).
+  { name: 'two-sources', channels: [1, { channel: 0, source: BEEP }], apply: () => {} },
   { name: 'ch0-baseline', channels: [0], apply: () => {} },
   { name: 'ch0-hpf500', channels: [0], apply: (m) => { Object.assign(m.strips[0].hpf, { on: true, freq: 500 }) } },
 ]
@@ -154,9 +262,9 @@ const SEGMENT_SECONDS = 3
  */
 async function mixerTest(ctx: DevContext, outPath: string): Promise<void> {
   const { audio } = ctx
-  const baseFor = (channels: number[]): MixerConfig => ({
+  const baseFor = (channels: (typeof MIXER_SEGMENTS)[number]['channels']): MixerConfig => ({
     ...defaultMixer(),
-    strips: channels.map((c) => defaultStrip(c)),
+    strips: channels.map((c) => (typeof c === 'number' ? defaultStrip(c) : defaultStrip(c.channel, undefined, c.source))),
     masterLimiter: { on: false, ceilingDb: -1 },
   })
 

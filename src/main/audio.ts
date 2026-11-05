@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain } from 'electron'
 import { readFileSync } from 'node:fs'
 import { createServer, type Server, type Socket } from 'node:net'
 import { join } from 'node:path'
-import { AUDIO_IPC, defaultAudio, idleAudio, type AudioConfig, type AudioStatus, type Meters } from '../shared/types'
+import { AUDIO_IPC, defaultAudio, idleAudio, idlePlayback, type AudioConfig, type AudioStatus, type Meters, type PlaybackState } from '../shared/types'
 import { defaultMixer, sanitizeMixer, type MixerConfig } from '../shared/mixer'
 import { writeJsonAtomic } from './store'
 
@@ -24,6 +24,11 @@ export class AudioBridge {
   pcmTap: ((chunk: Buffer) => void) | null = null
   /** Video start time to align the next ffmpeg connection against (see armSync). */
   private syncStart = 0
+  private lastPcmAt = 0
+  private playback: PlaybackState = { ...idlePlayback }
+  /** Wall-clock time up to which the stream already has audio (real or filler). */
+  private filledUntil = 0
+  private silenceTimer: NodeJS.Timeout | null = null
 
   private mixer: MixerConfig = defaultMixer()
   private saveTimer: NodeJS.Timeout | null = null
@@ -50,6 +55,7 @@ export class AudioBridge {
     })
     ipcMain.on(AUDIO_IPC.pcm, (_e, buf: ArrayBuffer) => {
       this.pcmTap?.(Buffer.from(buf))
+      this.lastPcmAt = this.filledUntil = Date.now()
       const sock = this.socket
       if (!sock || sock.destroyed || sock.writableLength > MAX_BACKLOG_BYTES) return
       sock.write(Buffer.from(buf))
@@ -57,7 +63,9 @@ export class AudioBridge {
     this.server = createServer((sock) => {
       this.socket?.destroy()
       this.socket = sock
+      this.filledUntil = Date.now()
       this.padToVideoStart(sock)
+      this.startSilenceFiller()
       sock.on('error', () => {})
       sock.on('close', () => { if (this.socket === sock) this.socket = null })
     })
@@ -73,11 +81,38 @@ export class AudioBridge {
     this.syncStart = videoStartMs
   }
 
+  /**
+   * A stream must never stall waiting for audio. While the mixer is off (or being restarted) this feeds the stream real-time
+   * silence, so the mixer can be started, stopped or changed at any moment during a live stream.
+   */
+  private startSilenceFiller(): void {
+    if (this.silenceTimer) clearInterval(this.silenceTimer)
+    this.silenceTimer = setInterval(() => {
+      const sock = this.socket
+      if (!sock || sock.destroyed) {
+        if (this.silenceTimer) clearInterval(this.silenceTimer)
+        this.silenceTimer = null
+        return
+      }
+      const now = Date.now()
+      if (now - this.lastPcmAt < 100) { this.filledUntil = now; return } // the mixer is delivering
+      const frames = Math.min(96000, Math.round(((now - this.filledUntil) / 1000) * 48000))
+      this.filledUntil = now
+      if (frames > 0 && sock.writableLength < MAX_BACKLOG_BYTES) sock.write(Buffer.alloc(frames * 8))
+    }, 20)
+  }
+
   private padToVideoStart(sock: Socket): void {
     if (!this.syncStart) return
     const frames = Math.max(0, Math.round(((Date.now() - this.syncStart) / 1000) * 48000))
     this.syncStart = 0
     if (frames) sock.write(Buffer.alloc(frames * 8)) // 2 channels × 4-byte float
+  }
+
+  /** The video clock, so the mixer's "Video playback" input can play the current video's soundtrack in sync. */
+  sendPlayback(state: PlaybackState): void {
+    this.playback = state
+    if (this.win && !this.win.isDestroyed()) this.win.webContents.send(AUDIO_IPC.playback, state)
   }
 
   getStatus(): AudioStatus {
@@ -101,11 +136,6 @@ export class AudioBridge {
     return this.mixer
   }
 
-  /** True when stream audio should come from the mix rather than generated silence. */
-  get live(): boolean {
-    return this.status.state === 'running' && this.config.source.type !== 'silence'
-  }
-
   async configure(cfg: AudioConfig): Promise<AudioStatus> {
     this.config = cfg
     const win = await this.window()
@@ -118,6 +148,7 @@ export class AudioBridge {
   }
 
   close(): void {
+    if (this.silenceTimer) clearInterval(this.silenceTimer)
     if (this.saveTimer) {
       clearTimeout(this.saveTimer)
       writeJsonAtomic(this.mixerPath(), this.mixer) // flush a pending change
@@ -136,10 +167,12 @@ export class AudioBridge {
         contextIsolation: true,
         sandbox: true,
         backgroundThrottling: false, // a hidden window must keep capturing at full rate
+        autoplayPolicy: 'no-user-gesture-required', // it plays video soundtracks with nobody clicking
       },
     })
     await win.loadFile(join(__dirname, '../renderer/audio.html'))
     this.win = win
+    win.webContents.send(AUDIO_IPC.playback, this.playback)
     return win
   }
 }

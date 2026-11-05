@@ -34,6 +34,13 @@ describe('ListStore', () => {
     expect(make().load()).toEqual([{ id: 'b', name: 'Beta' }])
   })
 
+  it('replaces the whole list and persists it', () => {
+    const store = make()
+    store.load()
+    store.replaceAll([{ id: 'z', name: 'Zeta' }])
+    expect(make().load()).toEqual([{ id: 'z', name: 'Zeta' }])
+  })
+
   it('re-seeds when the file is corrupt instead of crashing', () => {
     writeFileSync(join(dir, 'items.json'), '{ not json')
     expect(make().load()).toEqual(SEED)

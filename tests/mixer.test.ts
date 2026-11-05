@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { MAX_CHANNELS, RANGES, clamp, dbToGain, defaultMixer, defaultStrip, effectiveGains, gainToDb, sanitizeMixer, type MixerConfig } from '../src/shared/mixer'
+import { MAX_CHANNELS, RANGES, TEST_SOURCES, clamp, dbToGain, defaultMixer, defaultStrip, effectiveGains, gainToDb, sanitizeMixer, shortDeviceName, stripKey, type MixerConfig } from '../src/shared/mixer'
 
 describe('decibel conversion', () => {
   it('maps common values', () => {
@@ -95,5 +95,64 @@ describe('sanitizeMixer (untrusted JSON from disk or IPC)', () => {
     expect(clamp(5, [0, 3])).toBe(3)
     expect(clamp(-5, [0, 3])).toBe(0)
     expect(clamp(2, [0, 3])).toBe(2)
+  })
+})
+
+describe('strips with their own input device', () => {
+  const mic = { deviceId: 'abc123', label: 'MacBook Pro Microphone (Built-in)' }
+  const usb = { deviceId: 'def456', label: 'USB Audio Device (0d8c:0014)' }
+
+  it('shortens a device label to what fits on a strip', () => {
+    expect(shortDeviceName('MacBook Pro Microphone (Built-in)')).toBe('MacBook Pro Microphone')
+    expect(shortDeviceName('Default - BlackHole 2ch (Virtual)')).toBe('BlackHole 2ch')
+    expect(shortDeviceName('Plain Name')).toBe('Plain Name')
+    expect(shortDeviceName('')).toBe('Input')
+    expect(shortDeviceName('(only brackets)')).toBe('(only brackets)')
+  })
+
+  it('names a strip after its device and channel, and keeps "USB n" only for the default source', () => {
+    expect(defaultStrip(0).name).toBe('USB 1')
+    expect(defaultStrip(1, undefined, mic).name).toBe('MacBook Pro Microphone 2'.slice(0, 24))
+    expect(defaultStrip(1, undefined, mic).name.length).toBeLessThanOrEqual(24)
+    expect(defaultStrip(1, undefined, usb).name).toBe('USB Audio Device 2')
+  })
+
+  it('tells strips apart by device AND channel', () => {
+    expect(stripKey({ channel: 0 })).not.toBe(stripKey({ channel: 0, source: mic }))
+    expect(stripKey({ channel: 0, source: mic })).not.toBe(stripKey({ channel: 0, source: usb }))
+    expect(stripKey({ channel: 0, source: mic })).toBe(stripKey({ channel: 0, source: { ...mic, label: 'renamed' } })) // the id identifies the device, not its label
+  })
+
+  it('keeps channel 1 of two different devices as two strips, and drops a true duplicate', () => {
+    const m = sanitizeMixer({ strips: [{ channel: 0, source: mic }, { channel: 0, source: usb }, { channel: 0, source: mic }, { channel: 0 }] })
+    expect(m.strips.map((x) => [x.source?.deviceId ?? 'default', x.channel])).toEqual([['abc123', 0], ['def456', 0], ['default', 0]])
+  })
+
+  it('keeps a valid source through validation', () => {
+    expect(sanitizeMixer({ strips: [{ channel: 3, source: usb }] }).strips[0]).toMatchObject({ channel: 3, source: usb, name: 'USB Audio Device 4' })
+  })
+
+  it('ignores a malformed source instead of failing: the strip falls back to the default source', () => {
+    for (const bad of [{ deviceId: 5 }, { deviceId: '' }, { deviceId: 'x'.repeat(301) }, 'mic', null]) {
+      const strip = sanitizeMixer({ strips: [{ channel: 1, source: bad }] }).strips[0]
+      expect(strip.source, JSON.stringify(bad)).toBeUndefined()
+      expect(strip.name).toBe('USB 2')
+    }
+  })
+
+  it('limits an over-long device label', () => {
+    expect(sanitizeMixer({ strips: [{ channel: 0, source: { deviceId: 'a', label: 'L'.repeat(500) } }] }).strips[0].source?.label).toHaveLength(120)
+  })
+
+  it('is stable: sanitising a mixer with sources changes nothing', () => {
+    const once = sanitizeMixer({ strips: [{ channel: 2, source: mic, faderDb: -6 }, { channel: 0 }] })
+    expect(sanitizeMixer(once)).toEqual(once)
+  })
+
+  it('offers synthetic test sources with ids the engine recognises', () => {
+    for (const t of TEST_SOURCES) {
+      expect(t.deviceId.startsWith('test:')).toBe(true)
+      expect(t.channels).toBeGreaterThan(0)
+    }
   })
 })

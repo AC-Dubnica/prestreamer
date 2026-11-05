@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { SEED_SONGS, parseSong } from '../src/shared/songs'
+import { SEED_SONGS, parseSong, readingSlides, withSlideBackground } from '../src/shared/songs'
 import type { Song } from '../src/shared/types'
 
 const song = (body: string, background: Song['background'] = null): Song => ({ id: 's', title: 't', body, background })
@@ -41,5 +41,27 @@ describe('parseSong', () => {
 
   it('parses the built-in sample songs into slides', () => {
     for (const s of SEED_SONGS) expect(parseSong(s).length).toBeGreaterThan(0)
+  })
+})
+
+describe('backgrounds for single slides', () => {
+  const song = { id: 's', title: 'T', body: '[V1]\none\n\ntwo\n\n[C]\nthree', background: { kind: 'css' as const, css: 'red' } }
+  const img = { kind: 'image' as const, file: 'a.png' }
+  const vid = { kind: 'video' as const, file: 'b.mp4' }
+  it('a song\'s slides share its background', () => expect(parseSong(song).map((s) => s.background)).toEqual([song.background, song.background, song.background]))
+  it('a slide can have its own picture or video; the others keep the song\'s', () => {
+    const slides = parseSong({ ...song, slideBackgrounds: [null, img] })
+    expect(slides.map((s) => s.background)).toEqual([song.background, img, song.background])
+  })
+  it('readingSlides: a slide\'s own first, then the shared one, else none', () => {
+    const base = [{ label: 'a', text: '1' }, { label: 'b', text: '2' }, { label: 'c', text: '3' }]
+    const out = readingSlides(base, img, [null, vid])
+    expect(out.map((s) => s.background)).toEqual([img, vid, img])
+    expect(readingSlides(base, null, undefined).every((s) => !('background' in s))).toBe(true)
+  })
+  it('withSlideBackground sets one slide, pads gaps with null and drops trailing nulls', () => {
+    expect(withSlideBackground(undefined, 2, img)).toEqual([null, null, img])
+    expect(withSlideBackground([null, null, img], 2, null)).toEqual([])
+    expect(withSlideBackground([img, vid], 0, null)).toEqual([null, vid])
   })
 })

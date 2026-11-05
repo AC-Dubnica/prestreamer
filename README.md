@@ -1,12 +1,16 @@
-# prestreamer
+# PreStreamer
 
 Presentation software for church services with a built-in live streamer: **presenter + streamer**.
 
 Run a Sunday service from one window: a run sheet of songs and videos, lyrics with image or video backgrounds on any number of physical and virtual screens, a mixing console for the stream audio, and one-click streaming to YouTube. Built with Electron for macOS and Windows; so far it has only been run on macOS (see *What is tested*).
 
-| Present | Songs | Mixer |
-|---|---|---|
-| ![Present](docs/screenshots/present.png) | ![Songs](docs/screenshots/songs.png) | ![Mixer](docs/screenshots/mixer.png) |
+| Present | Songs |
+|---|---|
+| ![Present](docs/screenshots/present.png) | ![Songs](docs/screenshots/songs.png) |
+
+| Mixer | Settings |
+|---|---|
+| ![Mixer](docs/screenshots/mixer.png) | ![Settings](docs/screenshots/settings.png) |
 
 ## Features
 
@@ -14,7 +18,8 @@ Run a Sunday service from one window: a run sheet of songs and videos, lyrics wi
 - **Songs.** A separate tab with search and an editor. Write `[Verse 1]` to start a section and a blank line to start a new slide. Each song has a background: a gradient, an imported image, or an imported video loop.
 - **Video cues.** Add mp4, mov, mkv, webm and more to the run sheet. Files the browser cannot play (HEVC, ProRes, odd containers) are converted once on import; others are copied or re-wrapped without re-encoding. One shared clock keeps every screen on the same frame; play, pause, stop and seek from the transport bar (Space toggles).
 - **Screens.** A screen is a logical output, independent of any monitor: bind it to a physical display or make it virtual (rendered off-screen, the source of the stream). Each screen has its own look (background, font, colours, whether to show backgrounds, whether it plays video sound) and a live preview in the operator window.
-- **Live source.** Any camera shows up as a video source: an ATEM Mini attached over USB appears as a webcam.
+- **Settings tab.** Lists the connected displays (with an arrangement map and an **Identify displays** button that flashes a number on each monitor), and lets you name screens, bind them to a display, resize virtual screens, and add or remove screens. Screens are saved, and a display binding is restored by name if the system renumbers displays.
+- **Text over video.** A screen can show a live camera (or any video source) with the lyrics on top, either centred or as a **lower-third** caption bar with an adjustable semi-transparent box. An ATEM Mini attached over USB appears as a webcam, so it is just another camera.
 - **Mixer.** One strip per USB channel (a Behringer Wing exposes 48): trim, high-pass, 3-band EQ, gate, compressor with make-up gain, limiter, fader, pan, mute, solo and meters, plus a master limiter. Everything applies live; settings are saved.
 - **Streaming.** The virtual screen plus the mixer's stereo mix, encoded to H.264/AAC 1080p30 and sent to YouTube over RTMP (or recorded to a file). A hardware encoder (VideoToolbox, NVENC, Quick Sync, AMF) is used when one works, with software x264 as the fallback. The stream key is stored encrypted by the OS keychain.
 
@@ -27,9 +32,29 @@ npm install
 npm start          # builds and launches
 ```
 
+On macOS `npm start` also renames the development Electron bundle to PreStreamer, so the menu bar and Dock say PreStreamer instead of Electron (packaged installers already do). Restart the app after the first run to see it.
+
 The first launch downloads the Electron binary (about 100 MB; Electron has no install script). On npm 11 you may see a notice that some packages' install scripts were skipped (`npm install-scripts ls`). Running and testing the app does not need them. Building installers needs the bundled ffmpeg binary: if `npm run package` stops with "bundled ffmpeg is missing", run `node node_modules/ffmpeg-static/install.js` and try again.
 
 First steps: **Present** tab → pick or create a service → add songs (♪ icon) and videos (film icon). Click a slide, or press → / Space. Press **Live** on a screen to open it.
+
+### Screens, displays and virtual screens
+
+Open the **Settings** tab to set up outputs.
+
+- **Display screen.** Shown full-screen on the display you pick (or in a window while none is chosen). Use *Identify displays* to see which monitor is which. If you bind a screen to the display your operator window is on, the live screen covers the controls; the page warns you.
+- **Virtual screen.** Rendered inside PreStreamer at a size you choose (1080p, 720p, 4K, vertical, or custom). It is not a monitor: it does not appear in macOS or Windows display settings. It is what the stream picks up, and where text over a camera is composed. A real extra monitor without hardware needs an OS-level virtual display tool or an HDMI dummy plug; PreStreamer cannot create one.
+- Colours, fonts, backgrounds, the video source and the caption layout are set per screen in the **Look** panel of the Present tab.
+
+### Text over camera (captions, "alpha")
+
+1. Settings: make sure there is a virtual screen for the stream (there is one by default, "Stream").
+2. Present tab → select that screen → **Look**: *Video source* = your camera (*Detect cameras*), *Text layout* = *Lower third*, *Text box* = about 0.5-0.6.
+3. Start streaming from that screen. The captions are composed over the camera picture inside PreStreamer and encoded together.
+
+This is real compositing (the text box is semi-transparent over the live picture), not an alpha channel sent to another device. If you would rather let an **ATEM keyer** do the overlay, PreStreamer can output the lyrics on a plain colour for chroma keying (the green swatch, `#00b140`) or white on black for a luma key, on a display screen wired to an ATEM input. A true alpha output (key + fill, or NDI with alpha) is not built; it is on the roadmap.
+
+![Lower-third caption over a simulated camera](docs/screenshots/lower-third.png)
 
 ### Streaming to YouTube
 
@@ -65,29 +90,30 @@ Use *Multichannel test tones* as a source to try the mixer without any hardware.
 
 ```bash
 npm run typecheck
-npm test                # 79 unit tests
+npm test                # 96 unit tests
 npm run test:coverage   # + coverage report in coverage/
 npm run e2e             # drives the real app: mixer, streaming, video (needs a display and ffmpeg)
 ```
 
-### Unit tests: 79 tests, 10 files
+### Unit tests: 96 tests, 11 files
 
 Coverage of the logic that can run without Electron or audio hardware (`npm run test:coverage`):
 
 | File | Statements | Branches | Functions | Lines |
 |---|---|---|---|---|
-| **Total** | **93.5%** | **91.8%** | **93.9%** | **95.5%** |
+| **Total** | **94.3%** | **93.7%** | **94.7%** | **96.0%** |
+| `src/shared/screens.ts` (screen/look validation, defaults) | 100% | 100% | 100% | 100% |
 | `src/shared/mixer.ts` (console model, validation) | 100% | 100% | 100% | 100% |
 | `src/shared/songs.ts` (song text format) | 100% | 100% | 100% | 100% |
 | `src/shared/types.ts` | 100% | 100% | 100% | 100% |
 | `src/main/playback.ts` (video clock) | 100% | 100% | 100% | 100% |
 | `src/main/video-plan.ts` (copy / remux / transcode) | 100% | 100% | 100% | 100% |
 | `src/main/range.ts`, `media-path.ts` (HTTP ranges, path-traversal guard) | 100% | 100% | 100% | 100% |
-| `src/main/store.ts` (atomic JSON storage) | 96.4% | 100% | 90.0% | 95.8% |
+| `src/main/store.ts` (atomic JSON storage) | 96.7% | 100% | 90.9% | 96.2% |
 | `src/main/streamer.ts` (ffmpeg args, process handling) | 87.1% | 79.0% | 88.0% | 91.7% |
 | `src/main/tools.ts` (ffmpeg lookup) | 92.8% | 91.7% | 100% | 90.9% |
 
-> **How to read this number.** These nine files are about **24%** of the source (≈800 of ≈3,300 lines); they are the parts that are pure logic. The other ~76% (operator UI, windows and screens, the audio graph, IPC, packaging) cannot run in plain Node, so it has **no line coverage**; it is exercised only by the end-to-end scripts below and by manual checks. The streamer's process tests use a fake `ffmpeg` and run on macOS/Linux only; the real-ffmpeg path is covered by the end-to-end scripts.
+> **How to read this number.** These eleven files are about **25%** of the source (≈900 of ≈3,600 lines); they are the parts that are pure logic. The other ~76% (operator UI, windows and screens, the audio graph, IPC, packaging) cannot run in plain Node, so it has **no line coverage**; it is exercised only by the end-to-end scripts below and by manual checks. The streamer's process tests use a fake `ffmpeg` and run on macOS/Linux only; the real-ffmpeg path is covered by the end-to-end scripts.
 
 ### End-to-end tests: 26 checks against the real app
 
@@ -97,13 +123,18 @@ Coverage of the logic that can run without Electron or audio hardware (`npm run 
 | `npm run e2e:stream` | 5 | Streams the animated test pattern with audio to a file for 8 s and inspects it with ffprobe: clean stop, H.264 1920×1080, AAC track, most of the run captured, frames delivered. |
 | `npm run e2e:video` | 9 | Generates mp4/mov/mkv/HEVC/ProRes samples; checks the import decision for each, then plays one on all screens and checks every window follows the clock through play, pause and seek (screens within 0.75 s of each other). |
 
-Last run: 79/79 unit tests, 12/12 + 5/5 + 9/9 end-to-end checks, on macOS (Apple silicon).
+Last run: 96/96 unit tests, 12/12 + 5/5 + 9/9 end-to-end checks, on macOS (Apple silicon).
 
 ### What is tested, and what is not
 
 | Area | Automated | Checked by hand (screenshots) | **Not tested** |
 |---|---|---|---|
 | Song format, services, persistence | unit | editor, picker, run sheet UI | |
+| Screens: validation, saving, restart round trip | unit + restart check by hand | Settings tab | |
+| Identify displays overlay | | seen on both displays (screen capture) | |
+| Text over camera, lower-third caption | | frame of an encoded stream, simulated camera | **a real camera or ATEM** |
+| True alpha / key + fill output | | | **not built** |
+| PreStreamer name in the macOS menu bar | | bundle name and process name checked | **not seen in the menu bar itself** (could not bring the app to the front from the test script) |
 | Slide backgrounds (image/video) | scripted hook run manually, not in CI | | |
 | Video import and playback sync | unit + e2e | transport bar, previews | **video sound** (output device routing) |
 | Mixer DSP | unit (model) + e2e | console UI | |
@@ -154,4 +185,4 @@ Scripted scenarios used by the tests (see `src/main/devhooks.ts`), switched on b
 
 ## Roadmap
 
-Video-delay control and audio drift correction · per-channel names/presets pulled from the Wing (OSC, UDP 2223) · ATEM control (`atem-connection`) · Quelea song import and ProPresenter export · NDI/Syphon outputs · code signing and auto-update.
+Video-delay control and audio drift correction · alpha/key+fill output (NDI) · an app icon · per-channel names/presets pulled from the Wing (OSC, UDP 2223) · ATEM control (`atem-connection`) · Quelea song import and ProPresenter export · NDI/Syphon outputs · code signing and auto-update.

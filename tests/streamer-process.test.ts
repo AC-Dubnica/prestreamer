@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { NativeImage } from 'electron'
 import { Streamer, fileTarget, youtubeTarget } from '../src/main/streamer'
+import { defaultStreamSettings } from '../src/shared/stream-settings'
 import type { StreamStatus } from '../src/shared/types'
 
 // A stand-in for ffmpeg: a shell wrapper around a tiny node script that counts what arrives on stdin.
@@ -16,6 +17,13 @@ const SCRIPT = `
 let bytes = 0
 process.stdin.on('data', (d) => { bytes += d.length })
 process.stdin.on('end', () => { console.error('received ' + bytes + ' bytes'); process.exit(0) })
+// Like ffmpeg's -progress output: 12,500 bytes every 100 ms is a steady 1,000 kbit/s.
+let size = 0
+let frame = 0
+if (process.env.FAKE_MODE !== 'die') setInterval(() => {
+  size += 12500; frame += 3
+  process.stdout.write('frame=' + frame + '\\nfps=30.00\\ntotal_size=' + size + '\\ndup_frames=2\\ndrop_frames=1\\nspeed=' + (process.env.FAKE_SPEED || '1.00') + 'x\\nprogress=continue\\n')
+}, 100)
 if (process.env.FAKE_MODE === 'die') {
   console.error('fatal: cannot open ' + (process.env.FAKE_SECRET || ''))
   setTimeout(() => process.exit(1), 80)
@@ -62,6 +70,28 @@ describe.skipIf(!posix)('Streamer with a fake ffmpeg', () => {
     await streamer.stop()
     expect(streamer.getStatus()).toMatchObject({ state: 'idle', message: 'Stopped' })
     expect(updates.map((u) => u.state)).toContain('running')
+  })
+
+  it('reads ffmpeg progress and reports bitrate, speed and health', async () => {
+    const { streamer } = setup()
+    await streamer.start(() => frame, fileTarget('/tmp/out.mkv'))
+    await wait(2600)
+    const stats = streamer.getStatus().stats
+    expect(stats).toBeDefined()
+    expect(stats!.bitrateKbps).toBeGreaterThan(800)
+    expect(stats!.bitrateKbps).toBeLessThan(1200)
+    expect(stats).toMatchObject({ speed: 1, targetFps: 30, targetKbps: 4628, width: 1920, height: 1080, encoder: 'libx264', dupFrames: 2, ffmpegDropped: 1, health: 'good' })
+    expect(stats!.history.length).toBeGreaterThanOrEqual(2)
+    expect(stats!.uptimeSec).toBeGreaterThanOrEqual(2)
+    await streamer.stop()
+  })
+
+  it('uses the settings it was started with for the targets', async () => {
+    const { streamer } = setup()
+    await streamer.start(() => frame, fileTarget('/tmp/out.mkv'), '', 0, undefined, { ...defaultStreamSettings, fps: 60, videoKbps: 9000, audioKbps: 192, width: 1280, height: 720 })
+    await wait(1500)
+    expect(streamer.getStatus().stats).toMatchObject({ targetFps: 60, targetKbps: 9192, width: 1280, height: 720 })
+    await streamer.stop()
   })
 
   it('refuses to start twice', async () => {
