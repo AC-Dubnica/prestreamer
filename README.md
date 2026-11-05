@@ -6,19 +6,21 @@ Run a Sunday service from one window: a run sheet of songs, Bible passages, vide
 
 **Download:** installers for macOS (Apple silicon and Intel) and Windows are on the [Releases page](https://github.com/AC-Dubnica/prestreamer/releases). They are not code-signed yet, so the first start needs one extra step (see *Build, CI and releases*).
 
-| Present | Songs |
+| Present | Monitor (all screens) |
 |---|---|
-| ![Present](docs/screenshots/present.png) | ![Songs](docs/screenshots/songs.png) |
+| ![Present](docs/screenshots/present.png) | ![Monitor](docs/screenshots/monitor.png) |
 
-| Bible | Mixer |
+| Songs | Bible |
 |---|---|
-| ![Bible](docs/screenshots/bible.png) | ![Mixer](docs/screenshots/mixer.png) |
+| ![Songs](docs/screenshots/songs.png) | ![Bible](docs/screenshots/bible.png) |
 
-| Settings | Live announcement |
+| Mixer: a chain of effects per channel | Settings |
 |---|---|
-| ![Settings](docs/screenshots/settings.png) | ![Announcement](docs/screenshots/announce-live.png) |
+| ![Mixer](docs/screenshots/mixer.png) | ![Settings](docs/screenshots/settings.png) |
 
-> The screenshots were taken before the stage monitor, stream health, ATEM panel and the newest Present tab layout were added; they are due for a refresh.
+| A live announcement on every screen |
+|---|
+| ![Announcement](docs/screenshots/announce-live.png) |
 
 ## Features
 
@@ -209,6 +211,8 @@ npm run package:dir    # unpacked app, faster, for checking
 - **Builds are unsigned.** On macOS open the `.dmg`, drag PreStreamer to Applications, then right-click the app and choose **Open** once (or run `xattr -cr /Applications/PreStreamer.app`). On Windows SmartScreen shows a warning: choose **More info**, then **Run anyway**. Signing needs an Apple Developer ID and a Windows certificate, configured in `package.json` → `build`. On a managed machine the warning may block the app entirely.
 
 ## Development notes
+
+`npm run screenshots` retakes the pictures above (`node scripts/screenshots.mjs mixer` for one): it launches the real app once per picture on a scratch data folder with generated backgrounds, a public-domain Bible (King James, John 3) and a made-up band in the mixer, so run it when the look of the app changes. It needs a display and ffmpeg, and windows open briefly.
 
 Scripted scenarios used by the tests (the full list is at the top of `src/main/devhooks.ts`), switched on by environment variables:
 

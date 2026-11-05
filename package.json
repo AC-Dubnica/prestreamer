@@ -21,6 +21,7 @@
     "e2e:presentation": "node scripts/e2e-presentation.mjs",
     "e2e:backgrounds": "node scripts/e2e-backgrounds.mjs",
     "e2e:atem": "node scripts/e2e-atem.mjs",
+    "screenshots": "node scripts/screenshots.mjs",
     "e2e:monitor": "node scripts/e2e-monitor.mjs",
     "e2e:appearance": "node scripts/e2e-appearance.mjs",
     "e2e:songeditor": "node scripts/e2e-songeditor.mjs",

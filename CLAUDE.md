@@ -15,6 +15,7 @@ npx vitest run tests/screens.test.ts          # one test file
 npx vitest run -t "mirror screens"            # one test by name
 npm run test:coverage
 node scripts/e2e-stage.mjs     # one end-to-end script (needs a display, ffmpeg on PATH); `npm run e2e` runs all after a build
+npm run screenshots            # retake docs/screenshots (launches the app once per picture; windows open briefly)
 npm run package:dir            # unpacked installer for a quick check; `npm run package` for installers
 npm version patch && git push --follow-tags   # release: the pushed vX.Y.Z tag runs .github/workflows/release.yml (mac arm64 + Intel, Windows)
 ```
