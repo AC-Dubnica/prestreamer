@@ -16,6 +16,8 @@ export interface BibleViewDeps {
   /** The look slide thumbnails are drawn with (the selected screen's). */
   getLook(): Look
   present(slide: Slide): void
+  /** The background a reading gets on air (the one chosen for all readings in Settings), so the thumbnails show the same. */
+  background(): Slide['background']
   /** Adds a reading to the current service. Resolves with the service's name, or null if there is no service. */
   addReading(title: string, slides: ScriptureSlide[]): Promise<string | null>
 }
@@ -196,7 +198,7 @@ export function createBibleView(root: HTMLElement, d: BibleViewDeps) {
     const grid = el('div', { className: 'grid' }, ...slides.map((sl) => {
       const pv = scaledPreview()
       previews.push(pv)
-      pv.update(look, { label: sl.label, text: sl.text, background: null }, 1920, 1080, false)
+      pv.update(look, { label: sl.label, text: sl.text, background: d.background() ?? null }, 1920, 1080, false)
       const tag = el('div', { className: 'tag', textContent: sl.label })
       tag.style.background = '#0f766e'
       return el('div', { className: 'card', title: 'Click to show on the screens', onclick: () => d.present({ label: sl.label, text: sl.text }) }, tag, pv.box)

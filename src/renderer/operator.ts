@@ -1118,6 +1118,7 @@ const bibleView = createBibleView($('view-bible'), {
   api: prestreamer,
   getLook: () => (state.screens.find((x) => x.id === selectedScreenId) ?? state.screens[0])?.look ?? defaultLook,
   present: (slide) => void prestreamer.showSlide(applyDefaultBackground([slide], appearance.scriptureBackground)[0]),
+  background: () => appearance.scriptureBackground,
   addReading: async (title, slides) => {
     const svc = currentService()
     if (!svc) return null

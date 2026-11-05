@@ -10,7 +10,9 @@
       html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text); font: 13px system-ui, sans-serif; user-select: none; }
       #app { display: grid; grid-template-rows: 44px 1fr; height: 100%; }
       header { display: flex; align-items: center; gap: 12px; padding: 0 12px; background: var(--panel); border-bottom: 1px solid var(--line); }
-      header .sp { flex: 1 }
+      header .sp { flex: 1 } header button { white-space: nowrap }
+      /* while an announcement is on air its red button needs room: the three least-used header buttons keep only their icon (tooltips say the rest) */
+      @media (max-width: 1560px) { header:has(#announcelive:not([hidden])) #headbtns :is(.openall, .closeall, .logobtn) span { display: none } }
       .view { display: none; min-height: 0 }
       .view.active { display: grid }
       #view-present { grid-template-columns: 270px 1fr 380px }
@@ -181,6 +183,8 @@
       .fxnode { background: var(--panel); min-width: 120px; display: flex; flex-direction: column; gap: 6px; justify-content: flex-start } .fxout { font-size: 18px; font-variant-numeric: tabular-nums }
       .fxadd { background: transparent; border-style: dashed; display: flex; flex-direction: column; gap: 8px; justify-content: center; min-width: 130px }
       .fxlink { flex: none; width: 26px; align-self: center; height: 2px; background: var(--dim); position: relative; opacity: .7 } .fxlink::after { content: ''; position: absolute; right: -1px; top: -4px; border-left: 7px solid var(--dim); border-top: 5px solid transparent; border-bottom: 5px solid transparent }
+      /* a card with a graph is as wide as the graph; the graph is drawn to fill whatever width it is given */
+      .fxcard .cbody:has(.mxgraph) { width: 300px }
       .fxcard .chead, .fxnode .chead { display: flex; align-items: center; gap: 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); margin-bottom: 6px } .chead .ctitle { flex: none; color: var(--text) } .chead .grow { flex: 1 }
       .grbar { flex: 1; min-width: 36px; height: 6px; background: var(--bg); border-radius: 3px; overflow: hidden } .grfill { height: 100%; width: 0; background: #f59e0b; transition: width .06s linear }
       .fxcard .grip { all: unset; cursor: grab; color: var(--dim); font-size: 14px; line-height: 1; padding: 0 2px; border-radius: 4px } .fxcard .grip:hover, .fxcard .grip:focus-visible { color: var(--text); background: var(--line) }
