@@ -1,49 +1,102 @@
 name: Release
 
-# Push a tag such as v0.2.0 to build installers and attach them to a GitHub release.
+# Releasing:  npm version <patch|minor|major>   (bumps package.json and creates the tag vX.Y.Z)
+#             git push --follow-tags            (the pushed tag starts this workflow)
+# The workflow builds the installers on each platform and attaches them to a GitHub release for that tag.
+# "Run workflow" (manual) builds the same installers as downloadable artifacts only and publishes nothing.
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
-permissions:
-  contents: write
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   package:
-    name: Package (${{ matrix.os }})
+    name: Package ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     strategy:
       fail-fast: true
       matrix:
-        os: [macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+        include:
+          # ffmpeg and ffprobe are bundled per architecture, so each architecture is built on a runner of its own kind.
+          - { os: macos-latest, label: macOS (Apple silicon), artifact: mac-arm64 }
+          - { os: macos-15-intel, label: macOS (Intel), artifact: mac-x64 }
+          - { os: windows-latest, label: Windows (x64), artifact: win-x64 }
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
+
+      - name: The tag matches the app version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $version. Use 'npm version' to bump and tag together."
+            exit 1
+          fi
+
       - run: npm ci
+
+      # The bundled ffmpeg is downloaded by this package's install script; make sure it is there whatever the npm version skipped.
+      - name: Make sure the bundled ffmpeg is downloaded
+        run: node node_modules/ffmpeg-static/install.js
+
       - run: npm run typecheck
       - run: npm test
+
+      # Unsigned for now: macOS shows an "unidentified developer" warning and Windows SmartScreen asks to confirm.
       - run: npm run package
+
+      - name: Installers
+        shell: bash
+        run: ls -la release/*.dmg release/*.zip release/*.exe 2>/dev/null || true
+
       - uses: actions/upload-artifact@v4
         with:
-          name: prestreamer-${{ matrix.os }}
+          name: prestreamer-${{ matrix.artifact }}
           path: |
             release/*.dmg
             release/*.zip
             release/*.exe
           if-no-files-found: error
+          retention-days: 30
 
   publish:
+    name: Publish the release
     needs: package
+    # Only a pushed tag publishes; a manual run just leaves the artifacts above.
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
-          path: dist-artifacts
+          path: installers
           merge-multiple: true
+
+      - run: ls -la installers
+
       - uses: softprops/action-gh-release@v2
         with:
-          files: dist-artifacts/*
+          files: installers/*
           generate_release_notes: true
+          # A tag such as v0.3.0-beta.1 is marked as a pre-release.
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          body: |
+            ## Installing
+
+            These builds are not code-signed yet, so the first start needs one extra step:
+
+            - **macOS:** open the `.dmg`, drag PreStreamer to Applications, then right-click the app and choose **Open** once (or run `xattr -cr /Applications/PreStreamer.app`). Apple silicon: `*-mac-arm64`; Intel: `*-mac-x64`.
+            - **Windows:** run the `.exe` installer. If SmartScreen appears, choose **More info**, then **Run anyway**. The `.zip` is a portable copy.

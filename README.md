@@ -158,7 +158,14 @@ npm run package:dir    # unpacked app, faster, for checking
 ```
 
 - **`.github/workflows/ci.yml`** (every push and pull request): typecheck, unit tests with coverage, build; end-to-end tests on macOS and Windows (reported but non-blocking until proven stable on hosted runners, which may lack a display or audio stack); installers uploaded as build artifacts.
-- **`.github/workflows/release.yml`**: push a tag like `v0.2.0` to build macOS and Windows installers and attach them to a GitHub release.
+- **`.github/workflows/release.yml`**: builds the installers and attaches them to a GitHub release. To release:
+
+  ```bash
+  npm version patch          # or minor / major: bumps package.json and creates the tag vX.Y.Z
+  git push --follow-tags     # the pushed tag starts the workflow
+  ```
+
+  It builds macOS for Apple silicon (`*-mac-arm64`) and for Intel (`*-mac-x64`), and Windows x64 (`*-win-x64` installer and portable zip), each on a runner of its own kind because ffmpeg is bundled per architecture. It stops if the tag does not match the version in `package.json`. A tag with a dash (`v0.3.0-beta.1`) is marked as a pre-release. **Run workflow** in the Actions tab does a trial build with the installers as downloadable artifacts and publishes nothing.
 - Installers bundle `ffmpeg` and `ffprobe` (`ffmpeg-static`, `ffprobe-static`), pruned to the target platform. **Licensing:** the bundled ffmpeg includes GPL components (libx264); if you distribute installers, check the licence files of those packages and your obligations.
 - **Builds are unsigned.** macOS shows an "unidentified developer" warning and Windows SmartScreen warns until you add code signing (an Apple Developer ID and a Windows certificate, configured in `package.json` → `build`). On a managed machine this warning may block the app entirely.
 
