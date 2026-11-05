@@ -20,6 +20,9 @@ import { pickVideo } from './video'
 import { pickPresentation } from './presentations'
 import { runDevHooks } from './devhooks'
 import { defaultSession, fitBounds, safeToRestore, sanitizeSession, type Session } from '../shared/session'
+import { defaultAppearance, forgetAppearanceMedia, sanitizeAppearance, type Appearance } from '../shared/appearance'
+import { AtemController, realAtemClient } from './atem'
+import { defaultAtemSettings, sanitizeAtemSettings, type AtemCommand } from '../shared/atem'
 import { Streamer, fileTarget, youtubeTarget } from './streamer'
 
 app.setName('PreStreamer')
@@ -48,6 +51,20 @@ let screens: ScreenManager
 let streamer: Streamer
 let audio: AudioBridge
 let playback: Playback
+let atem: AtemController
+
+// App-wide look: the song and scripture backgrounds and the logo (appearance.json).
+const appearancePath = () => join(userData(), 'appearance.json')
+let appearance: Appearance = defaultAppearance
+function loadAppearance(): void {
+  try { appearance = sanitizeAppearance(JSON.parse(readFileSync(appearancePath(), 'utf8'))) } catch { appearance = defaultAppearance }
+}
+function setAppearance(next: Appearance): Appearance {
+  appearance = next
+  writeJsonAtomic(appearancePath(), appearance)
+  operator?.webContents.send(IPC.appearanceChanged, appearance)
+  return appearance
+}
 
 const streamSettingsPath = () => join(userData(), 'stream-settings.json')
 let streamSettings: StreamSettings = defaultStreamSettings
@@ -121,6 +138,7 @@ function createOperator(): void {
     quitting = true
     operator = null
     await streamer.stop()
+    await atem.stop()
     audio.close()
     screens.closeAll()
     app.quit()
@@ -165,6 +183,7 @@ ipcMain.handle(IPC.addDisplayScreen, (_e, name: string, opts?: { stage?: boolean
 ipcMain.handle(IPC.updateScreen, (_e, id: string, patch: Partial<ScreenConfig>) => screens.update(id, patch))
 ipcMain.handle(IPC.removeScreen, (_e, id: string) => screens.remove(id))
 ipcMain.handle(IPC.identifyDisplays, () => screens.identifyDisplays())
+ipcMain.handle(IPC.reorderScreen, (_e, id: string, target: string, after: boolean) => screens.reorder(String(id), String(target), after === true))
 ipcMain.handle(IPC.moveScreen, (_e, id: string, delta: number) => screens.move(id, delta < 0 ? -1 : 1))
 ipcMain.handle(IPC.setLive, (_e, id: string, live: boolean) => screens.setLive(id, live))
 ipcMain.handle(IPC.showSlide, (_e, slide: Slide | null) => presentSlide(slide))
@@ -223,10 +242,19 @@ ipcMain.handle(IPC.mediaImport, (_e, kind: MediaKind) => pickMedia(operator, kin
 ipcMain.handle(IPC.mediaList, () => listLibrary())
 ipcMain.handle(IPC.mediaRemove, (_e, file: string) => {
   const removed = deleteFromLibrary(file)
-  if (removed) screens.forgetBackgroundMedia(file) // a screen that used it goes back to its colour
+  if (removed) {
+    screens.forgetBackgroundMedia(file) // a screen that used it goes back to its colour
+    const next = forgetAppearanceMedia(appearance, file)
+    if (next !== appearance) setAppearance(next)
+  }
   return removed
 })
 ipcMain.handle(IPC.picturesImport, () => pickPictures(operator))
+ipcMain.handle(IPC.appearanceGet, () => appearance)
+ipcMain.handle(IPC.appearanceSet, (_e, raw: unknown) => setAppearance(sanitizeAppearance(raw)))
+ipcMain.handle(IPC.atemGet, () => atem.getStatus())
+ipcMain.handle(IPC.atemSetAddress, (_e, address: unknown) => atem.setAddress(address))
+ipcMain.handle(IPC.atemSend, (_e, cmd: AtemCommand) => atem.send(cmd))
 ipcMain.handle(IPC.streamKeyState, () => streamKey.has())
 ipcMain.handle(IPC.streamKeyForget, () => streamKey.forget())
 ipcMain.handle(AUDIO_IPC.configure, (_e, cfg: AudioConfig) => audio.configure(cfg))
@@ -242,6 +270,7 @@ app.whenReady().then(() => {
   if (!process.env.PRESTREAMER_USER_DATA) autoImportFromQuelea(bibleStore, join(userData(), 'bibles-auto-import.json'), homedir(), process.platform)
   serviceStore.load()
   loadStreamSettings()
+  loadAppearance()
   quickStore.load()
   // Only local app pages exist, so the one permission we grant is camera/mic (ATEM, mixer).
   session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => cb(permission === 'media'))
@@ -271,6 +300,17 @@ app.whenReady().then(() => {
     (meters) => operator?.webContents.send(AUDIO_IPC.metersOut, meters),
   )
   void audio.init()
+  const atemPath = join(userData(), 'atem.json')
+  let atemSettings = defaultAtemSettings
+  try { atemSettings = sanitizeAtemSettings(JSON.parse(readFileSync(atemPath, 'utf8'))) } catch { /* nothing saved yet */ }
+  atem = new AtemController(
+    (status) => operator?.webContents.send(IPC.atemState, status),
+    realAtemClient,
+    (next) => { try { writeJsonAtomic(atemPath, next) } catch { /* the address is a convenience */ } },
+    atemSettings,
+  )
+  // Tests use a scratch data folder and must not send network packets to whatever sits at the default address.
+  if (!process.env.PRESTREAMER_USER_DATA || process.env.PRESTREAMER_ATEM === '1') atem.start()
 
   createOperator()
   restoreScreens()

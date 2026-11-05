@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { MAX_CHANNELS, RANGES, TEST_SOURCES, clamp, dbToGain, defaultMixer, defaultStrip, effectiveGains, gainToDb, sanitizeMixer, shortDeviceName, stripKey, type MixerConfig } from '../src/shared/mixer'
+import { MAX_CHANNELS, RANGES, TEST_SOURCES, clamp, dbToGain, defaultMixer, defaultStrip, effectiveGains, findEffect, gainToDb, sanitizeMixer, shortDeviceName, stripKey, type MixerConfig } from '../src/shared/mixer'
 
 describe('decibel conversion', () => {
   it('maps common values', () => {
@@ -46,7 +46,8 @@ describe('defaults', () => {
   it('starts as a stereo pair on USB 1-2, hard left and right, master limiter on', () => {
     const m = defaultMixer()
     expect(m.strips.map((s) => [s.channel, s.pan])).toEqual([[0, -1], [1, 1]])
-    expect(m.masterLimiter.on).toBe(true)
+    expect(m.masterChain).toHaveLength(1)
+    expect(m.masterChain[0]).toMatchObject({ type: 'limiter', on: true, ceilingDb: -1 })
   })
   it('names strips after their USB channel', () => {
     expect(defaultStrip(2).name).toBe('USB 3')
@@ -59,20 +60,20 @@ describe('sanitizeMixer (untrusted JSON from disk or IPC)', () => {
   })
 
   it('clamps out-of-range numbers', () => {
-    const m = sanitizeMixer({ strips: [{ channel: 0, trimDb: 99, faderDb: -999, pan: 5, comp: { ratio: 1000 } }], masterDb: 50 })
+    const m = sanitizeMixer({ strips: [{ channel: 0, trimDb: 99, faderDb: -999, pan: 5, chain: [{ type: 'comp', id: 'c1', ratio: 1000 }] }], masterDb: 50 })
     expect(m.strips[0].trimDb).toBe(RANGES.trimDb[1])
     expect(m.strips[0].faderDb).toBe(RANGES.faderDb[0])
     expect(m.strips[0].pan).toBe(1)
-    expect(m.strips[0].comp.ratio).toBe(RANGES.compRatio[1])
+    expect(findEffect(m.strips[0].chain, 'comp')?.ratio).toBe(RANGES.compRatio[1])
     expect(m.masterDb).toBe(RANGES.masterDb[1])
   })
 
   it('replaces NaN, Infinity and wrong types with defaults', () => {
-    const m = sanitizeMixer({ strips: [{ channel: 0, trimDb: NaN, faderDb: Infinity, mute: 'yes', eq: { midQ: 'wide' } }] })
+    const m = sanitizeMixer({ strips: [{ channel: 0, trimDb: NaN, faderDb: Infinity, mute: 'yes', chain: [{ type: 'eq', id: 'e1', midQ: 'wide' }] }] })
     expect(m.strips[0].trimDb).toBe(0)
     expect(m.strips[0].faderDb).toBe(0)
     expect(m.strips[0].mute).toBe(false)
-    expect(m.strips[0].eq.midQ).toBe(defaultStrip(0).eq.midQ)
+    expect(findEffect(m.strips[0].chain, 'eq')?.midQ).toBe(1)
   })
 
   it('drops strips with an invalid channel and keeps only the first of duplicates', () => {
@@ -87,7 +88,7 @@ describe('sanitizeMixer (untrusted JSON from disk or IPC)', () => {
   })
 
   it('is idempotent on its own output', () => {
-    const once = sanitizeMixer({ strips: [{ channel: 5, faderDb: -3, solo: true, gate: { on: true } }], masterDb: -2 })
+    const once = sanitizeMixer({ strips: [{ channel: 5, faderDb: -3, solo: true, chain: [{ type: 'gate', id: 'g1', on: true }] }], masterDb: -2 })
     expect(sanitizeMixer(once)).toEqual(once)
   })
 

@@ -20,7 +20,11 @@
     "e2e:slides": "node scripts/e2e-slides.mjs",
     "e2e:presentation": "node scripts/e2e-presentation.mjs",
     "e2e:backgrounds": "node scripts/e2e-backgrounds.mjs",
-    "e2e": "npm run build && npm run e2e:ui && npm run e2e:bible && npm run e2e:announce && npm run e2e:sources && npm run e2e:mixer && npm run e2e:stream && npm run e2e:video && npm run e2e:mixer-ui && npm run e2e:camera-only && npm run e2e:stage && npm run e2e:session && npm run e2e:slides && npm run e2e:presentation && npm run e2e:backgrounds",
+    "e2e:atem": "node scripts/e2e-atem.mjs",
+    "e2e:monitor": "node scripts/e2e-monitor.mjs",
+    "e2e:appearance": "node scripts/e2e-appearance.mjs",
+    "e2e:songeditor": "node scripts/e2e-songeditor.mjs",
+    "e2e": "npm run build && npm run e2e:ui && npm run e2e:bible && npm run e2e:announce && npm run e2e:sources && npm run e2e:mixer && npm run e2e:stream && npm run e2e:video && npm run e2e:mixer-ui && npm run e2e:camera-only && npm run e2e:stage && npm run e2e:session && npm run e2e:slides && npm run e2e:presentation && npm run e2e:backgrounds && npm run e2e:atem && npm run e2e:monitor && npm run e2e:appearance && npm run e2e:songeditor",
     "package": "npm run build && electron-builder --publish never",
     "package:dir": "npm run build && electron-builder --dir --publish never",
     "e2e:ui": "node scripts/e2e-ui.mjs",
@@ -39,6 +43,7 @@
     "vitest": "^5.1.0"
   },
   "dependencies": {
+    "atem-connection": "^3.10.3",
     "ffmpeg-static": "^5.3.0",
     "ffprobe-static": "^3.1.0"
   },

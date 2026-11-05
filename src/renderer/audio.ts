@@ -1,5 +1,6 @@
 import type { AudioApi } from '../preload/audio'
-import { dbToGain, effectiveGains, gainToDb, stripKey, type MixerConfig, type Strip } from '../shared/mixer'
+import { dbToGain, effectiveGains, gainToDb, stripKey, type Effect, type MixerConfig, type Strip } from '../shared/mixer'
+import { createFx, param, type Fx } from './effects'
 import { mediaUrl, type AudioConfig, type Meters, type PlaybackState } from '../shared/types'
 
 declare const audioBridge: AudioApi
@@ -7,7 +8,6 @@ declare const audioBridge: AudioApi
 const SAMPLE_RATE = 48000
 const BATCH_FRAMES = 1024
 const METER_INTERVAL_MS = 50
-const SMOOTH_S = 0.01 // parameter changes glide over ~10 ms, so moving a fader does not click
 
 interface StripNodes {
   key: string
@@ -15,20 +15,46 @@ interface StripNodes {
   /** The source this strip is currently wired to (null until its device is open). */
   from: Source | null
   trim: GainNode
-  hpf: BiquadFilterNode
-  low: BiquadFilterNode
-  mid: BiquadFilterNode
-  high: BiquadFilterNode
-  gate: AudioWorkletNode
-  comp: AudioWorkletNode
-  limiter: AudioWorkletNode
+  /** trim -> the strip's effects -> fader */
+  rig: Rig
   fader: GainNode
   pan: StereoPannerNode
   meter: AnalyserNode
   buf: Float32Array<ArrayBuffer>
-  /** Latest compressor gain reduction in dB (≤ 0), reported by its worklet. */
-  reductionDb: number
 }
+
+/**
+ * A chain of effects between two fixed nodes (a strip's trim and fader, or the master's sum and master fader). The effects
+ * are rewired only when the chain's makeup changes (one added, removed or moved); settings changes never touch the wiring.
+ */
+interface Rig { head: AudioNode; tail: AudioNode; fx: Fx[]; shape: string }
+
+const shapeOf = (chain: Effect[]): string => chain.map((e) => `${e.id}:${e.type}`).join(',')
+
+/** Makes the audio chain match the settings: effects with the same id are kept (with their state, e.g. a reverb tail), others are made or dropped. */
+function syncChain(ctx: AudioContext, rig: Rig, chain: Effect[]): void {
+  const shape = shapeOf(chain)
+  if (shape !== rig.shape) {
+    const old = new Map(rig.fx.map((f) => [f.id, f]))
+    const next = chain.map((e) => {
+      const kept = old.get(e.id)
+      if (kept && kept.type === e.type) { old.delete(e.id); return kept }
+      return createFx(ctx, e)
+    })
+    for (const f of old.values()) f.dispose()
+    rig.head.disconnect()
+    for (const f of next) f.output.disconnect()
+    let prev: AudioNode = rig.head
+    for (const f of next) { prev.connect(f.input); prev = f.output }
+    prev.connect(rig.tail)
+    rig.fx = next
+    rig.shape = shape
+  }
+  chain.forEach((e, i) => rig.fx[i].apply(e))
+}
+
+/** The gain reduction of a rig's compressors and limiters: the most any of them is taking off right now (≤ 0). */
+const rigReduction = (rig: Rig): number => Math.min(0, ...rig.fx.filter((f) => f.type === 'comp' || f.type === 'limiter').map((f) => f.reduction()))
 
 /** One open input: a real device, or a synthetic test source. */
 interface Source {
@@ -44,7 +70,8 @@ interface Source {
 interface Graph {
   ctx: AudioContext
   sum: GainNode
-  masterLimiter: AudioWorkletNode
+  /** sum -> the master's effects -> masterGain */
+  masterRig: Rig
   masterGain: GainNode
   delay: DelayNode
   masterMeters: [AnalyserNode, AnalyserNode]
@@ -79,35 +106,26 @@ function closeSource(src: Source): void {
   src.splitter?.disconnect()
 }
 
-const param = (p: AudioParam, value: number, ctx: BaseAudioContext) => p.setTargetAtTime(value, ctx.currentTime, SMOOTH_S)
-
 const sourceKeyOf = (g: Graph, strip: Strip): string | null => strip.source?.deviceId ?? g.defaultKey
 
 function createStrip(g: Graph, strip: Strip): StripNodes {
   const { ctx } = g
-  const filter = (type: BiquadFilterType) => Object.assign(ctx.createBiquadFilter(), { type })
+  const trim = ctx.createGain()
+  const fader = ctx.createGain()
   const n: StripNodes = {
     key: stripKey(strip),
     channel: strip.channel,
     from: null,
-    trim: ctx.createGain(),
-    hpf: filter('highpass'),
-    low: filter('lowshelf'),
-    mid: filter('peaking'),
-    high: filter('highshelf'),
-    gate: new AudioWorkletNode(ctx, 'gate', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] }),
-    comp: new AudioWorkletNode(ctx, 'compressor'),
-    limiter: new AudioWorkletNode(ctx, 'compressor'),
-    fader: ctx.createGain(),
+    trim,
+    rig: { head: trim, tail: fader, fx: [], shape: '\u0000' }, // a shape no chain has, so the first sync wires it
+    fader,
     pan: ctx.createStereoPanner(),
     meter: ctx.createAnalyser(),
     buf: new Float32Array(1024),
-    reductionDb: 0,
   }
-  n.comp.port.onmessage = (e: MessageEvent<number>) => { n.reductionDb = e.data }
   n.meter.fftSize = 1024
-  n.hpf.Q.value = Math.SQRT1_2
-  n.trim.connect(n.hpf).connect(n.low).connect(n.mid).connect(n.high).connect(n.gate).connect(n.comp).connect(n.limiter).connect(n.fader).connect(n.pan)
+  trim.connect(fader) // until the effects are wired
+  fader.connect(n.pan)
   n.pan.connect(n.meter)
   n.pan.connect(g.sum)
   n.meter.connect(g.mute) // analysers are only pulled when something downstream consumes them
@@ -127,55 +145,17 @@ function wireInput(g: Graph, n: StripNodes, strip: Strip): void {
 }
 
 function destroyStrip(n: StripNodes): void {
-  for (const node of [n.trim, n.hpf, n.low, n.mid, n.high, n.gate, n.comp, n.limiter, n.fader, n.pan, n.meter]) node.disconnect()
+  n.rig.fx.forEach((f) => f.dispose())
+  for (const node of [n.trim, n.fader, n.pan, n.meter]) node.disconnect()
   try { n.from?.splitter?.disconnect(n.trim) } catch { /* the source may already be closed */ }
 }
 
-/** Pushes one strip's settings into its nodes. "Off" sections are set to be transparent rather than rewired. */
-function applyStrip(ctx: BaseAudioContext, n: StripNodes, s: Strip, gain: number): void {
+/** Pushes one strip's settings into its nodes. */
+function applyStrip(ctx: AudioContext, n: StripNodes, s: Strip, gain: number): void {
   param(n.trim.gain, dbToGain(s.trimDb), ctx)
-  param(n.hpf.frequency, s.hpf.on ? s.hpf.freq : 10, ctx)
-
-  param(n.low.frequency, s.eq.lowFreq, ctx)
-  param(n.low.gain, s.eq.on ? s.eq.lowGainDb : 0, ctx)
-  param(n.mid.frequency, s.eq.midFreq, ctx)
-  param(n.mid.Q, s.eq.midQ, ctx)
-  param(n.mid.gain, s.eq.on ? s.eq.midGainDb : 0, ctx)
-  param(n.high.frequency, s.eq.highFreq, ctx)
-  param(n.high.gain, s.eq.on ? s.eq.highGainDb : 0, ctx)
-
-  const gp = (name: string) => n.gate.parameters.get(name)!
-  param(gp('enabled'), s.gate.on ? 1 : 0, ctx)
-  param(gp('threshold'), s.gate.thresholdDb, ctx)
-  param(gp('range'), s.gate.rangeDb, ctx)
-  param(gp('attack'), s.gate.attackMs, ctx)
-  param(gp('hold'), s.gate.holdMs, ctx)
-  param(gp('release'), s.gate.releaseMs, ctx)
-
-  const cp = (name: string) => n.comp.parameters.get(name)!
-  param(cp('enabled'), s.comp.on ? 1 : 0, ctx)
-  param(cp('threshold'), s.comp.thresholdDb, ctx)
-  param(cp('ratio'), s.comp.ratio, ctx)
-  param(cp('knee'), s.comp.kneeDb, ctx)
-  param(cp('attack'), Math.max(0.01, s.comp.attackMs), ctx)
-  param(cp('release'), s.comp.releaseMs, ctx)
-  param(cp('makeup'), s.comp.makeupDb, ctx)
-
-  configureLimiter(ctx, n.limiter, s.limiter.on, s.limiter.ceilingDb)
+  syncChain(ctx, n.rig, s.chain)
   param(n.fader.gain, gain, ctx)
   param(n.pan.pan, s.pan, ctx)
-}
-
-/** A limiter is the compressor worklet with a very high ratio, no knee and a near-instant attack. */
-function configureLimiter(ctx: BaseAudioContext, node: AudioWorkletNode, on: boolean, ceilingDb: number): void {
-  const p = (name: string) => node.parameters.get(name)!
-  param(p('enabled'), on ? 1 : 0, ctx)
-  param(p('threshold'), ceilingDb, ctx)
-  param(p('ratio'), 100, ctx)
-  param(p('knee'), 0, ctx)
-  param(p('attack'), 0.05, ctx)
-  param(p('release'), 80, ctx)
-  param(p('makeup'), 0, ctx)
 }
 
 /**
@@ -205,7 +185,7 @@ function applyMixer(m: MixerConfig): void {
   })
   param(g.masterGain.gain, dbToGain(m.masterDb), g.ctx)
   param(g.delay.delayTime, Math.min(5, Math.max(0, m.delayMs / 1000)), g.ctx) // changes live, from the mixer's master section
-  configureLimiter(g.ctx, g.masterLimiter, m.masterLimiter.on, m.masterLimiter.ceilingDb)
+  syncChain(g.ctx, g.masterRig, m.masterChain)
 
   // Close inputs no strip uses any more; open the ones that are new.
   const needed = new Map<string, string>()
@@ -257,14 +237,19 @@ function readMeters(g: Graph, m: MixerConfig): Meters {
     n.meter.getFloatTimeDomainData(n.buf)
     let sumSq = 0
     for (let i = 0; i < n.buf.length; i++) sumSq += n.buf[i] * n.buf[i]
-    return { peakDb: gainToDb(peakOf(n.buf)), rmsDb: gainToDb(Math.sqrt(sumSq / n.buf.length)), reductionDb: n.reductionDb }
+    return { peakDb: gainToDb(peakOf(n.buf)), rmsDb: gainToDb(Math.sqrt(sumSq / n.buf.length)), reductionDb: rigReduction(n.rig) }
   })
+  // Every effect that takes gain off reports it, by id, so its card in the chain can show it.
+  const reductions: Record<string, number> = {}
+  for (const rig of [...g.strips.values()].map((n) => n.rig).concat(g.masterRig)) {
+    for (const f of rig.fx) if (f.type === 'gate' || f.type === 'comp' || f.type === 'limiter' || f.type === 'deesser') reductions[f.id] = f.reduction()
+  }
   const master = g.masterMeters.map((a) => {
     const buf = new Float32Array(a.fftSize)
     a.getFloatTimeDomainData(buf)
     return gainToDb(peakOf(buf))
   }) as [number, number]
-  return { strips, masterPeakDb: master }
+  return { strips, masterPeakDb: master, reductions }
 }
 
 /** 1 kHz beep at the start of every wall-clock second, for the A/V sync check. Returns a stop function. */
@@ -402,24 +387,27 @@ async function apply(cfg: AudioConfig, initialMixer: MixerConfig): Promise<void>
     await ctx.audioWorklet.addModule('pcm-worklet.js')
     await ctx.audioWorklet.addModule('gate-worklet.js')
     await ctx.audioWorklet.addModule('comp-worklet.js')
+    await ctx.audioWorklet.addModule('deesser-worklet.js')
     const c = ctx
 
     const sum = c.createGain()
-    const masterLimiter = new AudioWorkletNode(c, 'compressor', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCount: 2, channelCountMode: 'explicit' })
     const masterGain = c.createGain()
+    masterGain.channelCount = 2 // the master is always stereo, whatever its effects do
+    masterGain.channelCountMode = 'explicit'
     const delay = c.createDelay(5)
     delay.delayTime.value = Math.min(5, Math.max(0, initialMixer.delayMs / 1000))
     const tap = new AudioWorkletNode(c, 'pcm-tap', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCount: 2, channelCountMode: 'explicit' })
     const mute = c.createGain()
     mute.gain.value = 0 // keeps analysers and the tap pulled by the graph without playing anything out loud
-    sum.connect(masterLimiter).connect(masterGain).connect(delay).connect(tap).connect(mute).connect(c.destination)
+    sum.connect(masterGain) // until the master's effects are wired
+    masterGain.connect(delay).connect(tap).connect(mute).connect(c.destination)
 
     const masterSplit = c.createChannelSplitter(2)
     masterGain.connect(masterSplit)
     const masterMeters = [c.createAnalyser(), c.createAnalyser()] as [AnalyserNode, AnalyserNode]
     masterMeters.forEach((a, i) => { a.fftSize = 1024; masterSplit.connect(a, i); a.connect(mute) })
 
-    const g: Graph = { ctx: c, sum, masterLimiter, masterGain, delay, masterMeters, mute, strips: new Map(), sources: new Map(), opening: new Map(), defaultKey: def.key, defaultLabel: def.label, timers: [] }
+    const g: Graph = { ctx: c, sum, masterRig: { head: sum, tail: masterGain, fx: [], shape: '\u0000' }, masterGain, delay, masterMeters, mute, strips: new Map(), sources: new Map(), opening: new Map(), defaultKey: def.key, defaultLabel: def.label, timers: [] }
     graph = g
     applyMixer(initialMixer)
     await Promise.allSettled([...g.opening.values()]) // wait for the first devices so the status already says what each delivered

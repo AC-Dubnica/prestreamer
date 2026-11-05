@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { randomUUID as uuid } from 'node:crypto'
 import type { Announcement, AnnounceRequest } from '../shared/announce'
+import { moveBefore } from '../shared/curves'
 import { moveById, sanitizeScreens } from '../shared/screens'
 import type { ListStore } from './store'
 import {
@@ -161,6 +162,16 @@ export class ScreenManager {
   move(id: string, delta: -1 | 1): void {
     const next = moveById([...this.screens.values()], id, delta)
     if (!next) return
+    this.screens = new Map(next.map((s) => [s.id, s]))
+    this.persist()
+    this.emit()
+  }
+
+  /** Puts a screen right before (or after) another one, as dragging it in the Present tab does. Settings follows: it is the same list. */
+  reorder(id: string, target: string, after: boolean): void {
+    const list = [...this.screens.values()]
+    const next = moveBefore(list, (s) => s.id, id, target, after)
+    if (next === list) return
     this.screens = new Map(next.map((s) => [s.id, s]))
     this.persist()
     this.emit()

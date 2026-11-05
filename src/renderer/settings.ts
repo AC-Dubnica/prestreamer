@@ -1,4 +1,6 @@
 import type { PrestreamerApi } from '../preload'
+import { defaultAppearance, type Appearance } from '../shared/appearance'
+import { mediaThumb, pickBackground } from './background-picker'
 import { SCREEN_LIMITS, SIZE_PRESETS } from '../shared/screens'
 import type { DisplayInfo, ScreenConfig, ScreenState } from '../shared/types'
 import { confirmDialog } from './dialogs'
@@ -38,6 +40,18 @@ function displayMap(displays: DisplayInfo[]): HTMLElement {
  */
 export function createSettingsView(root: HTMLElement, api: PrestreamerApi, toggleScreen: (id: string) => void) {
   let lastSignature = ''
+  let appearance: Appearance = defaultAppearance
+  let lastState: ScreenState | null = null
+  let appearanceNote = ''
+  // The categories listed down the left side; the one open is remembered.
+  const CATEGORIES = [
+    { id: 'visuals', label: 'Visuals', icon: 'image', hint: 'Backgrounds for songs and Bible readings, and the logo' },
+    { id: 'screens', label: 'Screens', icon: 'present', hint: 'The outputs (audience displays, stage monitor, stream, mirrors) and the monitors connected to this computer' },
+  ] as const
+  type CategoryId = (typeof CATEGORIES)[number]['id']
+  const CATEGORY_KEY = 'prestreamer.settingsCategory'
+  const recallCategory = (): CategoryId => { try { const v = localStorage.getItem(CATEGORY_KEY) === 'displays' ? 'screens' : localStorage.getItem(CATEGORY_KEY); return CATEGORIES.find((c) => c.id === v)?.id ?? 'visuals' } catch { return 'visuals' } }
+  let category: CategoryId = recallCategory()
   let newName = ''
   let newPreset = 0
 
@@ -112,7 +126,53 @@ export function createSettingsView(root: HTMLElement, api: PrestreamerApi, toggl
     )
   }
 
+  /** One row of the "Backgrounds and logo" section: what is set, a button to choose, and one to clear it. */
+  function lookRow(label: string, hint: string, current: { kind: 'image' | 'video'; file: string } | null, choose: () => void, clear: () => void): HTMLElement {
+    return el('div', { className: 'lookrow' },
+      el('div', { className: 'lookname' }, el('strong', { textContent: label }), el('span', { className: 'dim', textContent: hint })),
+      current ? mediaThumb(current) : el('div', { className: 'mthumb none', textContent: 'None' }),
+      el('button', { textContent: current ? 'Change…' : 'Choose…', onclick: choose }),
+      iconButton('x', `Clear: no ${label.toLowerCase()}`, clear, { size: 15, disabled: !current }),
+    )
+  }
+
+  async function chooseBackground(title: string, current: Appearance['songBackground'], apply: (bg: { kind: 'image' | 'video'; file: string } | null) => Appearance): Promise<void> {
+    const bg = await pickBackground(api, current, { title, noneLabel: 'No background', noneHint: 'Each song or screen keeps its own colour' })
+    if (bg === undefined) return
+    if (bg !== null && bg.kind === 'css') return
+    appearance = await api.appearanceSet(apply(bg))
+    appearanceNote = ''
+    if (lastState) render(lastState, true)
+  }
+
+  function lookSection(): HTMLElement {
+    const save = async (next: Appearance, note = '') => { appearance = await api.appearanceSet(next); appearanceNote = note; if (lastState) render(lastState, true) }
+    return el('div', { className: 'setsec' },
+      el('div', { className: 'sethead2' }, el('h2', { textContent: 'Backgrounds and logo' })),
+      el('div', { className: 'setcard' },
+        lookRow('Songs', 'behind every song without a picture or video of its own', appearance.songBackground,
+          () => void chooseBackground('Background for all songs', appearance.songBackground, (bg) => ({ ...appearance, songBackground: bg })),
+          () => void save({ ...appearance, songBackground: null })),
+        lookRow('Scripture', 'behind Bible readings without a picture or video of their own', appearance.scriptureBackground,
+          () => void chooseBackground('Background for all Bible readings', appearance.scriptureBackground, (bg) => ({ ...appearance, scriptureBackground: bg })),
+          () => void save({ ...appearance, scriptureBackground: null })),
+        lookRow('Logo', 'shown on every screen by the Logo button (or the L key)', appearance.logo ? { kind: 'image', file: appearance.logo } : null,
+          async () => {
+            const bg = await pickBackground(api, appearance.logo ? { kind: 'image', file: appearance.logo } : null, { title: 'Choose the logo', noneLabel: 'No logo', noneHint: 'The Logo button stays off' })
+            if (bg === undefined) return
+            if (bg === null) return void save({ ...appearance, logo: null })
+            if (bg.kind !== 'image') return void save(appearance, 'A logo must be a picture, not a video.')
+            void save({ ...appearance, logo: bg.file })
+          },
+          () => void save({ ...appearance, logo: null })),
+        el('div', { className: 'dim', textContent: appearanceNote }),
+      ),
+      el('p', { className: 'dim', textContent: 'A song\'s or slide\'s own picture or video always wins. Next comes the background chosen here, then the background of the screen itself (the ⚙ button on a screen in the Present tab), then its colour.' }),
+    )
+  }
+
   function render(state: ScreenState, force = false): void {
+    lastState = state
     const signature = JSON.stringify([state.screens, state.displays, state.live])
     if (!force && signature === lastSignature) return
     lastSignature = signature
@@ -157,8 +217,24 @@ export function createSettingsView(root: HTMLElement, api: PrestreamerApi, toggl
       el('p', { className: 'dim', textContent: 'A virtual screen is rendered inside PreStreamer, not shown on a monitor: it is what the stream picks up (and where text over a camera is composed). It does not appear as a display in macOS or Windows. Colours, fonts, backgrounds, video source and the caption layout are set per screen with its ⚙ button in the Present tab.' }),
     )
 
-    root.replaceChildren(displays, screens)
+    const nav = el('nav', { className: 'setnav', role: 'tablist' }, ...CATEGORIES.map((c) => {
+      const b = iconButton(c.icon, c.hint, () => {
+        category = c.id
+        try { localStorage.setItem(CATEGORY_KEY, category) } catch { /* only a convenience */ }
+        render(state, true)
+      }, { label: c.label, className: c.id === category ? 'on' : '' })
+      b.setAttribute('aria-label', c.label)
+      b.setAttribute('role', 'tab')
+      b.setAttribute('aria-selected', String(c.id === category))
+      return b
+    }))
+    // The connected monitors come first: they are what the screens below are bound to.
+    root.replaceChildren(nav, el('div', { className: 'setbody', role: 'tabpanel' }, ...(category === 'visuals' ? [lookSection()] : [displays, screens])))
   }
 
-  return { render }
+  return {
+    render,
+    /** The saved look changed (here or elsewhere, e.g. a library file was deleted). */
+    setAppearance(a: Appearance): void { appearance = a; if (lastState) render(lastState, true) },
+  }
 }

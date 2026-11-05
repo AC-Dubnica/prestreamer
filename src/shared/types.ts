@@ -114,6 +114,19 @@ export interface Song {
   background: Background | null
   /** A picture or video for one slide only, by position in the song; null or missing = the song's own background. */
   slideBackgrounds?: (Background | null)[]
+  /**
+   * Details Quelea keeps with a song, so a song imported from Quelea loses nothing. The song's own structure matches Quelea's:
+   * a Quelea section (title + lines, optionally its own theme) is one slide here (`[Title]` + lines), its theme's picture or
+   * video is that slide's entry in `slideBackgrounds`, and the song's theme is `background`.
+   */
+  author?: string
+  copyright?: string
+  ccli?: string
+  year?: string
+  publisher?: string
+  key?: string
+  capo?: string
+  notes?: string
 }
 
 /** One entry in a service schedule. */
@@ -245,6 +258,7 @@ export const IPC = {
   streamSettingsSet: 'streamsettings:set',
   identifyDisplays: 'screens:identify',
   moveScreen: 'screen:move',
+  reorderScreen: 'screen:reorder',
   announceShow: 'announce:show',
   announceClear: 'announce:clear',
   setCameraOnly: 'stream:camera-only',
@@ -259,6 +273,13 @@ export const IPC = {
   bibleImportQuelea: 'bible:import-quelea',
   bibleImportPaths: 'bible:import-paths',
   bibleRemove: 'bible:remove',
+  appearanceGet: 'appearance:get',
+  appearanceSet: 'appearance:set',
+  appearanceChanged: 'appearance:changed',
+  atemGet: 'atem:get',
+  atemState: 'atem:state',
+  atemSetAddress: 'atem:set-address',
+  atemSend: 'atem:send',
 } as const
 
 export interface OutputPayload {
@@ -319,4 +340,6 @@ export interface Meters {
   /** Per strip, in the same order as the mixer config: peak and RMS in dBFS, compressor gain reduction in dB (≤ 0). */
   strips: { peakDb: number; rmsDb: number; reductionDb: number }[]
   masterPeakDb: [number, number]
+  /** Gain reduction in dB (≤ 0) of every effect that reduces gain (gate, compressor, limiter, de-esser), by effect id. */
+  reductions: Record<string, number>
 }

@@ -18,6 +18,7 @@ const PATHS = {
   pencil: '<path d="M4 20l1-5L16 4l4 4L9 19z"/><path d="M14 6l4 4"/>',
   save: '<path d="M5 4h12l3 3v13H5z"/><path d="M8 4v6h8V4M8 20v-6h8v6"/>',
   undo: '<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 010 12h-3"/>',
+  redo: '<path d="M15 14l5-5-5-5"/><path d="M20 9H10a6 6 0 000 12h3"/>',
   present: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 21l4-5 4 5"/>',
   songs: '<path d="M4 6h16M4 12h16M4 18h10"/>',
   sliders: '<path d="M5 4v6M5 14v6M12 4v2M12 10v10M19 4v10M19 18v2"/><path d="M3 10h4M10 6h4M17 14h4"/>',

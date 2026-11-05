@@ -1,14 +1,17 @@
 import type { PrestreamerApi } from '../preload'
 import { appliesTo, type QuickMessage } from '../shared/announce'
 import { mediaThumb, pickBackground } from './background-picker'
+import { applyDefaultBackground, defaultAppearance, isLogoSlide, logoSlide, type Appearance } from '../shared/appearance'
 import { presentationSlides } from '../shared/presentation'
-import { parseSong, readingSlides, withSlideBackground } from '../shared/songs'
+import { SONG_DETAIL_FIELDS, parseSong, readingSlides, trimSlideBackgrounds, withSlideBackground } from '../shared/songs'
 import { defaultAudio, defaultLook, idleAudio, idlePlayback, idleStream, type PlaybackState, type AudioConfig, type Service, type ServiceItem, type AudioSource, type AudioStatus, type Background, type ScreenConfig, type ScreenState, type Slide, type Song, type StreamStatus, type VideoSource } from '../shared/types'
 import { iconButton, iconSvg, type IconName } from './icons'
 import { openAnnounceDialog } from './announce-dialog'
 import { createBibleView } from './bible'
+import { createAtemPanel } from './atem-panel'
 import { askText, confirmDialog } from './dialogs'
 import { createMixerView, type MixerDeps } from './mixer'
+import { createMonitorView } from './monitor'
 import { openScreenDialog } from './screen-dialog'
 import { createSettingsView } from './settings'
 import { openStreamSettings } from './stream-dialog'
@@ -43,7 +46,7 @@ let quickMessages: QuickMessage[] = []
 let streamSettings: StreamSettings = defaultStreamSettings
 let songs: Song[] = []
 let songId = ''
-type View = 'present' | 'songs' | 'bible' | 'mixer' | 'settings'
+type View = 'present' | 'monitor' | 'songs' | 'bible' | 'mixer' | 'settings'
 let view: View = 'present'
 let songFilter = ''
 let services: Service[] = []
@@ -62,7 +65,7 @@ let audioCfg: AudioConfig = structuredClone(defaultAudio)
 const MEMORY_KEYS = { view: 'prestreamer.view', service: 'prestreamer.service', screen: 'prestreamer.screen' } as const
 const recallText = (key: string): string => { try { return localStorage.getItem(key) ?? '' } catch { return '' } }
 const rememberText = (key: string, value: string) => { try { localStorage.setItem(key, value) } catch { /* only a convenience */ } }
-const VIEWS: readonly string[] = ['present', 'songs', 'bible', 'mixer', 'settings']
+const VIEWS: readonly string[] = ['present', 'monitor', 'songs', 'bible', 'mixer', 'settings']
 const savedView = recallText(MEMORY_KEYS.view)
 const savedService = recallText(MEMORY_KEYS.service)
 let selectedScreenId: string | null = recallText(MEMORY_KEYS.screen) || null
@@ -85,20 +88,24 @@ const currentSong = (): Song | undefined => {
   return songById(songId) || songs[0]
 }
 const withItem = (slides: Slide[], itemId?: string): Slide[] => slides.map((sl) => ({ ...sl, itemId }))
+/** App-wide backgrounds from Settings: used for songs and readings that bring no picture or video of their own. */
+let appearance: Appearance = defaultAppearance
+const songSlides = (song: Song, itemId?: string): Slide[] => withItem(applyDefaultBackground(parseSong(song), appearance.songBackground), itemId)
+const readingOf = (it: Extract<ServiceItem, { kind: 'scripture' }>): Slide[] => withItem(applyDefaultBackground(readingSlides(it.slides, it.background, it.slideBackgrounds), appearance.scriptureBackground), it.id)
 const currentSlides = (): Slide[] => {
   const it = selectedItem()
-  if (it?.kind === 'scripture') return withItem(readingSlides(it.slides, it.background, it.slideBackgrounds), it.id)
+  if (it?.kind === 'scripture') return readingOf(it)
   const c = currentSong()
-  return c ? withItem(parseSong(c), selectedItemId ?? undefined) : []
+  return c ? songSlides(c, selectedItemId ?? undefined) : []
 }
 /** Every slide of the service in order: lets the arrow keys run on from one item into the next. */
 const serviceSlides = (): Slide[] =>
   (currentService()?.items ?? []).flatMap((it) => {
     if (it.kind === 'video') return [videoCue(it)]
-    if (it.kind === 'scripture') return withItem(readingSlides(it.slides, it.background, it.slideBackgrounds), it.id)
+    if (it.kind === 'scripture') return readingOf(it)
     if (it.kind === 'presentation') return presentationSlides(it)
     const song = songOfItem(it)
-    return song ? withItem(parseSong(song), it.id) : []
+    return song ? songSlides(song, it.id) : []
   })
 const sameSlide = (a: Slide | null, b: Slide) => !!a && a.label === b.label && a.text === b.text && a.itemId === b.itemId && a.picture?.file === b.picture?.file
 
@@ -225,6 +232,7 @@ async function forgetMedia(file: string): Promise<void> {
     services = await prestreamer.servicesSave(draft)
   }
   if (editing?.song && uses(editing.song.background)) editing.song.background = null
+  if (editing?.song.slideBackgrounds?.some(uses)) editing.song.slideBackgrounds = editing.song.slideBackgrounds.map((b) => drop(b) ?? null)
   renderAll()
 }
 
@@ -318,13 +326,16 @@ function renderCenter(): void {
     forSlide: async (i) => {
       const bg = await pickBackground(prestreamer, song.slideBackgrounds?.[i] && song.slideBackgrounds[i]!.kind !== 'css' ? song.slideBackgrounds[i] : null, { title: `Background for slide ${i + 1} only`, noneLabel: "Use the song's background", noneHint: 'This slide goes back to the background of the whole song', onDeleted: (f) => void forgetMedia(f) })
       if (bg === undefined) return
-      songs = await prestreamer.songsSave({ ...song, slideBackgrounds: withSlideBackground(song.slideBackgrounds, i, bg) })
+      const slideBackgrounds = withSlideBackground(song.slideBackgrounds, i, bg)
+      songs = await prestreamer.songsSave({ ...song, slideBackgrounds })
+      if (editing?.song.id === song.id) editing.song.slideBackgrounds = slideBackgrounds // an open editor must not overwrite it later
       renderAll()
     },
     forAll: async () => {
       const bg = await pickBackground(prestreamer, song.background && song.background.kind !== 'css' ? song.background : null, { title: `Background for all slides of ${song.title}`, onDeleted: (f) => void forgetMedia(f) })
       if (bg === undefined) return
       songs = await prestreamer.songsSave({ ...song, background: bg, slideBackgrounds: [] }) // one picture for every slide: the single-slide ones are reset
+      if (editing?.song.id === song.id) { editing.song.background = bg; editing.song.slideBackgrounds = [] }
       renderAll()
     },
   })
@@ -353,7 +364,7 @@ function renderCenter(): void {
     // No service items yet: show the song being browsed, so there is always something to look at.
     const song = currentSong()
     if (!song) return root.replaceChildren(el('div', { className: 'row', textContent: 'Select an item in the run sheet, or add songs in the Songs tab.' }))
-    sections.push(section(null, [song.title, iconButton('pencil', 'Edit this song', () => startEdit(song), { className: 'ml' })], [slideGrid(withItem(parseSong(song)))]))
+    sections.push(section(null, [song.title, iconButton('pencil', 'Edit this song', () => startEdit(song), { className: 'ml' })], [slideGrid(songSlides(song))]))
   }
   for (const it of items) {
     if (it.kind === 'video') {
@@ -362,12 +373,12 @@ function renderCenter(): void {
       sections.push(section(it.id, [it.title], [slideGrid(presentationSlides(it))]))
     } else if (it.kind === 'scripture') {
       const edit = readingEdit(it)
-      sections.push(section(it.id, [it.title, allSlidesButton(edit)], [slideGrid(withItem(readingSlides(it.slides, it.background, it.slideBackgrounds), it.id), edit)]))
+      sections.push(section(it.id, [it.title, allSlidesButton(edit)], [slideGrid(readingOf(it), edit)]))
     } else {
       const song = songOfItem(it)
       if (!song) continue
       const edit = songEdit(song)
-      sections.push(section(it.id, [song.title, iconButton('pencil', 'Edit this song', () => startEdit(song), { className: 'ml' }), allSlidesButton(edit)], [slideGrid(withItem(parseSong(song), it.id), edit)]))
+      sections.push(section(it.id, [song.title, iconButton('pencil', 'Edit this song', () => startEdit(song), { className: 'ml' }), allSlidesButton(edit)], [slideGrid(songSlides(song, it.id), edit)]))
     }
   }
   // Room after the last item, so that item too can be scrolled up to the top.
@@ -455,20 +466,64 @@ function showEditor(): void {
 function renderEditor(root: HTMLElement, ref: ScreenConfig | undefined): void {
   const draft = editing!.song
   const title = el<HTMLInputElement>('input', { type: 'text', value: draft.title })
-  title.oninput = () => { draft.title = title.value }
+  title.oninput = () => { draft.title = title.value; markDirty() }
 
   const body = el<HTMLTextAreaElement>('textarea', { value: draft.body, rows: 16, spellcheck: false })
-  body.oninput = () => updatePreview()
+  body.oninput = () => { updatePreview(); renderStripSoon(); markDirty() }
 
-  const pv = scaledPreview()
-  const updatePreview = () => {
-    draft.body = body.value
-    const first = parseSong(draft)[0] ?? { label: 'Preview', text: 'Type some text', background: draft.background }
-    const look = { ...(ref?.look ?? defaultLook), showMedia: true, source: { type: 'none' } as VideoSource }
-    pv.update(look, { ...first, background: draft.background }, 1920, 1080, true)
+  // What a song carries is saved with it by Save: its text, pictures and videos (for the whole song and for single slides) and details.
+  const snapshot = (x: Song): string => JSON.stringify([x.title.trim() || 'Untitled', x.body, x.background ?? null, trimSlideBackgrounds(x.slideBackgrounds, parseSong(x).length), SONG_DETAIL_FIELDS.map((f) => x[f.key] ?? '')])
+  const dirtyNote = el('span', { className: 'dim dirty' })
+  const markDirty = () => {
+    const saved = songs.find((x) => x.id === draft.id)
+    dirtyNote.textContent = editing!.isNew || !saved || snapshot(saved) !== snapshot({ ...draft, body: body.value }) ? 'Unsaved changes' : ''
   }
 
-  const setBackground = (bg: Background | null) => { draft.background = bg; updatePreview(); renderBgLabel() }
+  const pv = scaledPreview()
+  let selSlide = 0
+  /** The slide as it will look: its own picture, else the song's, else the app-wide one for songs. */
+  const withDefaults = (sl: Slide): Slide => applyDefaultBackground([sl], appearance.songBackground)[0]
+  const previewLook = () => ({ ...(ref?.look ?? defaultLook), showMedia: true, source: { type: 'none' } as VideoSource })
+  const updatePreview = () => {
+    draft.body = body.value
+    const list = parseSong(draft)
+    selSlide = Math.min(selSlide, Math.max(0, list.length - 1))
+    const cur = list[selSlide] ?? { label: 'Preview', text: 'Type some text', background: draft.background }
+    pv.update(previewLook(), withDefaults(cur), 1920, 1080, true)
+  }
+
+  // Every slide of the song as a small card: click to preview it, the picture button gives that slide its own picture or video.
+  const strip = el('div', { className: 'sstrip' })
+  let stripPreviews: ScaledPreview[] = []
+  let stripTimer: ReturnType<typeof setTimeout> | null = null
+  const renderStrip = () => {
+    stripPreviews.forEach((p) => p.dispose())
+    stripPreviews = []
+    draft.body = body.value
+    const list = parseSong(draft)
+    strip.replaceChildren(...list.map((sl, i) => {
+      const small = scaledPreview()
+      stripPreviews.push(small)
+      small.update(previewLook(), withDefaults(sl), 1920, 1080, false)
+      const own = !!draft.slideBackgrounds?.[i]
+      const tag = el('div', { className: 'tag', textContent: sl.label })
+      tag.style.background = sectionColor(sl.label)
+      const card = el('div', { className: `card ${i === selSlide ? 'pick' : ''}`, onclick: () => { selSlide = i; updatePreview(); renderStrip() } }, tag, small.box)
+      card.append(iconButton('image', own ? 'This slide has its own picture or video, saved with the song. Click to change or remove it.' : 'A picture or video behind this slide only, saved with the song', async (e) => {
+        e.stopPropagation()
+        const bg = await pickBackground(prestreamer, draft.slideBackgrounds?.[i] && draft.slideBackgrounds[i]!.kind !== 'css' ? draft.slideBackgrounds[i] : null, { title: `Background for slide ${i + 1} only`, noneLabel: "Use the song's background", onDeleted: (f) => void forgetMedia(f) })
+        if (bg === undefined) return
+        draft.slideBackgrounds = withSlideBackground(draft.slideBackgrounds, i, bg)
+        selSlide = i
+        updatePreview(); renderStrip(); markDirty()
+      }, { size: 13, className: `cardbg ${own ? 'on' : ''}` }))
+      return card
+    }))
+    if (!list.length) strip.replaceChildren(el('div', { className: 'dim', textContent: 'Slides appear here as you type.' }))
+  }
+  const renderStripSoon = () => { if (stripTimer) clearTimeout(stripTimer); stripTimer = setTimeout(renderStrip, 300) }
+
+  const setBackground = (bg: Background | null) => { draft.background = bg; updatePreview(); renderStrip(); renderBgLabel(); markDirty() }
   const bgLabel = el('span', { className: 'meta bgcur' })
   let mediaNames = new Map<string, string>()
   void prestreamer.mediaList().then((list) => { mediaNames = new Map(list.map((m) => [m.file, m.name])); renderBgLabel() })
@@ -500,6 +555,7 @@ function renderEditor(root: HTMLElement, ref: ScreenConfig | undefined): void {
   const save = iconButton('save', 'Save song', async () => {
     draft.body = body.value
     draft.title = title.value.trim() || 'Untitled'
+    draft.slideBackgrounds = trimSlideBackgrounds(draft.slideBackgrounds, parseSong(draft).length)
     songs = await prestreamer.songsSave(draft)
     songId = draft.id
     editing = { song: structuredClone(draft), isNew: false }
@@ -514,24 +570,36 @@ function renderEditor(root: HTMLElement, ref: ScreenConfig | undefined): void {
   }, { label: 'Revert' })
   const addToService = iconButton('music', 'Add this song to the current service', () => addSongToService(draft.id), { badge: true, label: 'Add to service', className: 'primary', disabled: editing!.isNew })
 
+  // The same details Quelea keeps with a song (author, copyright, CCLI, ...), so nothing is lost when songs come over from Quelea.
+  const details = el<HTMLDetailsElement>('details', { className: 'sdetails' }, el('summary', { textContent: 'Song details: author, copyright, CCLI, key, capo, notes' }),
+    el('div', { className: 'sdgrid' }, ...SONG_DETAIL_FIELDS.flatMap((f) => {
+      const input = el<HTMLInputElement>('input', { type: 'text', value: draft[f.key] ?? '', maxLength: 200 })
+      input.oninput = () => { if (input.value) draft[f.key] = input.value; else delete draft[f.key]; markDirty() }
+      return [el('label', { textContent: f.label }), input]
+    })))
+  details.open = SONG_DETAIL_FIELDS.some((f) => !!draft[f.key])
+
   const form = el('div', { className: 'editor' })
   form.append(
     el('div', { className: 'field' }, el('label', { textContent: 'Title' }), title),
     el('div', { className: 'field' }, el('label', { textContent: 'Background' }), bgLabel, swatches,
       el('div', { className: 'btns' }, el('button', { textContent: 'None', onclick: () => setBackground(null) }), chooseBtn)),
     el('div', { className: 'field' }, el('label', { textContent: 'Text — [Label] starts a section, a blank line starts a new slide' }), body),
-    el('div', { className: 'btns' }, save, revert, ...(editing!.isNew ? [] : [del]), el('span', { className: 'grow' }), addToService),
+    details,
+    el('div', { className: 'btns' }, save, revert, ...(editing!.isNew ? [] : [del]), dirtyNote, el('span', { className: 'grow' }), addToService),
   )
-  root.replaceChildren(el('h1', { textContent: editing!.isNew ? 'New song' : draft.title }), el('div', { className: 'editorwrap' }, form, el('div', { className: 'editorprev' }, el('label', { textContent: 'Preview' }), pv.box)))
+  root.replaceChildren(el('h1', { textContent: editing!.isNew ? 'New song' : draft.title }), el('div', { className: 'editorwrap' }, form, el('div', { className: 'editorprev' }, el('label', { textContent: 'Preview' }), pv.box, el('label', { textContent: 'Slides — the picture button sets a picture or video for one slide' }), strip, el('div', { className: 'dim', textContent: 'Pictures and videos are saved with the song, by slide position: adding or removing a slide above one shifts them.' }))))
   renderBgLabel()
   updatePreview()
+  renderStrip()
+  markDirty()
 }
 
 /**
  * Screen cards persist across renders: moving a <video> in the DOM pauses it, and
  * recreating previews would reopen cameras on every state change.
  */
-interface Card { root: HTMLElement; bar: HTMLElement; off: HTMLElement; pv: ScaledPreview }
+interface Card { root: HTMLElement; bar: HTMLElement; off: HTMLElement; pv: ScaledPreview; grip: HTMLButtonElement }
 const cards = new Map<string, Card>()
 
 function createCard(): Card {
@@ -539,8 +607,47 @@ function createCard(): Card {
   const off = el('div', { className: 'off', textContent: 'OFF' })
   const bar = el('div', { className: 'bar' })
   const root = el('div', { className: 'screen' }, bar, el('div', { className: 'pv' }, pv.box, off))
-  return { root, bar, off, pv }
+  const grip = el<HTMLButtonElement>('button', { className: 'grip', textContent: '⠿' })
+  grip.onclick = (e) => e.stopPropagation()
+  // Only the grip starts a drag, so the buttons and the preview keep working; ↑ ↓ on the grip move the card too.
+  const id = () => root.dataset.id ?? ''
+  grip.onpointerdown = () => { root.draggable = true }
+  grip.onpointerup = () => { root.draggable = false }
+  grip.onkeydown = (e) => {
+    const i = state.screens.findIndex((s) => s.id === id())
+    const other = state.screens[i + (e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0)]
+    if (!other || (e.key !== 'ArrowDown' && e.key !== 'ArrowUp')) return
+    e.preventDefault()
+    void prestreamer.reorderScreen(id(), other.id, e.key === 'ArrowDown').then(() => document.querySelector<HTMLElement>(`.screen[data-id="${CSS.escape(id())}"] .grip`)?.focus())
+  }
+  root.ondragstart = (e) => {
+    if (!root.draggable) return e.preventDefault()
+    e.dataTransfer?.setData('text/plain', id())
+    if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
+    draggingScreen = id()
+    root.classList.add('dragging')
+  }
+  root.ondragend = () => { root.draggable = false; draggingScreen = null; root.classList.remove('dragging'); clearScreenDropMarks() }
+  root.ondragover = (e) => {
+    if (!draggingScreen || draggingScreen === id()) return
+    e.preventDefault()
+    const r = root.getBoundingClientRect()
+    clearScreenDropMarks()
+    root.classList.add(e.clientY > r.top + r.height / 2 ? 'dropafter' : 'dropbefore')
+  }
+  root.ondragleave = (e) => { if (!root.contains(e.relatedTarget as Node | null)) root.classList.remove('dropbefore', 'dropafter') }
+  root.ondrop = (e) => {
+    e.preventDefault()
+    const from = draggingScreen
+    const after = root.classList.contains('dropafter')
+    draggingScreen = null
+    clearScreenDropMarks()
+    if (from && from !== id()) void prestreamer.reorderScreen(from, id(), after)
+  }
+  return { root, bar, off, pv, grip }
 }
+let draggingScreen: string | null = null
+const clearScreenDropMarks = () => document.querySelectorAll('.screen.dropbefore, .screen.dropafter').forEach((n) => n.classList.remove('dropbefore', 'dropafter'))
 
 let screenDialog: ReturnType<typeof openScreenDialog> | null = null
 
@@ -561,6 +668,15 @@ function configureScreen(id: string): void {
     onMediaDeleted: (file) => void forgetMedia(file),
     onClose: () => { screenDialog = null },
   })
+}
+
+/** Screens whose preview is folded away (the card keeps its title bar and buttons). Remembered per screen. */
+const SCREENS_FOLDED_KEY = 'prestreamer.screensCollapsed'
+const foldedScreens = new Set<string>((() => { try { const v = JSON.parse(localStorage.getItem(SCREENS_FOLDED_KEY) ?? '[]'); return Array.isArray(v) ? v.filter((x) => typeof x === 'string') : [] } catch { return [] } })())
+function toggleFolded(id: string): void {
+  if (!foldedScreens.delete(id)) foldedScreens.add(id)
+  try { localStorage.setItem(SCREENS_FOLDED_KEY, JSON.stringify([...foldedScreens])) } catch { /* only a convenience */ }
+  renderScreens()
 }
 
 function renderScreens(): void {
@@ -585,12 +701,16 @@ function renderScreens(): void {
     const [w, h] = screenSize(sc)
     // A mirror looks like the screen it follows (its own display only decides the size and where it opens).
     const shown = (sc.mirrorOf && state.screens.find((x) => x.id === sc.mirrorOf)) || sc
-    c.pv.update(shown.look, state.slide, w, h, true, state.cameraOnly && shown.kind === 'virtual') // the stream's card shows what the stream shows
-    c.pv.setNext(state.next)
-    c.pv.setPlayback(playback)
-    c.pv.setAnnouncement(appliesTo(state.announcement, shown.id) ? state.announcement : null) // the operator sees what each screen shows
+    const folded = foldedScreens.has(sc.id)
+    if (!folded) { // a folded preview is not drawn at all; it is brought up to date when unfolded
+      c.pv.update(shown.look, state.slide, w, h, true, state.cameraOnly && shown.kind === 'virtual') // the stream's card shows what the stream shows
+      c.pv.setNext(state.next)
+      c.pv.setPlayback(playback)
+      c.pv.setAnnouncement(appliesTo(state.announcement, shown.id) ? state.announcement : null) // the operator sees what each screen shows
+    }
     c.off.style.display = live ? 'none' : 'flex'
-    c.root.className = `screen ${sc.id === selectedScreenId ? 'sel' : ''}`
+    c.root.dataset.id = sc.id
+    c.root.className = `screen ${sc.id === selectedScreenId ? 'sel' : ''}${draggingScreen === sc.id ? ' dragging' : ''}${folded ? ' folded' : ''}`
     // Clicking anywhere on the card selects it (its look is used for the slide thumbnails); the buttons do their own thing.
     c.root.onclick = (e) => {
       if ((e.target as HTMLElement).closest('button')) return
@@ -598,7 +718,11 @@ function renderScreens(): void {
     }
 
     const target = shown !== sc ? `mirrors ${shown.name}` : sc.kind === 'virtual' ? `virtual ${w}×${h}` : sc.displayId === null ? 'window' : (state.displays.find((d) => d.id === sc.displayId)?.label ?? sc.displayLabel ?? 'display')
+    c.grip.title = `Drag to change the order of the screens (or press ↑ ↓ on this handle). The order is the same in Settings.`
+    c.grip.setAttribute('aria-label', `Move ${sc.name}`)
     c.bar.replaceChildren(
+      c.grip,
+      iconButton(folded ? 'chevronDown' : 'chevronUp', folded ? `Show the preview of ${sc.name}` : `Fold the preview of ${sc.name} away`, () => toggleFolded(sc.id), { size: 15, className: 'fold' }),
       el('span', { className: `dot ${live ? 'on' : ''}` }),
       el('span', { className: 'name', textContent: sc.name }),
       el('span', { className: 'meta', textContent: target, title: `${w}×${h}` }),
@@ -661,24 +785,17 @@ const healthUi = {
   canvas: el<HTMLCanvasElement>('canvas', { className: 'spark', title: 'Bitrate over the last two minutes; the dashed line is the target' }),
   advice: el('div', { className: 'hadvice' }),
 }
-// The compact view: shown instead of the full panel when the statistics (or the whole Stream section) are collapsed.
-const miniUi = {
-  dot: el('span', { className: 'hdot' }),
-  label: el('b', { textContent: 'Not streaming' }),
-  live: el('span', { className: 'dim' }),
-  dropped: el('span', { className: 'mdrop', title: 'Share of frames dropped in the last 60 seconds' }),
-  bitrate: el('span', { className: 'dim' }),
-}
-const healthMini = el('div', { className: 'healthmini' }, miniUi.dot, miniUi.label, miniUi.live, el('span', { className: 'grow' }), miniUi.dropped, miniUi.bitrate)
 
 /** Camera only: the stream shows nothing but the live camera (no text, slide media, videos or announcements). */
 const cameraButton = iconButton('camera', 'Camera only: stream just the live camera, without text, slide backgrounds, videos or announcements. The room screens are not affected. Click again to bring them back.', () => void prestreamer.setCameraOnly(!state.cameraOnly), { size: 15 })
 
 const COLLAPSE_KEY = 'prestreamer.streamCollapsed'
 const STATS_KEY = 'prestreamer.statsCollapsed'
+const ATEM_KEY = 'prestreamer.atemCollapsed'
 const recall = (key: string): boolean => { try { return localStorage.getItem(key) === '1' } catch { return false } }
 let streamCollapsed = recall(COLLAPSE_KEY)
 let statsCollapsed = recall(STATS_KEY)
+let atemCollapsed = recall(ATEM_KEY)
 const remember = (key: string, on: boolean) => { try { localStorage.setItem(key, on ? '1' : '0') } catch { /* only a convenience */ } }
 /** Makes a title act as a disclosure control: click or Enter/Space toggles it; buttons inside it keep their own job. */
 function disclosure(titleEl: HTMLElement, toggle: () => void): void {
@@ -690,19 +807,19 @@ function disclosure(titleEl: HTMLElement, toggle: () => void): void {
 }
 const toggleSection = () => { streamCollapsed = !streamCollapsed; remember(COLLAPSE_KEY, streamCollapsed); applyCollapse() }
 const toggleStats = () => { statsCollapsed = !statsCollapsed; remember(STATS_KEY, statsCollapsed); applyCollapse() }
+const toggleAtem = () => { atemCollapsed = !atemCollapsed; remember(ATEM_KEY, atemCollapsed); applyCollapse() }
+/** Stream, Stream health and ATEM are sections of the same level, each collapsing on its own. */
+function setSection(head: HTMLElement, body: HTMLElement, collapsed: boolean, name: string): void {
+  body.classList.toggle('collapsed', collapsed)
+  head.classList.toggle('closed', collapsed)
+  head.setAttribute('aria-expanded', String(!collapsed))
+  head.title = collapsed ? `Click to show the ${name} section` : `Click to collapse the ${name} section`
+}
 function applyCollapse(): void {
-  const box = $('stream')
-  box.classList.toggle('collapsed', streamCollapsed)
-  box.classList.toggle('stats-collapsed', statsCollapsed)
-  const sectionHead = $('streamtools').parentElement!
-  sectionHead.classList.toggle('closed', streamCollapsed)
-  sectionHead.setAttribute('aria-expanded', String(!streamCollapsed))
-  sectionHead.title = streamCollapsed ? 'Click to show the Stream section' : 'Click to collapse the Stream section'
-  healthHead.classList.toggle('closed', statsCollapsed)
-  healthHead.setAttribute('aria-expanded', String(!statsCollapsed))
-  healthHead.title = 'Click to collapse the statistics to a one-line summary'
-  healthMini.title = streamCollapsed ? 'Click to show the Stream section' : 'Click to show the full statistics'
-  healthMini.setAttribute('aria-expanded', String(!streamCollapsed && !statsCollapsed))
+  setSection($('streamtools').parentElement!, $('stream'), streamCollapsed, 'Stream')
+  setSection(healthHead, $('healthsec'), statsCollapsed, 'Stream health')
+  healthHead.title = statsCollapsed ? 'Click to show the full statistics' : 'Click to collapse the statistics'
+  setSection($('atemtools').parentElement!, $('atem'), atemCollapsed, 'ATEM')
 }
 
 // The title sits above the panel like "Stream" does; the rating (dot and word) is on its right.
@@ -747,16 +864,6 @@ function renderHealth(): void {
   const s = streamSettings
   const encoderLabel = ENCODER_CHOICES.find((e) => e.value === s.encoder)?.label ?? s.encoder
   const bad = (cellEl: { root: HTMLElement }, isBad: boolean) => cellEl.root.classList.toggle('bad', isBad)
-  const mini = () => {
-    const live = streamStatus.state === 'running' && st
-    miniUi.dot.className = `hdot ${live ? st.health : ''}`
-    miniUi.label.textContent = live ? { good: 'Good', warn: 'Unstable', poor: 'Poor', idle: 'Not streaming' }[st.health] : 'Not streaming'
-    miniUi.live.textContent = live ? `LIVE ${clock(st.uptimeSec)}` : ''
-    miniUi.dropped.textContent = live ? `Dropped ${st.dropPercent60.toFixed(1)}% (60 s)` : ''
-    miniUi.dropped.classList.toggle('bad', !!live && st.dropPercent60 > 1)
-    miniUi.bitrate.textContent = live ? `${fmt(st.bitrateKbps)} kb/s` : ''
-  }
-  mini()
   if (streamStatus.state !== 'running' || !st) {
     healthUi.dot.className = 'hdot'
     healthUi.label.textContent = 'Not streaming'
@@ -826,7 +933,8 @@ function buildStream(): void {
   form.append(el('span', { textContent: 'Screen' }), streamUi.screen, el('span', { textContent: 'Target' }), streamUi.mode, el('span', { textContent: 'Stream key' }), streamUi.key, el('span', { textContent: 'Sound' }), streamUi.sound)
   // The controls sit in a panel that looks like the health panel below it.
   const panel = el('div', { className: 'panelbox' }, form, el('div', { className: 'form' }, el('span'), streamUi.button, el('span'), streamUi.forget), streamUi.audio, streamUi.cameraNote, streamUi.status, streamUi.hint)
-  $('stream').replaceChildren(panel, healthHead, healthMini, healthRoot)
+  $('stream').replaceChildren(panel)
+  $('healthsec').replaceChildren(healthHead, healthRoot)
 }
 
 function renderStream(): void {
@@ -938,6 +1046,7 @@ function renderAll(): void {
   renderTabs()
   applyView()
   settingsView.render(state)
+  monitorView.render()
   renderSchedule()
   renderLibrary()
   renderCenter()
@@ -979,7 +1088,8 @@ window.addEventListener('keydown', (e) => {
   if (!$('modal').hidden) return
   // A is always one key away, on every tab: urgent information must not wait for the right screen to be open.
   if (e.key.toLowerCase() === 'a' && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); openAnnounce(); return }
-  if (view !== 'present') return
+  if (view !== 'present' && view !== 'monitor') return
+  if (e.key.toLowerCase() === 'l' && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); toggleLogo(); return }
   if (e.key === ' ' && state.slide?.video) { e.preventDefault(); void prestreamer.playbackCommand({ type: playback.playing ? 'pause' : 'play' }) }
   else if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ') { e.preventDefault(); step(1) }
   else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); step(-1) }
@@ -992,11 +1102,22 @@ const mixerDeps: MixerDeps = {
   startAudio: () => setMixerRunning(true),
 }
 const mixerView = createMixerView($('view-mixer'), prestreamer, mixerDeps)
+const monitorView = createMonitorView($('view-monitor'), {
+  api: prestreamer,
+  getState: () => state,
+  getPlayback: () => playback,
+  getSelected: () => selectedScreenId,
+  select: (id) => { selectedScreenId = id; renderAll() },
+  screenSize,
+  step,
+  toggleScreen: (id) => void toggleScreen(id),
+  openAnnounce: () => openAnnounce(),
+})
 const settingsView = createSettingsView($('view-settings'), prestreamer, (id) => void toggleScreen(id))
 const bibleView = createBibleView($('view-bible'), {
   api: prestreamer,
   getLook: () => (state.screens.find((x) => x.id === selectedScreenId) ?? state.screens[0])?.look ?? defaultLook,
-  present: (slide) => void prestreamer.showSlide(slide),
+  present: (slide) => void prestreamer.showSlide(applyDefaultBackground([slide], appearance.scriptureBackground)[0]),
   addReading: async (title, slides) => {
     const svc = currentService()
     if (!svc) return null
@@ -1009,6 +1130,7 @@ const bibleView = createBibleView($('view-bible'), {
 
 const TABS: { view: View; icon: IconName; label: string }[] = [
   { view: 'present', icon: 'present', label: 'Present' },
+  { view: 'monitor', icon: 'screen', label: 'Monitor' },
   { view: 'songs', icon: 'songs', label: 'Songs' },
   { view: 'bible', icon: 'book', label: 'Bible' },
   { view: 'mixer', icon: 'sliders', label: 'Mixer' },
@@ -1025,10 +1147,12 @@ function applyView(): void {
 
 function setView(next: View): void {
   view = next
+  if (next !== 'monitor') monitorView.hide()
   if (next === 'songs' && !editing) {
     const first = songById(songId) ?? songs[0]
     if (first) editing = { song: structuredClone(first), isNew: false }
   }
+  if (next === 'monitor') monitorView.show()
   renderAll()
   if (next === 'songs') showEditor()
   if (next === 'mixer') { mixerView.show(); void refreshAudioDevices(true).then(() => mixerView.show()) }
@@ -1149,9 +1273,26 @@ async function closeAllScreens(): Promise<void> {
 const openAllButton = iconButton('screen', 'Open every screen that is closed: audience displays and the stream screen', () => void openAllScreens(), { label: 'Open all screens', className: 'openall' })
 const closeAllButton = iconButton('stop', 'Close every open screen, including the stream screen. Asks first.', () => void closeAllScreens(), { label: 'Close all screens', className: 'closeall' })
 
+/** The Logo button: puts the logo chosen in Settings on every screen, or takes it off again. */
+function toggleLogo(): void {
+  const logo = logoSlide(appearance)
+  if (!logo) return
+  void prestreamer.showSlide(isLogoSlide(state.slide, appearance) ? null : logo)
+}
+const logoButton = iconButton('image', '', toggleLogo, { label: 'Logo', className: 'logobtn' })
+function renderLogoButton(): void {
+  const on = isLogoSlide(state.slide, appearance)
+  logoButton.disabled = !appearance.logo
+  logoButton.classList.toggle('primary', on)
+  logoButton.title = !appearance.logo ? 'Choose a logo in Settings first' : on ? 'Take the logo off the screens (L)' : 'Show the logo on every screen (L)'
+  logoButton.setAttribute('aria-label', logoButton.title)
+  logoButton.setAttribute('aria-pressed', String(on))
+}
+
 /** The red "announcement live" button stays in the header, on every tab, for as long as one is on air. */
 function renderAnnounceIndicator(): void {
   closeAllButton.disabled = state.live.length === 0 // nothing to close
+  renderLogoButton()
   openAllButton.disabled = state.screens.every((s) => state.live.includes(s.id)) // everything is already open
   const btn = $('announcelive')
   const a = state.announcement
@@ -1164,6 +1305,7 @@ $('announcelive').onclick = () => void prestreamer.announceClear()
 
 $('headbtns').append(
   iconButton('bell', 'Live announcement (A)', openAnnounce, { label: 'Announce', className: 'announcebtn' }),
+  logoButton,
   iconButton('x', 'Take the current slide off every screen. The screens stay open. (Esc)', () => void prestreamer.showSlide(null), { label: 'Clear slide' }),
   openAllButton,
   closeAllButton,
@@ -1180,13 +1322,16 @@ $('streamtools').append(cameraButton, iconButton('gear', 'Stream settings: resol
   getSettings: () => streamSettings,
   setSettings: (next) => { streamSettings = next; renderStream() },
   isStreaming: () => streamStatus.state === 'running' || streamStatus.state === 'starting',
-}), { label: 'Settings' }))
+}), { size: 15 }))
 disclosure($('streamtools').parentElement!, toggleSection)
 disclosure(healthHead, toggleStats)
-disclosure(healthMini, () => { if (streamCollapsed) toggleSection(); else toggleStats() })
+disclosure($('atemtools').parentElement!, toggleAtem)
 applyCollapse()
 void prestreamer.streamSettingsGet().then((next) => { streamSettings = next; renderStream() })
 buildStream()
+createAtemPanel($('atemtools'), $('atem'), prestreamer)
+prestreamer.onAppearance((a) => { appearance = a; settingsView.setAppearance(a); renderAll() })
+prestreamer.appearanceGet().then((a) => { appearance = a; settingsView.setAppearance(a); renderAll() })
 prestreamer.onAudio((s) => { audioStatus = s; renderAudio() })
 prestreamer.audioGetStatus().then((s) => { audioStatus = s; renderAudio() })
 prestreamer.onState((s) => { state = s; renderAll() })

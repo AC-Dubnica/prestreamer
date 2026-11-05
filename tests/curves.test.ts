@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { compOutDb, eqResponseDb, gateOutDb, limiterOutDb, moveBefore, normToValue, snap, valueToNorm } from '../src/shared/curves'
-import { defaultStrip } from '../src/shared/mixer'
+import { defaultEffect } from '../src/shared/mixer'
 
-const eqOn = (patch: object) => ({ ...defaultStrip(0).eq, on: true, ...patch })
+const eqOn = (patch: object) => ({ ...defaultEffect('eq'), on: true, ...patch })
 
 describe('knob mapping', () => {
   it('maps linearly and back', () => {
@@ -38,7 +38,7 @@ describe('moveBefore', () => {
 
 describe('eqResponseDb', () => {
   it('is flat when off or at 0 dB gain', () => {
-    expect(eqResponseDb({ ...defaultStrip(0).eq, midGainDb: 12 }, 1000)).toBe(0)
+    expect(eqResponseDb({ ...defaultEffect('eq'), on: false, midGainDb: 12 }, 1000)).toBe(0)
     expect(eqResponseDb(eqOn({}), 1000)).toBeCloseTo(0, 6)
   })
   it('peaks by the mid gain at the mid frequency', () => {

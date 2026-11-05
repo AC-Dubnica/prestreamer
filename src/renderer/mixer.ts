@@ -1,7 +1,9 @@
 import type { PrestreamerApi } from '../preload'
-import { MAX_CHANNELS, RANGES, TEST_SOURCES, VIDEO_SOURCE, videoStrips, defaultMixer, defaultStrip, shortDeviceName, stripKey, type MixerConfig, type Strip, type StripSource } from '../shared/mixer'
+import { EFFECT_INFO, EFFECT_TYPES, MASTER_PRESETS, MAX_CHANNELS, MAX_EFFECTS, RANGES, STRIP_PRESETS, TEST_SOURCES, VIDEO_SOURCE, videoStrips, defaultEffect, defaultMixer, defaultStrip, shortDeviceName, stripKey, type ChainPreset, type Effect, type EffectType, type MixerConfig, type Strip, type StripSource } from '../shared/mixer'
 import type { AudioStatus, Meters } from '../shared/types'
 import { moveBefore } from '../shared/curves'
+import { History } from '../shared/history'
+import { confirmDialog, showModal } from './dialogs'
 import { iconButton, iconSvg } from './icons'
 import { knob } from './knob'
 import { compCurve, eqGraph, gateCurve } from './mixer-graphs'
@@ -21,6 +23,10 @@ const fmtDb = (db: number): string => (db <= -99 ? '-∞' : `${db > 0 ? '+' : ''
 
 /** Fader positions at or below this are "off" (-∞): the slider's bottom stop. */
 const FADER_FLOOR = -60
+/** Selecting the master shows its chain, like selecting a strip shows the strip's. */
+const MASTER_KEY = '__master__'
+/** Short names for the chain overview on a strip. */
+const SHORT: Record<EffectType, string> = { hpf: 'HPF', eq: 'EQ', gate: 'Gate', comp: 'Comp', limiter: 'Limit', deesser: 'De-ess', reverb: 'Reverb', delay: 'Delay' }
 
 interface MeterEls { fill: HTMLElement; peak: HTMLElement; gr: HTMLElement }
 
@@ -39,39 +45,69 @@ export interface MixerDeps {
 
 export function createMixerView(root: HTMLElement, api: PrestreamerApi, deps: MixerDeps) {
   let mixer: MixerConfig = defaultMixer()
-  let selected: string | null = null // a strip's key: device and channel
+  let selected: string | null = null // a strip's key (device and channel), or MASTER_KEY
   let addSource = ''
   let addChannel = 0
   const probed = new Map<string, number | 'failed'>()
   let status: AudioStatus = { state: 'idle', message: 'Silence', channelCount: 0 }
   const meters = new Map<string, MeterEls>()
+  /** Gain-reduction bars of the effect cards that are on screen, by effect id (filled from the meter updates). */
+  const grBars = new Map<string, HTMLElement>()
   let masterMeters: MeterEls[] = []
   let commitTimer: ReturnType<typeof setTimeout> | null = null
+
+  // Undo and redo. A change (a whole knob drag, an effect added or moved) counts as finished when nothing more changes for
+  // half a second; the mixer as it was before it is then kept, so Cmd/Ctrl+Z can bring it back.
+  const history = new History(JSON.stringify(mixer))
+  let settleTimer: ReturnType<typeof setTimeout> | null = null
+  let undoBtn: HTMLButtonElement | null = null
+  let redoBtn: HTMLButtonElement | null = null
+  const mod = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl+'
+  function syncHistoryButtons(): void {
+    if (undoBtn) { undoBtn.disabled = !history.canUndo; undoBtn.title = history.canUndo ? `Undo the last change to the mixer (${mod}Z). ${history.undoSteps} step${history.undoSteps === 1 ? '' : 's'} kept.` : 'Nothing to undo yet' }
+    if (redoBtn) { redoBtn.disabled = !history.canRedo; redoBtn.title = history.canRedo ? `Redo the change that was undone (${mod}Shift+Z)` : 'Nothing to redo' }
+    undoBtn?.setAttribute('aria-label', undoBtn.title)
+    redoBtn?.setAttribute('aria-label', redoBtn?.title ?? '')
+  }
+  function settle(): void {
+    if (settleTimer) clearTimeout(settleTimer)
+    settleTimer = null
+    history.record(JSON.stringify(mixer))
+    syncHistoryButtons()
+  }
 
   function commit(): void {
     if (commitTimer) clearTimeout(commitTimer)
     commitTimer = setTimeout(() => void api.audioMixerSet(mixer), 40)
+    if (settleTimer) clearTimeout(settleTimer)
+    settleTimer = setTimeout(settle, 500)
   }
+
+  /** Goes back (or forward) to the mixer as it was, and applies it at once. */
+  function travel(direction: 'undo' | 'redo'): void {
+    settle() // a change made a moment ago is part of the history too
+    const snapshot = direction === 'undo' ? history.undo() : history.redo()
+    if (snapshot === null) return syncHistoryButtons()
+    mixer = JSON.parse(snapshot) as MixerConfig
+    if (commitTimer) clearTimeout(commitTimer)
+    commitTimer = null
+    void api.audioMixerSet(mixer)
+    if (selected !== MASTER_KEY && !(selected !== null && stripOf(selected))) selected = mixer.strips[0] ? stripKey(mixer.strips[0]) : null
+    render()
+  }
+
+  // Cmd/Ctrl+Z and Cmd/Ctrl+Shift+Z (or Ctrl+Y) on the Mixer tab. Typing in a text box keeps its own undo.
+  document.addEventListener('keydown', (e) => {
+    if (!root.classList.contains('active') || !(e.metaKey || e.ctrlKey) || e.altKey || !document.getElementById('modal')!.hidden) return
+    if ((e.target as HTMLElement | null)?.matches?.('textarea, input[type=text], input[type=number]')) return
+    const key = e.key.toLowerCase()
+    if (key === 'z' && !e.shiftKey) travel('undo')
+    else if ((key === 'z' && e.shiftKey) || (key === 'y' && !e.metaKey)) travel('redo')
+    else return
+    e.preventDefault()
+  })
 
   const stripOf = (key: string): Strip | undefined => mixer.strips.find((s) => stripKey(s) === key)
-
-  /** A labelled slider that updates the config in place (no re-render, so dragging stays smooth). */
-  function slider(label: string, value: number, range: Range, step: number, unit: string, onInput: (v: number) => void, disabled = false): HTMLElement {
-    const out = el('span', { className: 'val' })
-    const show = (v: number) => { out.textContent = `${Number.isInteger(step) ? v.toFixed(0) : v.toFixed(step < 0.1 ? 2 : 1)}${unit}` }
-    const input = el<HTMLInputElement>('input', { type: 'range', min: String(range[0]), max: String(range[1]), step: String(step), value: String(value), disabled })
-    show(value)
-    input.oninput = () => { const v = Number(input.value); show(v); onInput(v); commit() }
-    input.ondblclick = () => { input.value = String(value); input.dispatchEvent(new Event('input')) }
-    return el('label', { className: 'prm' }, el('span', { className: 'lbl', textContent: label }), input, out)
-  }
-
-  function section(title: string, on: boolean, setOn: (v: boolean) => void, ...rows: HTMLElement[]): HTMLElement {
-    const toggle = el<HTMLInputElement>('input', { type: 'checkbox', checked: on })
-    const body = el('div', { className: `sbody ${on ? '' : 'off'}` }, ...rows)
-    toggle.onchange = () => { setOn(toggle.checked); body.classList.toggle('off', !toggle.checked); commit() }
-    return el('div', { className: 'sect' }, el('label', { className: 'shead' }, toggle, el('span', { textContent: title })), body)
-  }
 
   function renderStrip(s: Strip): HTMLElement {
     const fill = el('div', { className: 'fill' })
@@ -83,8 +119,8 @@ export function createMixerView(root: HTMLElement, api: PrestreamerApi, deps: Mi
     const fader = el<HTMLInputElement>('input', { type: 'range', className: 'vfader', min: String(FADER_FLOOR - 1), max: String(RANGES.faderDb[1]), step: '0.5', value: String(s.faderDb <= FADER_FLOOR ? FADER_FLOOR - 1 : s.faderDb) })
     const showFader = () => { readout.textContent = fmtDb(s.faderDb) }
     showFader()
-    fader.oninput = () => { const v = Number(fader.value); s.faderDb = v <= FADER_FLOOR ? -100 : v; showFader(); commit() }
-    fader.ondblclick = () => { s.faderDb = 0; fader.value = '0'; showFader(); commit() } // double-click = unity
+    fader.oninput = () => { const v = Number(fader.value); s.faderDb = v <= FADER_FLOOR ? -100 : v; showFader(); refreshOut(); commit() }
+    fader.ondblclick = () => { s.faderDb = 0; fader.value = '0'; showFader(); refreshOut(); commit() } // double-click = unity
 
     const mute = el('button', { className: `ms ${s.mute ? 'on mute' : ''}`, textContent: 'M', title: 'Mute' })
     mute.onclick = () => { s.mute = !s.mute; mute.classList.toggle('on', s.mute); mute.classList.toggle('mute', s.mute); commit() }
@@ -126,6 +162,7 @@ export function createMixerView(root: HTMLElement, api: PrestreamerApi, deps: Mi
       el('div', { className: 'top' }, grip, el('span', { className: 'ch', textContent: String(s.channel + 1), title: `Channel ${s.channel + 1}` }), remove),
       el('div', { className: 'dev', textContent: deviceName, title: s.source?.label ?? 'The default source chosen in the Audio panel' }),
       name,
+      chainChips(s.chain),
       el('div', { className: 'mf' }, el('div', { className: 'meter' }, fill, peak, gr), fader),
       readout,
       el('div', { className: 'btns2' }, mute, solo),
@@ -162,6 +199,12 @@ export function createMixerView(root: HTMLElement, api: PrestreamerApi, deps: Mi
     return strip
   }
 
+  /** A strip's chain at a glance: the names of its effects in order, dimmed while an effect is switched off. */
+  function chainChips(chain: Effect[]): HTMLElement {
+    return el('div', { className: 'chips', title: chain.length ? chain.map((e) => `${EFFECT_INFO[e.type].label}${e.on ? '' : ' (off)'}`).join(' → ') : 'No effects: select the strip to build its chain' },
+      ...(chain.length ? chain.map((e) => el('span', { className: `chip ${e.on ? '' : 'off'}`, textContent: SHORT[e.type] })) : [el('span', { className: 'chip none', textContent: 'no effects' })]))
+  }
+
   let dragging: string | null = null
   const clearDropMarks = () => document.querySelectorAll('.strip.dropbefore, .strip.dropafter').forEach((n) => n.classList.remove('dropbefore', 'dropafter'))
   function reorder(from: string, to: string, after: boolean): void {
@@ -172,71 +215,219 @@ export function createMixerView(root: HTMLElement, api: PrestreamerApi, deps: Mi
     render()
   }
 
-  /** A module card: title with an on/off switch, an optional graph, and a grid of knobs. Everything edits the strip in place. */
-  function card(title: string, on: boolean, setOn: (v: boolean) => void, graph: HTMLElement | null, knobs: HTMLElement[], onToggle?: () => void): HTMLElement {
-    const toggle = el<HTMLInputElement>('input', { type: 'checkbox', checked: on, className: 'switch', title: `${title} on/off` })
-    const body = el('div', { className: `cbody ${on ? '' : 'off'}` }, ...(graph ? [graph] : []), el('div', { className: 'knobs' }, ...knobs))
-    toggle.onchange = () => { setOn(toggle.checked); body.classList.toggle('off', !toggle.checked); onToggle?.(); commit() }
-    return el('div', { className: 'mcard' }, el('label', { className: 'chead' }, el('span', { textContent: title }), toggle), body)
-  }
-
   /** A knob that edits one value and redraws the graph it belongs to. */
   function k(label: string, value: number, range: Range, step: number, unit: string, def: number, set: (v: number) => void, after?: () => void, log = false) {
     return knob({ label, value, range, step, unit, def, log, onChange: (v) => { set(v); after?.(); commit() } })
   }
+  /** A knob for a 0-1 setting shown as a percentage. */
+  const kPct = (label: string, value: number, range: Range, def: number, set: (v: number) => void) =>
+    k(label, Math.round(value * 100), [range[0] * 100, range[1] * 100], 1, ' %', Math.round(def * 100), (v) => set(v / 100))
+
+  /** The graph (if the effect has one) and the knobs of one effect. Everything edits the effect in place. */
+  function effectBody(e: Effect): { graph: HTMLElement | null; knobs: HTMLElement[] } {
+    switch (e.type) {
+      case 'hpf':
+        return { graph: null, knobs: [k('Freq', e.freq, RANGES.hpfFreq, 1, ' Hz', 80, (v) => { e.freq = v }, undefined, true).el] }
+      case 'eq': {
+        // The graph and the knobs show the same numbers, so editing either updates the other.
+        const knobsEq: Record<string, ReturnType<typeof knob>> = {}
+        const graph = eqGraph(e, () => {
+          knobsEq.lowFreq.set(e.lowFreq); knobsEq.lowGain.set(e.lowGainDb)
+          knobsEq.midFreq.set(e.midFreq); knobsEq.midGain.set(e.midGainDb); knobsEq.midQ.set(e.midQ)
+          knobsEq.highFreq.set(e.highFreq); knobsEq.highGain.set(e.highGainDb)
+          commit()
+        })
+        const re = () => graph.redraw()
+        knobsEq.lowGain = k('Low', e.lowGainDb, RANGES.eqGainDb, 0.5, ' dB', 0, (v) => { e.lowGainDb = v }, re)
+        knobsEq.lowFreq = k('Freq', e.lowFreq, RANGES.eqFreq, 1, ' Hz', 100, (v) => { e.lowFreq = v }, re, true)
+        knobsEq.midGain = k('Mid', e.midGainDb, RANGES.eqGainDb, 0.5, ' dB', 0, (v) => { e.midGainDb = v }, re)
+        knobsEq.midFreq = k('Freq', e.midFreq, RANGES.eqFreq, 1, ' Hz', 1000, (v) => { e.midFreq = v }, re, true)
+        knobsEq.midQ = k('Q', e.midQ, RANGES.eqQ, 0.1, '', 1, (v) => { e.midQ = v }, re)
+        knobsEq.highGain = k('High', e.highGainDb, RANGES.eqGainDb, 0.5, ' dB', 0, (v) => { e.highGainDb = v }, re)
+        knobsEq.highFreq = k('Freq', e.highFreq, RANGES.eqFreq, 1, ' Hz', 8000, (v) => { e.highFreq = v }, re, true)
+        return { graph: graph.el, knobs: Object.values(knobsEq).map((x) => x.el) }
+      }
+      case 'gate': {
+        const g = gateCurve(e)
+        const gr = () => g.redraw()
+        return { graph: g.el, knobs: [
+          k('Threshold', e.thresholdDb, RANGES.gateThresholdDb, 1, ' dB', -50, (v) => { e.thresholdDb = v }, gr).el,
+          k('Range', e.rangeDb, RANGES.gateRangeDb, 1, ' dB', 40, (v) => { e.rangeDb = v }, gr).el,
+          k('Attack', e.attackMs, RANGES.gateAttackMs, 0.1, ' ms', 5, (v) => { e.attackMs = v }).el,
+          k('Hold', e.holdMs, RANGES.gateHoldMs, 1, ' ms', 50, (v) => { e.holdMs = v }).el,
+          k('Release', e.releaseMs, RANGES.gateReleaseMs, 1, ' ms', 200, (v) => { e.releaseMs = v }).el,
+        ] }
+      }
+      case 'comp': {
+        const g = compCurve(e)
+        const cr = () => g.redraw()
+        return { graph: g.el, knobs: [
+          k('Threshold', e.thresholdDb, RANGES.compThresholdDb, 1, ' dB', -24, (v) => { e.thresholdDb = v }, cr).el,
+          k('Ratio', e.ratio, RANGES.compRatio, 0.5, ':1', 3, (v) => { e.ratio = v }, cr).el,
+          k('Attack', e.attackMs, RANGES.compAttackMs, 1, ' ms', 10, (v) => { e.attackMs = v }).el,
+          k('Release', e.releaseMs, RANGES.compReleaseMs, 5, ' ms', 150, (v) => { e.releaseMs = v }).el,
+          k('Knee', e.kneeDb, RANGES.compKneeDb, 1, ' dB', 6, (v) => { e.kneeDb = v }, cr).el,
+          k('Make-up', e.makeupDb, RANGES.compMakeupDb, 0.5, ' dB', 0, (v) => { e.makeupDb = v }, cr).el,
+        ] }
+      }
+      case 'limiter':
+        return { graph: null, knobs: [k('Ceiling', e.ceilingDb, RANGES.limiterCeilingDb, 0.5, ' dB', -1, (v) => { e.ceilingDb = v }).el] }
+      case 'deesser':
+        return { graph: null, knobs: [
+          k('Freq', e.freq, RANGES.deesserFreq, 10, ' Hz', 6500, (v) => { e.freq = v }, undefined, true).el,
+          k('Threshold', e.thresholdDb, RANGES.deesserThresholdDb, 1, ' dB', -30, (v) => { e.thresholdDb = v }).el,
+          k('Amount', e.reductionDb, RANGES.deesserReductionDb, 0.5, ' dB', 8, (v) => { e.reductionDb = v }).el,
+        ] }
+      case 'reverb':
+        return { graph: null, knobs: [
+          k('Decay', e.decaySec, RANGES.reverbDecaySec, 0.1, ' s', 1.4, (v) => { e.decaySec = v }).el,
+          k('Damping', e.dampingHz, RANGES.reverbDampingHz, 100, ' Hz', 6000, (v) => { e.dampingHz = v }, undefined, true).el,
+          k('Pre-delay', e.preDelayMs, RANGES.reverbPreDelayMs, 1, ' ms', 20, (v) => { e.preDelayMs = v }).el,
+          kPct('Mix', e.mix, RANGES.reverbMix, 0.15, (v) => { e.mix = v }).el,
+        ] }
+      case 'delay':
+        return { graph: null, knobs: [
+          k('Time', e.timeMs, RANGES.delayTimeMs, 1, ' ms', 350, (v) => { e.timeMs = v }).el,
+          kPct('Feedback', e.feedback, RANGES.delayFeedback, 0.3, (v) => { e.feedback = v }).el,
+          k('Tone', e.toneHz, RANGES.delayToneHz, 100, ' Hz', 3500, (v) => { e.toneHz = v }, undefined, true).el,
+          kPct('Mix', e.mix, RANGES.delayMix, 0.15, (v) => { e.mix = v }).el,
+        ] }
+    }
+  }
+
+  /** What the open detail edits: one strip's chain, or the master's. */
+  interface Target { name: string; chain: Effect[]; setChain(chain: Effect[]): void; presets: ChainPreset[]; input: HTMLElement; output: HTMLElement }
+
+  /** An effect in the chain: grip to move it, name, how much it is taking off right now, a switch, a remove button, and its controls. */
+  function effectCard(t: Target, e: Effect): HTMLElement {
+    const info = EFFECT_INFO[e.type]
+    const { graph, knobs } = effectBody(e)
+    const toggle = el<HTMLInputElement>('input', { type: 'checkbox', checked: e.on, className: 'switch', title: `${info.label}: switch on or off. Off lets the signal pass untouched.` })
+    const body = el('div', { className: `cbody ${e.on ? '' : 'off'}` }, ...(graph ? [graph] : []), el('div', { className: 'knobs' }, ...knobs))
+    toggle.onchange = () => { e.on = toggle.checked; body.classList.toggle('off', !e.on); card.classList.toggle('bypassed', !e.on); commit(); renderChips() }
+    const grip = el('button', { className: 'grip', title: 'Drag to move this effect along the chain (or press ← → on this handle)', textContent: '⠿' })
+    grip.setAttribute('aria-label', `Move ${info.label}`)
+    grip.onclick = (ev) => ev.stopPropagation()
+    grip.onkeydown = (ev) => {
+      const i = t.chain.findIndex((x) => x.id === e.id)
+      const other = t.chain[i + (ev.key === 'ArrowRight' ? 1 : ev.key === 'ArrowLeft' ? -1 : 0)]
+      if (!other || (ev.key !== 'ArrowRight' && ev.key !== 'ArrowLeft')) return
+      ev.preventDefault()
+      reorderEffect(t, e.id, other.id, ev.key === 'ArrowRight')
+      document.querySelector<HTMLElement>(`.fxcard[data-id="${CSS.escape(e.id)}"] .grip`)?.focus()
+    }
+    const remove = iconButton('x', `Remove ${info.label} from the chain`, () => { t.setChain(t.chain.filter((x) => x.id !== e.id)); commit(); render() }, { size: 12 })
+    const reduces = e.type === 'gate' || e.type === 'comp' || e.type === 'limiter' || e.type === 'deesser'
+    const fill = el('div', { className: 'grfill' })
+    if (reduces) grBars.set(e.id, fill)
+    const head = el('div', { className: 'chead', title: info.blurb }, grip, el('span', { className: 'ctitle', textContent: info.label }),
+      ...(reduces ? [el('div', { className: 'grbar', title: 'How much this effect is turning the signal down right now' }, fill)] : [el('span', { className: 'grow' })]), toggle, remove)
+    const card: HTMLElement = el('div', { className: `fxcard ${e.on ? '' : 'bypassed'}` }, head, body)
+    card.dataset.id = e.id
+    grip.onpointerdown = () => { card.draggable = true }
+    grip.onpointerup = () => { card.draggable = false }
+    card.ondragstart = (ev) => {
+      if (!card.draggable) return ev.preventDefault()
+      ev.dataTransfer?.setData('text/plain', e.id)
+      if (ev.dataTransfer) ev.dataTransfer.effectAllowed = 'move'
+      fxDragging = e.id
+      card.classList.add('dragging')
+    }
+    card.ondragend = () => { card.draggable = false; fxDragging = null; card.classList.remove('dragging'); clearFxMarks() }
+    card.ondragover = (ev) => {
+      if (!fxDragging || fxDragging === e.id) return
+      ev.preventDefault()
+      const r = card.getBoundingClientRect()
+      clearFxMarks()
+      card.classList.add(ev.clientX > r.left + r.width / 2 ? 'dropafter' : 'dropbefore')
+    }
+    card.ondragleave = (ev) => { if (!card.contains(ev.relatedTarget as Node | null)) card.classList.remove('dropbefore', 'dropafter') }
+    card.ondrop = (ev) => {
+      ev.preventDefault()
+      const from = fxDragging
+      const after = card.classList.contains('dropafter')
+      fxDragging = null
+      clearFxMarks()
+      if (from) reorderEffect(t, from, e.id, after)
+    }
+    return card
+  }
+
+  let fxDragging: string | null = null
+  const clearFxMarks = () => document.querySelectorAll('.fxcard.dropbefore, .fxcard.dropafter').forEach((n) => n.classList.remove('dropbefore', 'dropafter'))
+  function reorderEffect(t: Target, from: string, to: string, after: boolean): void {
+    const next = moveBefore(t.chain, (x) => x.id, from, to, after)
+    if (next === t.chain) return
+    t.setChain(next)
+    commit()
+    render()
+  }
+
+  /** The chain overview on the strips follows switches in the open detail without redrawing everything. */
+  function renderChips(): void {
+    document.querySelectorAll<HTMLElement>('.strip').forEach((node) => {
+      const chips = node.querySelector('.chips')
+      const strip = node.classList.contains('master') ? null : stripOf(node.dataset.key ?? '')
+      const chain = strip ? strip.chain : mixer.masterChain
+      if (chips) chips.replaceWith(chainChips(chain))
+    })
+  }
+
+  /** Lists every kind of effect with what it is for; choosing one adds it at the end of the chain. */
+  function addEffectDialog(t: Target): void {
+    showModal((close) => el('div', { className: 'dialog pad fxmenu', role: 'dialog' },
+      el('h3', { className: 'dhead', textContent: `Add an effect to ${t.name}` }),
+      el('div', { className: 'fxopts' }, ...EFFECT_TYPES.map((type) =>
+        el('button', { className: 'fxopt', onclick: () => { close(); t.setChain([...t.chain, defaultEffect(type)]); commit(); render() } },
+          el('strong', { textContent: EFFECT_INFO[type].label }), el('span', { className: 'dim', textContent: EFFECT_INFO[type].blurb })))),
+      el('div', { className: 'btns end' }, el('button', { textContent: 'Cancel', onclick: () => close() }))))
+  }
+
+  /** Replaces the chain with a ready-made one (asking first when there is something to lose). */
+  function presetDialog(t: Target): void {
+    showModal((close) => el('div', { className: 'dialog pad fxmenu', role: 'dialog' },
+      el('h3', { className: 'dhead', textContent: `Start ${t.name} from…` }),
+      el('div', { className: 'dim', textContent: 'A ready-made chain to adjust. Every effect in it can be changed, moved or removed afterwards.' }),
+      el('div', { className: 'fxopts' }, ...t.presets.map((p) =>
+        el('button', { className: 'fxopt', onclick: async () => {
+          close()
+          if (t.chain.length && !(await confirmDialog({ title: `Replace the effects of ${t.name}?`, message: `The ${t.chain.length} effect${t.chain.length === 1 ? '' : 's'} in this chain are replaced by "${p.label}".`, confirm: 'Replace', danger: true }))) return
+          t.setChain(p.build()); commit(); render()
+        } }, el('strong', { textContent: p.label }), el('span', { className: 'dim', textContent: p.blurb })))),
+      el('div', { className: 'btns end' }, el('button', { textContent: 'Cancel', onclick: () => close() }))))
+  }
+
+  /** Input → effects → output, drawn as a signal chain: the signal flows left to right through the cards. */
+  function renderChain(t: Target): HTMLElement {
+    const link = () => { const l = el('div', { className: 'fxlink' }); l.setAttribute('aria-hidden', 'true'); return l }
+    const add = el('div', { className: 'fxadd' },
+      iconButton('plus', t.chain.length >= MAX_EFFECTS ? `A chain holds at most ${MAX_EFFECTS} effects` : 'Add an effect to the end of the chain', () => addEffectDialog(t), { label: 'Add effect', disabled: t.chain.length >= MAX_EFFECTS }),
+      el('button', { textContent: 'Start from…', title: 'Fill the chain with a ready-made one', onclick: () => presetDialog(t) }))
+    const nodes: Node[] = [t.input, link()]
+    for (const e of t.chain) nodes.push(effectCard(t, e), link())
+    nodes.push(add, link(), t.output)
+    return el('div', { className: 'fxrow' }, ...nodes)
+  }
 
   function renderDetail(s: Strip): HTMLElement {
     const trim = k('Trim', s.trimDb, RANGES.trimDb, 0.5, ' dB', 0, (v) => { s.trimDb = v })
-    const hpf = k('Freq', s.hpf.freq, RANGES.hpfFreq, 1, ' Hz', 80, (v) => { s.hpf.freq = v }, undefined, true)
-    const input = el('div', { className: 'mcard' }, el('div', { className: 'chead' }, el('span', { textContent: 'Input' })), el('div', { className: 'knobs' }, trim.el))
-    const hpfCard = card('High-pass', s.hpf.on, (v) => { s.hpf.on = v }, null, [hpf.el])
-
-    // EQ: the graph and the knobs show the same numbers, so editing either updates the other.
-    const knobsEq: Record<string, ReturnType<typeof knob>> = {}
-    const graph = eqGraph(s.eq, () => {
-      knobsEq.lowFreq.set(s.eq.lowFreq); knobsEq.lowGain.set(s.eq.lowGainDb)
-      knobsEq.midFreq.set(s.eq.midFreq); knobsEq.midGain.set(s.eq.midGainDb); knobsEq.midQ.set(s.eq.midQ)
-      knobsEq.highFreq.set(s.eq.highFreq); knobsEq.highGain.set(s.eq.highGainDb)
-      commit()
-    })
-    const e = s.eq
-    const re = () => graph.redraw()
-    knobsEq.lowGain = k('Low', e.lowGainDb, RANGES.eqGainDb, 0.5, ' dB', 0, (v) => { e.lowGainDb = v }, re)
-    knobsEq.lowFreq = k('Freq', e.lowFreq, RANGES.eqFreq, 1, ' Hz', 100, (v) => { e.lowFreq = v }, re, true)
-    knobsEq.midGain = k('Mid', e.midGainDb, RANGES.eqGainDb, 0.5, ' dB', 0, (v) => { e.midGainDb = v }, re)
-    knobsEq.midFreq = k('Freq', e.midFreq, RANGES.eqFreq, 1, ' Hz', 1000, (v) => { e.midFreq = v }, re, true)
-    knobsEq.midQ = k('Q', e.midQ, RANGES.eqQ, 0.1, '', 1, (v) => { e.midQ = v }, re)
-    knobsEq.highGain = k('High', e.highGainDb, RANGES.eqGainDb, 0.5, ' dB', 0, (v) => { e.highGainDb = v }, re)
-    knobsEq.highFreq = k('Freq', e.highFreq, RANGES.eqFreq, 1, ' Hz', 8000, (v) => { e.highFreq = v }, re, true)
-    const eqCard = card('EQ', e.on, (v) => { e.on = v }, graph.el, Object.values(knobsEq).map((x) => x.el), re)
-
-    const gt = s.gate
-    const gateG = gateCurve(gt)
-    const gr = () => gateG.redraw()
-    const gateCard = card('Gate', gt.on, (v) => { gt.on = v }, gateG.el, [
-      k('Threshold', gt.thresholdDb, RANGES.gateThresholdDb, 1, ' dB', -50, (v) => { gt.thresholdDb = v }, gr).el,
-      k('Range', gt.rangeDb, RANGES.gateRangeDb, 1, ' dB', 40, (v) => { gt.rangeDb = v }, gr).el,
-      k('Attack', gt.attackMs, RANGES.gateAttackMs, 0.1, ' ms', 5, (v) => { gt.attackMs = v }).el,
-      k('Hold', gt.holdMs, RANGES.gateHoldMs, 1, ' ms', 50, (v) => { gt.holdMs = v }).el,
-      k('Release', gt.releaseMs, RANGES.gateReleaseMs, 1, ' ms', 200, (v) => { gt.releaseMs = v }).el,
-    ])
-
-    const c = s.comp
-    const compG = compCurve(c)
-    const cr = () => compG.redraw()
-    const compCard = card('Compressor', c.on, (v) => { c.on = v }, compG.el, [
-      k('Threshold', c.thresholdDb, RANGES.compThresholdDb, 1, ' dB', -24, (v) => { c.thresholdDb = v }, cr).el,
-      k('Ratio', c.ratio, RANGES.compRatio, 0.5, ':1', 3, (v) => { c.ratio = v }, cr).el,
-      k('Attack', c.attackMs, RANGES.compAttackMs, 1, ' ms', 10, (v) => { c.attackMs = v }).el,
-      k('Release', c.releaseMs, RANGES.compReleaseMs, 5, ' ms', 150, (v) => { c.releaseMs = v }).el,
-      k('Knee', c.kneeDb, RANGES.compKneeDb, 1, ' dB', 6, (v) => { c.kneeDb = v }, cr).el,
-      k('Make-up', c.makeupDb, RANGES.compMakeupDb, 0.5, ' dB', 0, (v) => { c.makeupDb = v }, cr).el,
-    ])
-
-    const lim = s.limiter
-    const limCard = card('Limiter', lim.on, (v) => { lim.on = v }, null, [k('Ceiling', lim.ceilingDb, RANGES.limiterCeilingDb, 0.5, ' dB', -1, (v) => { lim.ceilingDb = v }).el])
-    return el('div', { className: 'detail' }, el('h3', { textContent: `${s.name} · ${s.source?.label ?? 'default source'}, channel ${s.channel + 1}` }), el('div', { className: 'cards' }, input, hpfCard, eqCard, gateCard, compCard, limCard))
+    const input = el('div', { className: 'fxnode' }, el('div', { className: 'chead' }, el('span', { className: 'ctitle', textContent: 'Input' })), el('div', { className: 'knobs' }, trim.el), el('div', { className: 'dim', textContent: s.source ? shortDeviceName(s.source.label) : 'default source' }))
+    const output = el('div', { className: 'fxnode' }, el('div', { className: 'chead' }, el('span', { className: 'ctitle', textContent: 'Fader' })), el('div', { className: 'fxout', textContent: `${fmtDb(s.faderDb)} dB` }), el('div', { className: 'dim', textContent: 'then pan, then the mix' }))
+    detailOut = { el: output.querySelector('.fxout')!, text: () => `${fmtDb(s.faderDb)} dB` }
+    const t: Target = { name: s.name, chain: s.chain, setChain: (c) => { s.chain = c }, presets: STRIP_PRESETS, input, output }
+    return el('div', { className: 'detail' }, el('h3', { textContent: `${s.name} · ${s.source?.label ?? 'default source'}, channel ${s.channel + 1}` }), renderChain(t))
   }
+
+  function renderMasterDetail(): HTMLElement {
+    const input = el('div', { className: 'fxnode' }, el('div', { className: 'chead' }, el('span', { className: 'ctitle', textContent: 'Mix' })), el('div', { className: 'dim', textContent: 'every channel, added together' }))
+    const output = el('div', { className: 'fxnode' }, el('div', { className: 'chead' }, el('span', { className: 'ctitle', textContent: 'Master' })), el('div', { className: 'fxout', textContent: `${fmtDb(mixer.masterDb)} dB` }), el('div', { className: 'dim', textContent: 'fader, then the sync delay, then the stream' }))
+    detailOut = { el: output.querySelector('.fxout')!, text: () => `${fmtDb(mixer.masterDb)} dB` }
+    const t: Target = { name: 'the master', chain: mixer.masterChain, setChain: (c) => { mixer.masterChain = c }, presets: MASTER_PRESETS, input, output }
+    return el('div', { className: 'detail' }, el('h3', { textContent: 'Master · effects on the whole mix' }), renderChain(t))
+  }
+  /** The fader readout at the end of the open chain, kept in step with the fader. */
+  let detailOut: { el: HTMLElement; text(): string } | null = null
+  const refreshOut = () => { if (detailOut) detailOut.el.textContent = detailOut.text() }
 
   function renderMaster(): HTMLElement {
     const mk = (): MeterEls => ({ fill: el('div', { className: 'fill' }), peak: el('div', { className: 'peak' }), gr: el('div', { className: 'gr' }) })
@@ -245,19 +436,20 @@ export function createMixerView(root: HTMLElement, api: PrestreamerApi, deps: Mi
     const show = () => { readout.textContent = fmtDb(mixer.masterDb) }
     show()
     const fader = el<HTMLInputElement>('input', { type: 'range', className: 'vfader', min: String(FADER_FLOOR - 1), max: String(RANGES.masterDb[1]), step: '0.5', value: String(mixer.masterDb <= FADER_FLOOR ? FADER_FLOOR - 1 : mixer.masterDb) })
-    fader.oninput = () => { const v = Number(fader.value); mixer.masterDb = v <= FADER_FLOOR ? -100 : v; show(); commit() }
-    fader.ondblclick = () => { mixer.masterDb = 0; fader.value = '0'; show(); commit() }
+    fader.oninput = () => { const v = Number(fader.value); mixer.masterDb = v <= FADER_FLOOR ? -100 : v; show(); refreshOut(); commit() }
+    fader.ondblclick = () => { mixer.masterDb = 0; fader.value = '0'; show(); refreshOut(); commit() }
     const delay = el<HTMLInputElement>('input', { type: 'number', min: String(RANGES.delayMs[0]), max: String(RANGES.delayMs[1]), step: '10', value: String(mixer.delayMs) })
     delay.oninput = () => { mixer.delayMs = Math.min(RANGES.delayMs[1], Math.max(RANGES.delayMs[0], Number(delay.value) || 0)); commit() }
     const delayRow = el('label', { className: 'mdelay', title: 'Delays the whole mix so the sound lines up with the picture (camera and encoding delay the picture)' }, el('span', { textContent: 'Delay' }), delay, el('span', { textContent: 'ms' }))
-    const lim = section('Limiter', mixer.masterLimiter.on, (v) => { mixer.masterLimiter.on = v }, slider('Ceiling', mixer.masterLimiter.ceilingDb, RANGES.limiterCeilingDb, 0.5, ' dB', (v) => { mixer.masterLimiter.ceilingDb = v }))
-    return el('div', { className: 'strip master' },
+    const master = el('div', { className: `strip master ${selected === MASTER_KEY ? 'sel' : ''}`, title: 'Select to build the effects that apply to the whole mix', onclick: () => { selected = MASTER_KEY; render() } },
       el('div', { className: 'top' }, el('span', { className: 'ch', textContent: 'MASTER' })),
       el('div', { className: 'mf' }, el('div', { className: 'meter' }, masterMeters[0].fill, masterMeters[0].peak), el('div', { className: 'meter' }, masterMeters[1].fill, masterMeters[1].peak), fader),
       readout,
+      chainChips(mixer.masterChain),
       delayRow,
-      lim,
     )
+    delay.onclick = (e) => e.stopPropagation()
+    return master
   }
 
   /** Every input the user can add a channel from: the machine's devices, then the test sources. */
@@ -284,6 +476,8 @@ export function createMixerView(root: HTMLElement, api: PrestreamerApi, deps: Mi
 
   function render(): void {
     meters.clear()
+    grBars.clear()
+    detailOut = null
     const choices = sourceChoices()
     if (!choices.some((c) => c.value === addSource)) addSource = choices[0]?.value ?? ''
     const sourceSel = el<HTMLSelectElement>('select', { title: 'Which input to take a channel from' })
@@ -335,14 +529,18 @@ export function createMixerView(root: HTMLElement, api: PrestreamerApi, deps: Mi
     const failed = status.state === 'error'
     const dev = status.state === 'running' ? status.message : failed ? `Audio error: ${status.message}` : 'Starting…'
     const retry = failed ? el('button', { className: 'primary', textContent: 'Try again', title: 'Open the inputs again', onclick: () => void deps.startAudio() }) : null
-    const bar = el('div', { className: 'mxbar' }, el('h2', { textContent: 'Stream mix' }), ...(retry ? [retry] : []), el('span', { className: `mxstatus ${status.state}`, textContent: dev }))
+    undoBtn = iconButton('undo', '', () => travel('undo'), { size: 15 })
+    redoBtn = iconButton('redo', '', () => travel('redo'), { size: 15 })
+    syncHistoryButtons()
+    const bar = el('div', { className: 'mxbar' }, el('h2', { textContent: 'Stream mix' }), undoBtn, redoBtn, ...(retry ? [retry] : []), el('span', { className: `mxstatus ${status.state}`, textContent: dev }))
     const addRow = el('div', { className: 'mxadd' }, el('span', { className: 'dlabel', textContent: 'Add a channel from' }), sourceSel, channelSel, add, el('span', { className: 'grow' }), reset)
 
     const hasVideo = mixer.strips.some((x) => x.source?.deviceId === VIDEO_SOURCE.deviceId)
     const note = hasVideo ? el('div', { className: 'dim mxnote', textContent: 'Video L and R are the sound of the video playing in the service; they reach the stream through the master. If your room mixer also receives the video\'s sound and sends it back to this computer, mute them here to avoid hearing it twice.' }) : el('span')
     const strips = el('div', { className: 'strips' }, ...mixer.strips.map(renderStrip), renderMaster())
-    const sel = selected !== null ? stripOf(selected) : undefined
-    root.replaceChildren(bar, addRow, note, strips, sel ? renderDetail(sel) : el('div', { className: 'row', textContent: mixer.strips.length ? 'Select a strip to edit its EQ, gate, compressor and limiter.' : 'No channels in the mix. Add one above.' }))
+    const sel = selected !== null && selected !== MASTER_KEY ? stripOf(selected) : undefined
+    const detail = selected === MASTER_KEY ? renderMasterDetail() : sel ? renderDetail(sel) : el('div', { className: 'row', textContent: mixer.strips.length ? 'Select a strip to build its chain of effects, or the master for effects on the whole mix.' : 'No channels in the mix. Add one above.' })
+    root.replaceChildren(bar, addRow, note, strips, detail)
   }
 
   function update(m: Meters): void {
@@ -355,6 +553,7 @@ export function createMixerView(root: HTMLElement, api: PrestreamerApi, deps: Mi
       els.peak.style.bottom = `${meterPct(r.peakDb)}%`
       els.gr.style.height = `${Math.min(100, (-r.reductionDb / 30) * 100)}%` // gain reduction, up to 30 dB, drawn from the top
     })
+    for (const [id, bar] of grBars) bar.style.width = `${Math.min(100, (-(m.reductions?.[id] ?? 0) / 20) * 100)}%` // each effect's gain reduction, up to 20 dB
     m.masterPeakDb.forEach((db, i) => {
       const e = masterMeters[i]
       if (!e) return
@@ -364,7 +563,7 @@ export function createMixerView(root: HTMLElement, api: PrestreamerApi, deps: Mi
     })
   }
 
-  void api.audioMixerGet().then((m) => { mixer = m; selected = m.strips[0] ? stripKey(m.strips[0]) : null; render() })
+  void api.audioMixerGet().then((m) => { mixer = m; history.reset(JSON.stringify(m)); selected = m.strips[0] ? stripKey(m.strips[0]) : null; render() })
   api.onMeters(update)
   root.innerHTML = iconSvg('sliders', 1) // placeholder until first render
 

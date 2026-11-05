@@ -61,6 +61,12 @@ const checks = [
   ['solo lets only the soloed strip through', L('solo-880', 880) > L('solo-880', 440) + 40, `880 Hz ${fmt(L('solo-880', 880))} vs 440 Hz ${fmt(L('solo-880', 440))}`],
   ['strips from two different inputs mix together: the default source\'s 440 Hz tone is still there', Math.abs(L('two-sources', 440) - base) < 1.5, fmt(L('two-sources', 440) - base)],
   ['...and the other input (a 1 kHz beep) is heard too, while it is absent from the single-source mix', L('two-sources', 1000) > -40 && L('baseline', 1000) < -70, `${fmt(L('two-sources', 1000))} vs ${fmt(L('baseline', 1000))}`],
+  ['the order of the effects matters: compressor then +12 dB EQ ends louder than EQ then the compressor', L('order-comp-eq', 440) > L('order-eq-comp', 440) + 6, `${fmt(L('order-comp-eq', 440))} vs ${fmt(L('order-eq-comp', 440))}`],
+  ['effects that are switched off leave the signal untouched, however they are set', Math.abs(L('bypassed', 440) - base) < 1, fmt(L('bypassed', 440) - base)],
+  ['the de-esser lowers a 1760 Hz tone above its threshold', L('deesser', 1760) < L('ch3-baseline', 1760) - 5, fmt(L('deesser', 1760) - L('ch3-baseline', 1760))],
+  ['a delay with no feedback and an echo as loud as the voice adds 6 dB when the two line up', Math.abs(L('delay-in-phase', 440) - (base + 6)) < 1.5, fmt(L('delay-in-phase', 440) - base)],
+  ['reverb passes the signal on (neither silent nor wildly louder)', L('reverb', 440) > base - 20 && L('reverb', 440) < base + 12, fmt(L('reverb', 440) - base)],
+  ['a limiter in the MASTER chain holds the whole mix near its -20 dB ceiling', L('master-limiter', 440) < base - 6 && L('master-limiter', 440) > -30, fmt(L('master-limiter', 440))],
   ['high-pass at 500 Hz cuts a 220 Hz tone', L('ch0-hpf500', 220) < L('ch0-baseline', 220) - 8, fmt(L('ch0-hpf500', 220) - L('ch0-baseline', 220))],
 ]
 

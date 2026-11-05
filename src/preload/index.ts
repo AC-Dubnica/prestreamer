@@ -1,5 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { Announcement, AnnounceRequest, QuickMessage } from '../shared/announce'
+import type { Appearance } from '../shared/appearance'
+import type { AtemCommand, AtemStatus } from '../shared/atem'
 import type { MixerConfig } from '../shared/mixer'
 import type { StreamSettings } from '../shared/stream-settings'
 import type { BibleImportResult, BibleSummary, BibleVerse } from '../shared/bible'
@@ -32,6 +34,7 @@ const api = {
   addDisplayScreen: (name: string, opts: { stage?: boolean; mirrorOf?: string } = {}) => ipcRenderer.invoke(IPC.addDisplayScreen, name, opts),
   updateScreen: (id: string, patch: Partial<ScreenConfig>) => ipcRenderer.invoke(IPC.updateScreen, id, patch),
   moveScreen: (id: string, delta: -1 | 1): Promise<void> => ipcRenderer.invoke(IPC.moveScreen, id, delta),
+  reorderScreen: (id: string, target: string, after: boolean): Promise<void> => ipcRenderer.invoke(IPC.reorderScreen, id, target, after),
   identifyDisplays: (): Promise<void> => ipcRenderer.invoke(IPC.identifyDisplays),
   removeScreen: (id: string) => ipcRenderer.invoke(IPC.removeScreen, id),
   setLive: (id: string, live: boolean) => ipcRenderer.invoke(IPC.setLive, id, live),
@@ -67,6 +70,17 @@ const api = {
   announceQuickList: (): Promise<QuickMessage[]> => ipcRenderer.invoke(IPC.announceQuickList),
   announceQuickSave: (q: QuickMessage): Promise<QuickMessage[]> => ipcRenderer.invoke(IPC.announceQuickSave, q),
   announceQuickDelete: (id: string): Promise<QuickMessage[]> => ipcRenderer.invoke(IPC.announceQuickDelete, id),
+  appearanceGet: (): Promise<Appearance> => ipcRenderer.invoke(IPC.appearanceGet),
+  appearanceSet: (a: Appearance): Promise<Appearance> => ipcRenderer.invoke(IPC.appearanceSet, a),
+  onAppearance: (cb: (a: Appearance) => void) => {
+    ipcRenderer.on(IPC.appearanceChanged, (_e, a: Appearance) => cb(a))
+  },
+  atemGet: (): Promise<AtemStatus> => ipcRenderer.invoke(IPC.atemGet),
+  onAtem: (cb: (s: AtemStatus) => void) => {
+    ipcRenderer.on(IPC.atemState, (_e, s: AtemStatus) => cb(s))
+  },
+  atemSetAddress: (address: string): Promise<AtemStatus> => ipcRenderer.invoke(IPC.atemSetAddress, address),
+  atemSend: (cmd: AtemCommand): Promise<boolean> => ipcRenderer.invoke(IPC.atemSend, cmd),
   mediaRemove: (file: string): Promise<boolean> => ipcRenderer.invoke(IPC.mediaRemove, file),
   picturesImport: (): Promise<{ title: string; slides: string[] } | null> => ipcRenderer.invoke(IPC.picturesImport),
   mediaList: (): Promise<import('../shared/types').MediaEntry[]> => ipcRenderer.invoke(IPC.mediaList),

@@ -24,6 +24,7 @@ const scenario = `(async () => {
 
   const before = (await st()).screens.length
   tab('Settings').click(); await w(500)
+  qa('#view-settings .setnav button').find((b) => b.textContent.trim() === 'Screens').click(); await w(300) // the choice is remembered for the later visits
   qa('#view-settings button').find((b) => b.textContent.trim() === 'Stage monitor').click(); await w(600)
   const s = await st()
   const stage = s.screens.find((x) => x.look.layout === 'stage')
@@ -56,6 +57,45 @@ const scenario = `(async () => {
   const orderAfter = (await st()).screens.map((x) => x.name)
   tab('Present').click(); await w(400)
   r.reorder = { saved: orderAfter, present: presentOrder(), changed: JSON.stringify(orderBefore) !== JSON.stringify(orderAfter) }
+
+  // Dragging a screen card by its grip changes the order for good (Settings shows the same order); ↑ ↓ on the grip works too
+  const dragOrder = async () => {
+    const names = () => qa('#screens .screen .name').map((n) => n.textContent)
+    const cardsNow = () => qa('#screens .screen')
+    const first = cardsNow()[0]
+    const last = cardsNow()[cardsNow().length - 1]
+    const before = names()
+    const dt = new DataTransfer()
+    q('.grip', first).dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    first.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt }))
+    const box = last.getBoundingClientRect()
+    last.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt, clientY: box.bottom - 2 }))
+    const marked = last.classList.contains('dropafter')
+    last.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }))
+    first.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: dt }))
+    await w(600)
+    const saved = (await st()).screens.map((x) => x.name)
+    const grip = q('.grip', cardsNow()[cardsNow().length - 1]) // the dragged card is now last: ArrowUp moves it up one place again
+    grip.focus()
+    grip.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true })); await w(600)
+    const afterKey = (await st()).screens.map((x) => x.name)
+    tab('Settings').click(); await w(500)
+    const settingsNames = qa('#view-settings .setcard input').map((i) => i.value).filter((v) => afterKey.includes(v))
+    tab('Present').click(); await w(300)
+    return { before, marked, saved, afterKey, present: names(), settings: settingsNames }
+  }
+  r.drag = await dragOrder()
+
+  // A screen card can be folded to its title bar (and unfolded); the choice is remembered per screen
+  const foldCard = () => qa('#screens .screen').find((c) => q('.name', c).textContent === 'Audience')
+  const pvShown = () => getComputedStyle(q('.pv', foldCard())).display !== 'none'
+  r.fold = { before: pvShown() }
+  q('button.fold', foldCard()).click(); await w(300)
+  r.fold.hidden = !pvShown()
+  r.fold.barStays = !!q('.bar .name', foldCard()) && !!q('.bar button.primary, .bar button.danger', foldCard())
+  r.fold.saved = /\[".+"\]/.test(localStorage.getItem('prestreamer.screensCollapsed') ?? '')
+  q('button.fold', foldCard()).click(); await w(300)
+  r.fold.shownAgain = pvShown()
 
   // Lower third with a dark box and NO slide: nothing at all is drawn (no empty box); with a slide the caption is back
   const audience = (await st()).screens.find((x) => x.name === 'Audience')
@@ -145,6 +185,8 @@ const checks = [
   ['clearing the slide clears "next" too', r.nextClearedWithSlide === true, ''],
   ['moving a screen up in Settings moves it in the Present tab too', r.reorder.changed === true && JSON.stringify(r.reorder.present) === JSON.stringify(r.reorder.saved), JSON.stringify(r.reorder)],
   ['a Stream mirror display follows the stream screen: same look, silent, camera-only too; it can stop mirroring; it becomes ordinary if its source is removed', r.mirror.added === 1 && r.mirror.kind === 'display' && r.mirror.follows && r.mirror.payload.id && r.mirror.payload.bg === '#123456' && r.mirror.payload.silent && r.mirror.payload.camOnly === false && r.mirror.camOnlyFollows && r.mirror.stopped && r.mirror.sourceRemoved, JSON.stringify(r.mirror)],
+  ['dragging a screen card by its grip moves it (the drop marker shows), the order is saved, ↑ ↓ on the grip moves it a step, and Present and Settings show the same order', r.drag.marked === true && r.drag.saved[r.drag.saved.length - 1] === r.drag.before[0] && r.drag.afterKey.indexOf(r.drag.before[0]) === r.drag.afterKey.length - 2 && JSON.stringify(r.drag.present) === JSON.stringify(r.drag.afterKey) && JSON.stringify(r.drag.settings) === JSON.stringify(r.drag.afterKey), JSON.stringify(r.drag)],
+  ['a screen card folds to its title bar (buttons stay), the choice is saved, and it unfolds again', r.fold.before && r.fold.hidden && r.fold.barStays && r.fold.saved && r.fold.shownAgain, JSON.stringify(r.fold)],
   ['lower third: no text block (no empty dark box) without a slide; the caption appears with one and goes away again', r.emptyCaption.noSlide === 'none' && r.emptyCaption.withSlide === 'flex' && r.emptyCaption.cleared === 'none', JSON.stringify(r.emptyCaption)],
   ['the stream card preview in the Present tab follows camera only: text shown, then hidden (with announcements), then back', r.camera.previewBefore === 'flex' && r.camera.previewOn === 'none' && r.camera.annOn === 'none' && r.camera.previewAfter === 'flex', JSON.stringify([r.camera.previewBefore, r.camera.previewOn, r.camera.annOn, r.camera.previewAfter])],
   ['camera only is an icon button in the Stream header: it switches the mode on, says so, and switches it off', r.camera.exists && r.camera.noSwitch && r.camera.offAtStart && r.camera.on && r.camera.off, JSON.stringify(r.camera)],

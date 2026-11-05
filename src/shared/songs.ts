@@ -96,6 +96,25 @@ export function readingSlides(slides: { label: string; text: string }[], all: Ba
   return slides.map((s, i) => ({ ...s, ...(perSlide?.[i] ?? all ? { background: perSlide?.[i] ?? all } : {}) }))
 }
 
+/** The extra details a song can carry (the same ones Quelea has), in the order the editor lists them. */
+export const SONG_DETAIL_FIELDS = [
+  { key: 'author', label: 'Author' },
+  { key: 'copyright', label: 'Copyright' },
+  { key: 'ccli', label: 'CCLI number' },
+  { key: 'year', label: 'Year' },
+  { key: 'publisher', label: 'Publisher' },
+  { key: 'key', label: 'Key' },
+  { key: 'capo', label: 'Capo' },
+  { key: 'notes', label: 'Notes' },
+] as const
+
+/** The per-slide pictures without entries for slides that no longer exist (the text was shortened) and without trailing blanks. */
+export function trimSlideBackgrounds(list: (Background | null)[] | undefined, slideCount: number): (Background | null)[] {
+  const next = (list ?? []).slice(0, Math.max(0, slideCount))
+  while (next.length && next[next.length - 1] === null) next.pop()
+  return next
+}
+
 /** A copy of a per-slide list with slide `index` set to `bg` (null = back to the shared background). Trailing nulls are dropped. */
 export function withSlideBackground(list: (Background | null)[] | undefined, index: number, bg: Background | null): (Background | null)[] {
   const next = [...(list ?? [])]

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { SEED_SONGS, parseSong, readingSlides, withSlideBackground } from '../src/shared/songs'
+import { SEED_SONGS, SONG_DETAIL_FIELDS, parseSong, readingSlides, trimSlideBackgrounds, withSlideBackground } from '../src/shared/songs'
 import type { Song } from '../src/shared/types'
 
 const song = (body: string, background: Song['background'] = null): Song => ({ id: 's', title: 't', body, background })
@@ -63,5 +63,27 @@ describe('backgrounds for single slides', () => {
     expect(withSlideBackground(undefined, 2, img)).toEqual([null, null, img])
     expect(withSlideBackground([null, null, img], 2, null)).toEqual([])
     expect(withSlideBackground([img, vid], 0, null)).toEqual([null, vid])
+  })
+})
+
+describe('trimSlideBackgrounds', () => {
+  const img = { kind: 'image' as const, file: 'a.png' }
+  it('drops entries beyond the last slide and trailing blanks', () => {
+    expect(trimSlideBackgrounds([null, img, null, img], 3)).toEqual([null, img])
+    expect(trimSlideBackgrounds([img, null, null], 3)).toEqual([img])
+    expect(trimSlideBackgrounds([null, null], 2)).toEqual([])
+  })
+  it('copes with no list and no slides', () => {
+    expect(trimSlideBackgrounds(undefined, 4)).toEqual([])
+    expect(trimSlideBackgrounds([img], 0)).toEqual([])
+  })
+  it('leaves earlier gaps alone, so positions stay put', () => {
+    expect(trimSlideBackgrounds([null, null, img], 5)).toEqual([null, null, img])
+  })
+})
+
+describe('song details', () => {
+  it('lists the details Quelea keeps with a song', () => {
+    expect(SONG_DETAIL_FIELDS.map((f) => f.key)).toEqual(['author', 'copyright', 'ccli', 'year', 'publisher', 'key', 'capo', 'notes'])
   })
 })

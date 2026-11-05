@@ -1,7 +1,7 @@
 import { app, BrowserWindow, nativeImage } from 'electron'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { defaultMixer, defaultStrip, type MixerConfig, type StripSource } from '../shared/mixer'
+import { defaultMixer, defaultStrip, makeEffect, type MixerConfig, type StripSource } from '../shared/mixer'
 import { defaultAudio, type Slide, type StreamStartRequest } from '../shared/types'
 import type { AudioBridge } from './audio'
 import { importMediaFile, mediaDir } from './library'
@@ -29,6 +29,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
  * variable, does its work against the real app, writes its evidence to disk and quits:
  *   PRESTREAMER_SNAPSHOT=out.png   capture the operator window
  *   PRESTREAMER_EVAL="js"          run JS in the operator before the snapshot (prints the result)
+ *   PRESTREAMER_ATEM=1             look for an ATEM even with PRESTREAMER_USER_DATA set (tests normally send no network packets)
  *   PRESTREAMER_NO_AUTO_OPEN=1     with SNAPSHOT/EVAL: do not open the screens or show a slide first (to test how the app opens)
  *   PRESTREAMER_STREAMTEST=out.mkv stream the test pattern to a file (PRESTREAMER_SECONDS, PRESTREAMER_AUDIO=test|multitest,
  *                                  PRESTREAMER_AUDIO_STOP=seconds, PRESTREAMER_LAYOUT=lower-third)
@@ -153,7 +154,7 @@ export function runDevHooks(ctx: DevContext): void {
         if (process.env.PRESTREAMER_AUDIO === 'test') console.log('AUDIO', JSON.stringify(await audio.configure({ ...defaultAudio, source: { type: 'test' } })))
         // PRESTREAMER_AUDIO=multitest streams the MIXER's output: four tones in, only channel 2 (440 Hz) in the mix.
         if (process.env.PRESTREAMER_AUDIO === 'multitest') {
-          audio.setMixer({ ...defaultMixer(), strips: [defaultStrip(1)], masterLimiter: { on: false, ceilingDb: -1 } })
+          audio.setMixer({ ...defaultMixer(), strips: [defaultStrip(1)], masterChain: [] })
           console.log('AUDIO', JSON.stringify(await audio.configure({ ...defaultAudio, source: { type: 'multitest' } })))
         }
         await new Promise((r) => setTimeout(r, 1000))
@@ -241,17 +242,29 @@ const BEEP: StripSource = { deviceId: 'test:beep', label: 'Test beep (stereo)' }
 const MIXER_SEGMENTS: { name: string; channels: (number | { channel: number; source: StripSource })[]; apply: (m: MixerConfig) => void }[] = [
   { name: 'baseline', channels: [1], apply: () => {} },
   { name: 'fader-12', channels: [1], apply: (m) => { m.strips[0].faderDb = -12 } },
-  { name: 'eq+12', channels: [1], apply: (m) => { Object.assign(m.strips[0].eq, { on: true, midFreq: 440, midGainDb: 12, midQ: 1 }) } },
-  { name: 'compressor', channels: [1], apply: (m) => { Object.assign(m.strips[0].comp, { on: true, thresholdDb: -30, ratio: 20, kneeDb: 0, attackMs: 1, releaseMs: 100 }) } },
-  { name: 'compressor+makeup', channels: [1], apply: (m) => { Object.assign(m.strips[0].comp, { on: true, thresholdDb: -30, ratio: 20, kneeDb: 0, attackMs: 1, releaseMs: 100, makeupDb: 10 }) } },
-  { name: 'limiter', channels: [1], apply: (m) => { Object.assign(m.strips[0].limiter, { on: true, ceilingDb: -20 }) } },
-  { name: 'gate', channels: [1], apply: (m) => { Object.assign(m.strips[0].gate, { on: true, thresholdDb: -6, rangeDb: 60 }) } },
+  { name: 'eq+12', channels: [1], apply: (m) => { m.strips[0].chain.push(makeEffect('eq', { midFreq: 440, midGainDb: 12, midQ: 1 })) } },
+  { name: 'compressor', channels: [1], apply: (m) => { m.strips[0].chain.push(makeEffect('comp', { thresholdDb: -30, ratio: 20, kneeDb: 0, attackMs: 1, releaseMs: 100 })) } },
+  { name: 'compressor+makeup', channels: [1], apply: (m) => { m.strips[0].chain.push(makeEffect('comp', { thresholdDb: -30, ratio: 20, kneeDb: 0, attackMs: 1, releaseMs: 100, makeupDb: 10 })) } },
+  { name: 'limiter', channels: [1], apply: (m) => { m.strips[0].chain.push(makeEffect('limiter', { ceilingDb: -20 })) } },
+  { name: 'gate', channels: [1], apply: (m) => { m.strips[0].chain.push(makeEffect('gate', { thresholdDb: -6, rangeDb: 60 })) } },
   { name: 'mute', channels: [1], apply: (m) => { m.strips[0].mute = true } },
   { name: 'solo-880', channels: [1, 2], apply: (m) => { m.strips[1].solo = true } },
   // Channel 2 of the default source (440 Hz tone) together with a channel of a different source (the 1 kHz beep).
   { name: 'two-sources', channels: [1, { channel: 0, source: BEEP }], apply: () => {} },
   { name: 'ch0-baseline', channels: [0], apply: () => {} },
-  { name: 'ch0-hpf500', channels: [0], apply: (m) => { Object.assign(m.strips[0].hpf, { on: true, freq: 500 }) } },
+  { name: 'ch0-hpf500', channels: [0], apply: (m) => { m.strips[0].chain.push(makeEffect('hpf', { freq: 500 })) } },
+  // The chain: the order of the effects matters. A compressor then +12 dB of EQ ends about 11 dB louder than EQ then the compressor.
+  { name: 'order-comp-eq', channels: [1], apply: (m) => { m.strips[0].chain.push(makeEffect('comp', { thresholdDb: -30, ratio: 20, kneeDb: 0, attackMs: 1, releaseMs: 100 }), makeEffect('eq', { midFreq: 440, midGainDb: 12, midQ: 1 })) } },
+  { name: 'order-eq-comp', channels: [1], apply: (m) => { m.strips[0].chain.push(makeEffect('eq', { midFreq: 440, midGainDb: 12, midQ: 1 }), makeEffect('comp', { thresholdDb: -30, ratio: 20, kneeDb: 0, attackMs: 1, releaseMs: 100 })) } },
+  // An effect that is switched off leaves the signal alone, however it is set.
+  { name: 'bypassed', channels: [1], apply: (m) => { m.strips[0].chain.push(makeEffect('comp', { on: false, thresholdDb: -60, ratio: 20 }), makeEffect('eq', { on: false, midFreq: 440, midGainDb: 12 }), makeEffect('gate', { on: false, thresholdDb: 0, rangeDb: 80 }), makeEffect('delay', { on: false, mix: 1 }), makeEffect('reverb', { on: false, mix: 1 })) } },
+  { name: 'ch3-baseline', channels: [3], apply: () => {} },
+  { name: 'deesser', channels: [3], apply: (m) => { m.strips[0].chain.push(makeEffect('deesser', { freq: 2000, thresholdDb: -40, reductionDb: 12 })) } },
+  // 227.27 ms is exactly 100 periods of 440 Hz: with no feedback and the echo as loud as the voice, the two add up in phase (+6 dB).
+  { name: 'delay-in-phase', channels: [1], apply: (m) => { m.strips[0].chain.push(makeEffect('delay', { timeMs: 227.27, feedback: 0, toneHz: 12000, mix: 1 })) } },
+  { name: 'reverb', channels: [1], apply: (m) => { m.strips[0].chain.push(makeEffect('reverb', { decaySec: 1, dampingHz: 8000, preDelayMs: 0, mix: 1 })) } },
+  // The master has a chain of its own: a limiter there holds the whole mix.
+  { name: 'master-limiter', channels: [1], apply: (m) => { m.masterChain = [makeEffect('limiter', { ceilingDb: -20 })] } },
 ]
 const SEGMENT_SECONDS = 3
 
@@ -265,7 +278,7 @@ async function mixerTest(ctx: DevContext, outPath: string): Promise<void> {
   const baseFor = (channels: (typeof MIXER_SEGMENTS)[number]['channels']): MixerConfig => ({
     ...defaultMixer(),
     strips: channels.map((c) => (typeof c === 'number' ? defaultStrip(c) : defaultStrip(c.channel, undefined, c.source))),
-    masterLimiter: { on: false, ceilingDb: -1 },
+    masterChain: [],
   })
 
   const chunks: Buffer[] = []
