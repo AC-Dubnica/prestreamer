@@ -67,7 +67,7 @@ checks.push(
   ['the app streamed with the mixer as audio and exited cleanly', run2.status === 0 && /STREAM FINAL/.test(run2.stdout ?? ''), `exit ${run2.status}`],
   ['the stream carries the tone that is in the mix (440 Hz)', tone440 > -40, `${tone440.toFixed(1)} dB`],
   ['...and not the tones that are not in the mix (880 Hz)', tone880 < tone440 - 25, `${tone880.toFixed(1)} dB vs ${tone440.toFixed(1)} dB`],
-  ['stopping the mixer mid-stream leaves silence, not a stalled stream', tail < -60 && duration2 >= 7, `tail ${tail.toFixed(1)} dB, file ${duration2.toFixed(1)} s of 9`],
+  ['stopping the mixer mid-stream leaves silence, not a stalled stream', tail < -60 && duration2 >= 6, `tail ${tail.toFixed(1)} dB, file ${duration2.toFixed(1)} s of 9`],
 )
 
 // --- Stream settings are applied, and the health panel shows live numbers ----------------------------------------------

@@ -31,7 +31,18 @@ export function renderPptxSlides(data: Buffer, outDir: string, nameFor: (index: 
       else resolve({ files, info })
     }
     const timer = setTimeout(() => finish(new Error('Drawing the presentation took too long')), 5 * 60_000)
+    // An offscreen window hands out the last frame it painted. Without a GPU (a CI machine) a picture that has just been decoded can
+    // take a few frames to appear, so wait for a few paints, nudging the window to draw, before the slide is captured.
+    const painted = (frames: number, timeoutMs: number) => new Promise<void>((resolve) => {
+      let n = 0
+      const done = () => { clearTimeout(t); win.webContents.off('paint', onPaint); resolve() }
+      const onPaint = () => { if (++n >= frames) done() }
+      const t = setTimeout(done, timeoutMs)
+      win.webContents.on('paint', onPaint)
+      win.webContents.invalidate()
+    })
     ipc.handle('pptx:capture', async (_e, index: number, rect: { x: number; y: number; width: number; height: number }) => {
+      await painted(3, 2000)
       const image = await win.webContents.capturePage(rect)
       const name = nameFor(index)
       writeFileSync(join(outDir, name), image.toPNG())
