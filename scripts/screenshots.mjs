@@ -106,13 +106,13 @@ const shots = {
       tab('Mixer').click(); await w(3000)
       q('#view-mixer .strip:not(.master):not(.monitor):not(.audience)').click(); await w(1500)`,
   },
-  // Settings shows the Visuals category: the Screens category lists the machine's own display names, which do not belong in a README.
+  // Settings shows the Stream page: the Screens category lists the machine's own display names, which do not belong in a README.
   settings: {
     media: songBg,
     scenario: `${prelude}
       await backgrounds()
       tab('Settings').click(); await w(600)
-      qa('#view-settings .setnav button').find((b) => b.textContent.trim() === 'Visuals').click(); await w(900)`,
+      qa('#view-settings .setnav button').find((b) => b.textContent.trim() === 'Stream').click(); await w(900)`,
   },
   'announce-live': {
     media: songBg,
@@ -133,6 +133,8 @@ for (const name of names) {
   const userData = join(outDir, `userdata-${name}`)
   rmSync(userData, { recursive: true, force: true })
   mkdirSync(userData, { recursive: true })
+  // Record to a file: the Stream panel then shows a normal "Start recording" instead of the "no stream key yet" notice.
+  writeFileSync(join(userData, 'stream-settings.json'), JSON.stringify({ mode: 'file' }))
   shot.userData?.(userData)
   const png = join(outDir, `${name}.png`)
   rmSync(png, { force: true })

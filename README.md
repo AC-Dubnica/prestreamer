@@ -14,7 +14,7 @@ Run a Sunday service from one window: a run sheet of songs, Bible passages, vide
 |---|---|
 | ![Songs](docs/screenshots/songs.png) | ![Bible](docs/screenshots/bible.png) |
 
-| Mixer: a chain of effects per channel | Settings |
+| Mixer: a chain of effects per channel | Settings → Stream |
 |---|---|
 | ![Mixer](docs/screenshots/mixer.png) | ![Settings](docs/screenshots/settings.png) |
 
