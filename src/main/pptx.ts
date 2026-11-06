@@ -37,6 +37,7 @@ export function renderPptxSlides(data: Buffer, outDir: string, nameFor: (index: 
       writeFileSync(join(outDir, name), image.toPNG())
       files[index] = name
     })
+    if (process.env.PRESTREAMER_DEBUG_PPTX) win.webContents.on('console-message', (...a: unknown[]) => { const m = String((a[0] as { message?: string })?.message ?? a[2] ?? ''); if (m.startsWith('PPTXDBG')) console.log(m) })
     ipc.on('pptx:progress', (_e, done: number, total: number) => onProgress(done, total))
     ipc.on('pptx:done', (_e, result: { slides: number; info?: unknown } | { error: string }) => {
       if ('error' in result) finish(new Error(`This presentation could not be read: ${result.error}`))

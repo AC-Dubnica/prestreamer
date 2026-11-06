@@ -82,7 +82,8 @@ const pptxScenario = `(async () => {
   const deck = items[items.length - 1]
   return { status: q('#videostatus').textContent, seen: [...statuses], seconds: (Date.now() - t0) / 1000, kind: deck.kind, title: deck.title, slides: deck.slides }
 })()`
-const pr = spawnSync(electronPath, ['.'], { env: { ...process.env, PRESTREAMER_USER_DATA: pptxData, PRESTREAMER_PRESENTATION_FILE: pptx, PRESTREAMER_NO_AUTO_OPEN: '1', PRESTREAMER_SNAPSHOT: join(outDir, 'presentation-pptx.png'), PRESTREAMER_EVAL: pptxScenario }, encoding: 'utf8', timeout: 180_000 })
+const pr = spawnSync(electronPath, ['.'], { env: { ...process.env, PRESTREAMER_USER_DATA: pptxData, PRESTREAMER_PRESENTATION_FILE: pptx, PRESTREAMER_DEBUG_PPTX: '1', PRESTREAMER_NO_AUTO_OPEN: '1', PRESTREAMER_SNAPSHOT: join(outDir, 'presentation-pptx.png'), PRESTREAMER_EVAL: pptxScenario }, encoding: 'utf8', timeout: 180_000 })
+for (const l of (pr.stdout ?? '').split('\n')) if (l.startsWith('PPTXDBG')) console.log(l) // what the slide pictures looked like when captured (for failures on other machines)
 const pline = /^EVAL (.*)$/m.exec(pr.stdout ?? '')
 const p = pline ? JSON.parse(pline[1]) : { slides: [], seen: [], status: 'no result' }
 const px = (file, x, y) => {

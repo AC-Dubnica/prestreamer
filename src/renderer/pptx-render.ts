@@ -54,6 +54,8 @@ pptxBridge.onJob(async ({ data, width, maxSlides }) => {
       previewer.removeCurrentSlide()
       previewer.renderSingleSlide(i)
       await whenDrawn(host)
+      // Dev aid (printed by the main process when PRESTREAMER_DEBUG_PPTX is set): what the slide's pictures look like when captured.
+      console.log('PPTXDBG', JSON.stringify({ slide: i, imgs: [...host.querySelectorAll('img')].map((m) => { const b = m.getBoundingClientRect(); return { done: m.complete, w: m.naturalWidth, src: m.src.slice(0, 24), x: Math.round(b.x), y: Math.round(b.y), bw: Math.round(b.width), bh: Math.round(b.height), vis: getComputedStyle(m).visibility + '/' + getComputedStyle(m).display } }) }))
       await pptxBridge.capture(i, { x: 0, y: 0, width, height })
       pptxBridge.progress(i + 1, total)
     }
