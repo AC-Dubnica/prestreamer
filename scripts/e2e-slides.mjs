@@ -24,6 +24,11 @@ const scenario = `(async () => {
   const r = {}
   await w(600)
 
+  // The room the grid gets depends on the screen the test runs on (a hosted runner's is small): make it the same everywhere.
+  document.getElementById('centercol').style.width = '520px'
+  const zoom = document.getElementById('cardzoom'); zoom.value = '140'; zoom.dispatchEvent(new Event('input'))
+  await w(400)
+
   const sections = qa('#center section.slist')
   r.sections = sections.map((s) => q('h1', s).textContent.trim().replace(/\\s+/g, ' '))
   r.grids = qa('#center .grid').length
