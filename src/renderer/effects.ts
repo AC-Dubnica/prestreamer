@@ -145,6 +145,13 @@ export function createFx(ctx: AudioContext, e: Effect): Fx {
         },
       }
     }
+    case 'syncdelay': {
+      const d = ctx.createDelay(2)
+      return {
+        ...base, input: d, output: d, reduction: () => 0, dispose: () => d.disconnect(),
+        apply(x) { if (x.type === 'syncdelay') param(d.delayTime, x.on ? x.timeMs / 1000 : 0, ctx) },
+      }
+    }
     case 'delay': {
       const input = ctx.createGain(), output = ctx.createGain(), wet = ctx.createGain(), fb = ctx.createGain()
       const dly = ctx.createDelay(1.2)

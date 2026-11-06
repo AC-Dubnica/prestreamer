@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { MAX_CHANNELS, RANGES, TEST_SOURCES, clamp, dbToGain, defaultMixer, defaultStrip, effectiveGains, findEffect, gainToDb, sanitizeMixer, shortDeviceName, stripKey, type MixerConfig } from '../src/shared/mixer'
+import { MAX_CHANNELS, RANGES, TEST_SOURCES, clamp, defaultMonitor, dbToGain, defaultMixer, defaultStrip, effectiveGains, findEffect, gainToDb, sanitizeMixer, shortDeviceName, stripKey, type MixerConfig } from '../src/shared/mixer'
 
 describe('decibel conversion', () => {
   it('maps common values', () => {
@@ -46,8 +46,9 @@ describe('defaults', () => {
   it('starts as a stereo pair on USB 1-2, hard left and right, master limiter on', () => {
     const m = defaultMixer()
     expect(m.strips.map((s) => [s.channel, s.pan])).toEqual([[0, -1], [1, 1]])
-    expect(m.masterChain).toHaveLength(1)
+    expect(m.masterChain.map((e) => e.type)).toEqual(['limiter', 'syncdelay'])
     expect(m.masterChain[0]).toMatchObject({ type: 'limiter', on: true, ceilingDb: -1 })
+    expect(m.masterChain[1]).toMatchObject({ type: 'syncdelay', timeMs: 0 })
   })
   it('names strips after their USB channel', () => {
     expect(defaultStrip(2).name).toBe('USB 3')
@@ -155,5 +156,33 @@ describe('strips with their own input device', () => {
       expect(t.deviceId.startsWith('test:')).toBe(true)
       expect(t.channels).toBeGreaterThan(0)
     }
+  })
+})
+
+describe('the monitor output (listening to the stream mix)', () => {
+  it('is off by default, on the default output, at -6 dB', () => {
+    expect(defaultMixer().monitor).toEqual({ on: false, deviceId: '', label: '', gainDb: -6 })
+    expect(defaultMonitor.on).toBe(false)
+  })
+  it('keeps its settings through validation', () => {
+    const monitor = { on: true, deviceId: 'abc', label: 'Headphones (USB)', gainDb: -12 }
+    expect(sanitizeMixer({ strips: [], monitor }).monitor).toEqual(monitor)
+  })
+  it('a mixer file from before it existed gets the defaults', () => {
+    expect(sanitizeMixer({ strips: [{ channel: 0 }] }).monitor).toEqual(defaultMonitor)
+  })
+  it('clamps the level and replaces wrong types', () => {
+    expect(sanitizeMixer({ strips: [], monitor: { gainDb: 99 } }).monitor.gainDb).toBe(RANGES.monitorDb[1])
+    expect(sanitizeMixer({ strips: [], monitor: { gainDb: -999 } }).monitor.gainDb).toBe(RANGES.monitorDb[0])
+    expect(sanitizeMixer({ strips: [], monitor: { on: 'yes', deviceId: 5, label: 7, gainDb: 'loud' } }).monitor).toEqual(defaultMonitor)
+  })
+  it('limits an over-long device id and label', () => {
+    const m = sanitizeMixer({ strips: [], monitor: { deviceId: 'x'.repeat(301), label: 'L'.repeat(500) } }).monitor
+    expect(m.deviceId).toBe('')
+    expect(m.label).toHaveLength(120)
+  })
+  it('is stable: sanitising its own output changes nothing', () => {
+    const once = sanitizeMixer({ strips: [], monitor: { on: true, deviceId: 'd', label: 'x', gainDb: -3 } })
+    expect(sanitizeMixer(once)).toEqual(once)
   })
 })

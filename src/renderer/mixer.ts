@@ -1,6 +1,6 @@
 import type { PrestreamerApi } from '../preload'
 import { EFFECT_INFO, EFFECT_TYPES, MASTER_PRESETS, MAX_CHANNELS, MAX_EFFECTS, RANGES, STRIP_PRESETS, TEST_SOURCES, VIDEO_SOURCE, videoStrips, defaultEffect, defaultMixer, defaultStrip, shortDeviceName, stripKey, type ChainPreset, type Effect, type EffectType, type MixerConfig, type Strip, type StripSource } from '../shared/mixer'
-import type { AudioStatus, Meters } from '../shared/types'
+import type { AudioStatus, Look, Meters, ScreenConfig } from '../shared/types'
 import { moveBefore } from '../shared/curves'
 import { History } from '../shared/history'
 import { confirmDialog, showModal } from './dialogs'
@@ -23,10 +23,12 @@ const fmtDb = (db: number): string => (db <= -99 ? '-∞' : `${db > 0 ? '+' : ''
 
 /** Fader positions at or below this are "off" (-∞): the slider's bottom stop. */
 const FADER_FLOOR = -60
+/** The audience level can only be turned down: from -60 dB to full level. */
+const RANGES_AUDIENCE = [-60, 0] as const
 /** Selecting the master shows its chain, like selecting a strip shows the strip's. */
 const MASTER_KEY = '__master__'
 /** Short names for the chain overview on a strip. */
-const SHORT: Record<EffectType, string> = { hpf: 'HPF', eq: 'EQ', gate: 'Gate', comp: 'Comp', limiter: 'Limit', deesser: 'De-ess', reverb: 'Reverb', delay: 'Delay' }
+const SHORT: Record<EffectType, string> = { hpf: 'HPF', eq: 'EQ', gate: 'Gate', comp: 'Comp', limiter: 'Limit', deesser: 'De-ess', reverb: 'Reverb', delay: 'Delay', syncdelay: 'Sync' }
 
 interface MeterEls { fill: HTMLElement; peak: HTMLElement; gr: HTMLElement }
 
@@ -39,6 +41,10 @@ export interface MixerDeps {
   getDevices(): { deviceId: string; label: string }[]
   /** How many channels a device offers, found by opening it briefly. */
   probeChannels(deviceId: string): Promise<number>
+  /** Every audio output on the machine (for the monitor and the audience). */
+  getOutputs(): { deviceId: string; label: string }[]
+  /** The screens, in order: the sound of the videos for the room plays from one of them. */
+  getScreens(): ScreenConfig[]
   /** (Re)starts the mixer's audio engine. It starts by itself; this is for trying again after an error. */
   startAudio(): Promise<void>
 }
@@ -162,8 +168,7 @@ export function createMixerView(root: HTMLElement, api: PrestreamerApi, deps: Mi
       el('div', { className: 'top' }, grip, el('span', { className: 'ch', textContent: String(s.channel + 1), title: `Channel ${s.channel + 1}` }), remove),
       el('div', { className: 'dev', textContent: deviceName, title: s.source?.label ?? 'The default source chosen in the Audio panel' }),
       name,
-      chainChips(s.chain),
-      el('div', { className: 'mf' }, el('div', { className: 'meter' }, fill, peak, gr), fader),
+      el('div', { className: 'mf' }, el('div', { className: 'meter' }, fill, peak, gr), fader, chainChips(s.chain)),
       readout,
       el('div', { className: 'btns2' }, mute, solo),
       pan,
@@ -202,7 +207,7 @@ export function createMixerView(root: HTMLElement, api: PrestreamerApi, deps: Mi
   /** A strip's chain at a glance: the names of its effects in order, dimmed while an effect is switched off. */
   function chainChips(chain: Effect[]): HTMLElement {
     return el('div', { className: 'chips', title: chain.length ? chain.map((e) => `${EFFECT_INFO[e.type].label}${e.on ? '' : ' (off)'}`).join(' → ') : 'No effects: select the strip to build its chain' },
-      ...(chain.length ? chain.map((e) => el('span', { className: `chip ${e.on ? '' : 'off'}`, textContent: SHORT[e.type] })) : [el('span', { className: 'chip none', textContent: 'no effects' })]))
+      ...(chain.length ? chain.map((e) => el('span', { className: `chip ${e.on ? '' : 'off'}`, textContent: SHORT[e.type] })) : [el('span', { className: 'chip none', textContent: 'no fx' })]))
   }
 
   let dragging: string | null = null
@@ -285,6 +290,8 @@ export function createMixerView(root: HTMLElement, api: PrestreamerApi, deps: Mi
           k('Pre-delay', e.preDelayMs, RANGES.reverbPreDelayMs, 1, ' ms', 20, (v) => { e.preDelayMs = v }).el,
           kPct('Mix', e.mix, RANGES.reverbMix, 0.15, (v) => { e.mix = v }).el,
         ] }
+      case 'syncdelay':
+        return { graph: null, knobs: [k('Time', e.timeMs, RANGES.syncDelayMs, 1, ' ms', 0, (v) => { e.timeMs = v }).el] }
       case 'delay':
         return { graph: null, knobs: [
           k('Time', e.timeMs, RANGES.delayTimeMs, 1, ' ms', 350, (v) => { e.timeMs = v }).el,
@@ -420,7 +427,7 @@ export function createMixerView(root: HTMLElement, api: PrestreamerApi, deps: Mi
 
   function renderMasterDetail(): HTMLElement {
     const input = el('div', { className: 'fxnode' }, el('div', { className: 'chead' }, el('span', { className: 'ctitle', textContent: 'Mix' })), el('div', { className: 'dim', textContent: 'every channel, added together' }))
-    const output = el('div', { className: 'fxnode' }, el('div', { className: 'chead' }, el('span', { className: 'ctitle', textContent: 'Master' })), el('div', { className: 'fxout', textContent: `${fmtDb(mixer.masterDb)} dB` }), el('div', { className: 'dim', textContent: 'fader, then the sync delay, then the stream' }))
+    const output = el('div', { className: 'fxnode' }, el('div', { className: 'chead' }, el('span', { className: 'ctitle', textContent: 'Master' })), el('div', { className: 'fxout', textContent: `${fmtDb(mixer.masterDb)} dB` }), el('div', { className: 'dim', textContent: 'fader, then the stream' }))
     detailOut = { el: output.querySelector('.fxout')!, text: () => `${fmtDb(mixer.masterDb)} dB` }
     const t: Target = { name: 'the master', chain: mixer.masterChain, setChain: (c) => { mixer.masterChain = c }, presets: MASTER_PRESETS, input, output }
     return el('div', { className: 'detail' }, el('h3', { textContent: 'Master · effects on the whole mix' }), renderChain(t))
@@ -438,18 +445,112 @@ export function createMixerView(root: HTMLElement, api: PrestreamerApi, deps: Mi
     const fader = el<HTMLInputElement>('input', { type: 'range', className: 'vfader', min: String(FADER_FLOOR - 1), max: String(RANGES.masterDb[1]), step: '0.5', value: String(mixer.masterDb <= FADER_FLOOR ? FADER_FLOOR - 1 : mixer.masterDb) })
     fader.oninput = () => { const v = Number(fader.value); mixer.masterDb = v <= FADER_FLOOR ? -100 : v; show(); refreshOut(); commit() }
     fader.ondblclick = () => { mixer.masterDb = 0; fader.value = '0'; show(); refreshOut(); commit() }
-    const delay = el<HTMLInputElement>('input', { type: 'number', min: String(RANGES.delayMs[0]), max: String(RANGES.delayMs[1]), step: '10', value: String(mixer.delayMs) })
-    delay.oninput = () => { mixer.delayMs = Math.min(RANGES.delayMs[1], Math.max(RANGES.delayMs[0], Number(delay.value) || 0)); commit() }
-    const delayRow = el('label', { className: 'mdelay', title: 'Delays the whole mix so the sound lines up with the picture (camera and encoding delay the picture)' }, el('span', { textContent: 'Delay' }), delay, el('span', { textContent: 'ms' }))
+    // The same layout as a channel strip: its top row (move, number, remove) is there but hidden, so everything lines up, then the
+    // name, the meters with the fader and the chain overview beside them, and the level. A master has no mute, solo or pan.
+    const ghost = ghostTop()
+    const name = el<HTMLInputElement>('input', { type: 'text', value: 'Master', readOnly: true, title: 'The master: everything in the mix passes through its effects and its fader' })
     const master = el('div', { className: `strip master ${selected === MASTER_KEY ? 'sel' : ''}`, title: 'Select to build the effects that apply to the whole mix', onclick: () => { selected = MASTER_KEY; render() } },
-      el('div', { className: 'top' }, el('span', { className: 'ch', textContent: 'MASTER' })),
-      el('div', { className: 'mf' }, el('div', { className: 'meter' }, masterMeters[0].fill, masterMeters[0].peak), el('div', { className: 'meter' }, masterMeters[1].fill, masterMeters[1].peak), fader),
+      ghost,
+      el('div', { className: 'dev', textContent: 'Stream mix' }),
+      name,
+      el('div', { className: 'mf' }, el('div', { className: 'meter' }, masterMeters[0].fill, masterMeters[0].peak), el('div', { className: 'meter' }, masterMeters[1].fill, masterMeters[1].peak), fader, chainChips(mixer.masterChain)),
       readout,
-      chainChips(mixer.masterChain),
-      delayRow,
     )
-    delay.onclick = (e) => e.stopPropagation()
     return master
+  }
+
+  /** A panel of the mixer page: a title, then its strips and the controls that go with them side by side. */
+  const panel = (title: string, cls: string, ...parts: HTMLElement[]): HTMLElement =>
+    el('div', { className: `mxpanel ${cls}` }, el('div', { className: 'ptitle' }, el('span', { className: 'ch', textContent: title })), el('div', { className: 'pbody' }, ...parts))
+
+  /** A strip that is not a channel: its move/number/remove row is there but hidden, so it lines up with the channels. */
+  const ghostTop = (): HTMLElement => el('div', { className: 'top ghost' }, el('span', { className: 'grip', textContent: '⠿' }), el('span', { className: 'ch', textContent: '0' }), iconButton('x', '', () => {}, { size: 12 }))
+
+  /**
+   * Listening to the stream mix on an output of your own (headphones, a monitor speaker), apart from what plays to the room.
+   * It sits beside the master, in the Stream panel. Everything is saved with the mixer and applied at once.
+   */
+  function renderMonitorSide(): HTMLElement {
+    const m = mixer.monitor
+    const outputs = deps.getOutputs()
+    const toggle = el<HTMLInputElement>('input', { type: 'checkbox', checked: m.on, className: 'switch', title: 'Listen to the stream mix on the output below' })
+    const select = el<HTMLSelectElement>('select', { title: 'Where the stream mix is played for you' })
+    select.append(el<HTMLOptionElement>('option', { value: '', textContent: 'System default output', selected: m.deviceId === '' }))
+    outputs.forEach((o) => select.append(el<HTMLOptionElement>('option', { value: o.deviceId, textContent: o.label, selected: o.deviceId === m.deviceId })))
+    if (m.deviceId && !outputs.some((o) => o.deviceId === m.deviceId)) select.append(el<HTMLOptionElement>('option', { value: m.deviceId, textContent: `${m.label || 'Output'} (not connected)`, selected: true }))
+    select.onchange = () => { m.deviceId = select.value; m.label = outputs.find((o) => o.deviceId === select.value)?.label ?? ''; commit(); render() }
+    const body = el('div', { className: `monbody ${m.on ? '' : 'off'}` })
+    toggle.onchange = () => { m.on = toggle.checked; body.classList.toggle('off', !m.on); commit() }
+    const level = k('Level', m.gainDb, RANGES.monitorDb, 0.5, ' dB', -6, (v) => { m.gainDb = v })
+    const warn = status.monitorError ? el('div', { className: 'monerr', textContent: status.monitorError }) : el('span')
+    body.append(
+      select,
+      el('div', { className: 'monrow' }, level.el, el('div', { className: 'dim monhint', textContent: 'You hear what the stream carries, sync delay included.' })),
+      el('div', { className: 'dim monhint', textContent: 'Use headphones or an output that does not play into the room, or it feeds back.' }),
+    )
+    return el('div', { className: 'mxside monitor' }, el('div', { className: 'sidehead' }, el('span', { className: 'ch', textContent: 'MONITOR' }), toggle), body, warn)
+  }
+
+  /**
+   * The Audience panel: the sound of the videos for the room, laid out like the stream's master (a strip with its meter, fader and
+   * mute, and the controls beside it): which screen plays it, on which output device, how loud, and the level going out. It plays
+   * from that screen's own window (so it stays in step with the picture), which is why these are settings of the screen.
+   */
+  let audienceView: { meter: MeterEls; db: number } | null = null
+  const screenPatch = (id: string, look: Partial<Look>): void => { void api.updateScreen(id, { look: look as Look }) }
+  let audienceTimer: ReturnType<typeof setTimeout> | null = null
+  function renderAudience(): HTMLElement {
+    const screens = deps.getScreens().filter((s) => s.kind === 'display' && !s.mirrorOf)
+    const outputs = deps.getOutputs()
+    const current = deps.getScreens().find((s) => s.look.videoAudio) // the one that plays it
+    const select = el<HTMLSelectElement>('select', { title: 'The screen whose window plays the sound of the videos for the room' })
+    select.append(el<HTMLOptionElement>('option', { value: '', textContent: 'Nobody (no video sound in the room)', selected: !current }))
+    screens.forEach((s) => select.append(el<HTMLOptionElement>('option', { value: s.id, textContent: s.name, selected: s.id === current?.id })))
+    if (current && !screens.some((s) => s.id === current.id)) select.append(el<HTMLOptionElement>('option', { value: current.id, textContent: current.name, selected: true }))
+    select.onchange = () => { // exactly one screen plays it
+      for (const s of deps.getScreens()) if (s.look.videoAudio !== (s.id === select.value)) screenPatch(s.id, { videoAudio: s.id === select.value })
+    }
+    const device = el<HTMLSelectElement>('select', { title: 'Where the sound of the videos is played for the room', disabled: !current })
+    device.append(el<HTMLOptionElement>('option', { value: '', textContent: 'System default output', selected: !current?.look.audioOutput }))
+    outputs.forEach((o) => device.append(el<HTMLOptionElement>('option', { value: o.deviceId, textContent: o.label, selected: o.deviceId === current?.look.audioOutput })))
+    if (current?.look.audioOutput && !outputs.some((o) => o.deviceId === current.look.audioOutput)) device.append(el<HTMLOptionElement>('option', { value: current.look.audioOutput, textContent: 'Saved output (not connected)', selected: true }))
+    device.onchange = () => { if (current) screenPatch(current.id, { audioOutput: device.value }) }
+
+    const muted = !!current?.look.videoMuted
+    const levelDb = current?.look.videoVolumeDb ?? 0
+    const fill = el('div', { className: 'fill' })
+    const peak = el('div', { className: 'peak' })
+    audienceView = { meter: { fill, peak, gr: el('div') }, db: muted ? -100 : levelDb }
+    const readout = el('div', { className: 'db', textContent: fmtDb(levelDb) })
+    const fader = el<HTMLInputElement>('input', { type: 'range', className: 'vfader', min: String(RANGES_AUDIENCE[0]), max: String(RANGES_AUDIENCE[1]), step: '0.5', value: String(levelDb), disabled: !current, title: 'How loud the sound of the videos is in the room (double-click for full level). It can only be turned down.' })
+    fader.oninput = () => {
+      const v = Number(fader.value)
+      readout.textContent = fmtDb(v)
+      if (!current) return
+      current.look.videoVolumeDb = v
+      if (audienceView) audienceView.db = current.look.videoMuted ? -100 : v
+      if (audienceTimer) clearTimeout(audienceTimer)
+      audienceTimer = setTimeout(() => screenPatch(current.id, { videoVolumeDb: v }), 60)
+    }
+    fader.ondblclick = () => { fader.value = '0'; fader.dispatchEvent(new Event('input')) }
+    const mute = el<HTMLButtonElement>('button', { className: `ms ${muted ? 'on mute' : ''}`, textContent: 'M', title: 'Mute the video sound in the room', disabled: !current })
+    mute.onclick = () => { if (current) screenPatch(current.id, { videoMuted: !current.look.videoMuted }) }
+    const dev = current?.look.audioOutput ? (outputs.find((o) => o.deviceId === current.look.audioOutput)?.label ?? 'Saved output') : 'Default output'
+    const name = el<HTMLInputElement>('input', { type: 'text', value: 'Audience', readOnly: true, title: 'The sound of the videos, as it goes out to the room' })
+    const strip = el('div', { className: `strip audience ${current ? '' : 'idle'}` },
+      ghostTop(),
+      el('div', { className: 'dev', textContent: current ? shortDeviceName(dev) : 'no sound', title: dev }),
+      name,
+      el('div', { className: 'mf' }, el('div', { className: 'meter', title: 'The level of the video sound as it goes out to the room' }, fill, peak), fader),
+      readout,
+      el('div', { className: 'btns2' }, mute),
+    )
+    const side = el('div', { className: `mxside ${current ? '' : 'off'}` },
+      el('label', { className: 'dim', textContent: 'Plays from' }), select,
+      el('label', { className: 'dim', textContent: 'Output' }), device,
+      el('div', { className: 'dim monhint', textContent: 'The sound of the videos for the room. It plays from that screen\'s window, so it stays in step with the picture, and never goes through the mixer: the stream gets the video\'s sound from the Video channels.' }),
+    )
+    return panel('AUDIENCE', 'audience', strip, side)
   }
 
   /** Every input the user can add a channel from: the machine's devices, then the test sources. */
@@ -532,15 +633,18 @@ export function createMixerView(root: HTMLElement, api: PrestreamerApi, deps: Mi
     undoBtn = iconButton('undo', '', () => travel('undo'), { size: 15 })
     redoBtn = iconButton('redo', '', () => travel('redo'), { size: 15 })
     syncHistoryButtons()
-    const bar = el('div', { className: 'mxbar' }, el('h2', { textContent: 'Stream mix' }), undoBtn, redoBtn, ...(retry ? [retry] : []), el('span', { className: `mxstatus ${status.state}`, textContent: dev }))
-    const addRow = el('div', { className: 'mxadd' }, el('span', { className: 'dlabel', textContent: 'Add a channel from' }), sourceSel, channelSel, add, el('span', { className: 'grow' }), reset)
+    const bar = el('div', { className: 'mxbar' }, ...(retry ? [retry] : []), el('span', { className: `mxstatus ${status.state}`, textContent: dev }))
+    const addRow = el('div', { className: 'mxadd' }, el('span', { className: 'dlabel', textContent: 'Add a channel from' }), sourceSel, channelSel, add, el('span', { className: 'grow' }), undoBtn, redoBtn, reset)
 
     const hasVideo = mixer.strips.some((x) => x.source?.deviceId === VIDEO_SOURCE.deviceId)
     const note = hasVideo ? el('div', { className: 'dim mxnote', textContent: 'Video L and R are the sound of the video playing in the service; they reach the stream through the master. If your room mixer also receives the video\'s sound and sends it back to this computer, mute them here to avoid hearing it twice.' }) : el('span')
-    const strips = el('div', { className: 'strips' }, ...mixer.strips.map(renderStrip), renderMaster())
+    const strips = el('div', { className: 'strips' }, ...mixer.strips.map(renderStrip))
+    // Two panels: the stream (every channel, then the master with the monitor beside it) and, apart from it, the audience.
+    const streamPanel = panel('STREAM', 'stream', strips, el('div', { className: 'mxmaster' }, renderMaster(), renderMonitorSide()))
+    const row = el('div', { className: 'mxrow' }, streamPanel, renderAudience())
     const sel = selected !== null && selected !== MASTER_KEY ? stripOf(selected) : undefined
     const detail = selected === MASTER_KEY ? renderMasterDetail() : sel ? renderDetail(sel) : el('div', { className: 'row', textContent: mixer.strips.length ? 'Select a strip to build its chain of effects, or the master for effects on the whole mix.' : 'No channels in the mix. Add one above.' })
-    root.replaceChildren(bar, addRow, note, strips, detail)
+    root.replaceChildren(bar, addRow, note, row, detail)
   }
 
   function update(m: Meters): void {
@@ -553,6 +657,14 @@ export function createMixerView(root: HTMLElement, api: PrestreamerApi, deps: Mi
       els.peak.style.bottom = `${meterPct(r.peakDb)}%`
       els.gr.style.height = `${Math.min(100, (-r.reductionDb / 30) * 100)}%` // gain reduction, up to 30 dB, drawn from the top
     })
+    if (audienceView) { // the video's sound with the audience level applied (it can only be turned down)
+      const shift = audienceView.db <= -60 ? -100 : audienceView.db
+      const rms = m.audience ? m.audience.rmsDb + shift : -100
+      const pk = m.audience ? m.audience.peakDb + shift : -100
+      audienceView.meter.fill.style.height = `${meterPct(rms)}%`
+      audienceView.meter.fill.className = `fill ${levelClass(pk)}`
+      audienceView.meter.peak.style.bottom = `${meterPct(pk)}%`
+    }
     for (const [id, bar] of grBars) bar.style.width = `${Math.min(100, (-(m.reductions?.[id] ?? 0) / 20) * 100)}%` // each effect's gain reduction, up to 20 dB
     m.masterPeakDb.forEach((db, i) => {
       const e = masterMeters[i]
@@ -563,12 +675,20 @@ export function createMixerView(root: HTMLElement, api: PrestreamerApi, deps: Mi
     })
   }
 
+  let lastScreensSignature = ''
   void api.audioMixerGet().then((m) => { mixer = m; history.reset(JSON.stringify(m)); selected = m.strips[0] ? stripKey(m.strips[0]) : null; render() })
   api.onMeters(update)
   root.innerHTML = iconSvg('sliders', 1) // placeholder until first render
 
   return {
     show: render,
+    /** The screens changed (a name, which one plays video sound, its device or level): the Audience box follows when the tab is open. */
+    screensChanged(): void {
+      const sig = JSON.stringify(deps.getScreens().map((s) => [s.id, s.name, s.kind, s.mirrorOf, s.look.videoAudio, s.look.audioOutput, s.look.videoVolumeDb, s.look.videoMuted]))
+      if (sig === lastScreensSignature) return
+      lastScreensSignature = sig
+      if (root.classList.contains('active')) render()
+    },
     setStatus(s: AudioStatus): void {
       status = s
       if (root.classList.contains('active')) render()

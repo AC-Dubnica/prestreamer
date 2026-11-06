@@ -1,9 +1,21 @@
 /** How the outgoing stream is encoded. Everything here is validated before it reaches ffmpeg. */
 
+import type { StreamMode } from './types'
+
 export type EncoderChoice = 'auto' | 'libx264' | 'h264_videotoolbox' | 'h264_nvenc' | 'h264_qsv' | 'h264_amf'
 export type X264Preset = 'ultrafast' | 'superfast' | 'veryfast' | 'faster' | 'fast' | 'medium'
 
+/** Where the stream goes: out to YouTube, or into a file on this computer. */
+export const STREAM_MODES: { value: StreamMode; label: string }[] = [
+  { value: 'youtube', label: 'Stream to YouTube' },
+  { value: 'file', label: 'Record to a file on this computer' },
+]
+
 export interface StreamSettings {
+  /** Where it goes. */
+  mode: StreamMode
+  /** The virtual screen that is sent; '' means the first one. */
+  screenId: string
   width: number
   height: number
   fps: number
@@ -39,6 +51,8 @@ export const KBPS_LIMITS = [500, 20000] as const
 export const MAX_KEYFRAME_SEC = 4
 
 export const defaultStreamSettings: StreamSettings = {
+  mode: 'youtube',
+  screenId: '',
   width: 1920,
   height: 1080,
   fps: 30,
@@ -59,6 +73,8 @@ export function sanitizeStreamSettings(raw: unknown): StreamSettings {
   const kbps = typeof r.videoKbps === 'number' && Number.isFinite(r.videoKbps) ? Math.round(r.videoKbps) : d.videoKbps
   const key = typeof r.keyframeSec === 'number' && Number.isFinite(r.keyframeSec) ? Math.round(r.keyframeSec) : d.keyframeSec
   return {
+    mode: pick(r.mode, STREAM_MODES.map((m) => m.value), d.mode),
+    screenId: typeof r.screenId === 'string' ? r.screenId.slice(0, 80) : d.screenId,
     width: res.width,
     height: res.height,
     fps: pick(r.fps, FPS_CHOICES, d.fps),

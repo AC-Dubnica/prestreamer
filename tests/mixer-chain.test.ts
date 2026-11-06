@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  EFFECT_INFO, EFFECT_TYPES, MASTER_PRESETS, MAX_EFFECTS, STRIP_PRESETS, defaultEffect, defaultMixer, defaultStrip, findEffect, makeEffect, newEffectId, sanitizeChain, sanitizeMixer,
+  EFFECT_INFO, EFFECT_TYPES, MASTER_PRESETS, MAX_EFFECTS, RANGES, STRIP_PRESETS, defaultEffect, defaultMixer, defaultStrip, findEffect, makeEffect, newEffectId, sanitizeChain, sanitizeMixer,
   type Effect, type MixerConfig,
 } from '../src/shared/mixer'
 
@@ -8,9 +8,9 @@ const ids = (chain: Effect[]) => chain.map((e) => e.id)
 const types = (chain: Effect[]) => chain.map((e) => e.type)
 
 describe('the default mixer', () => {
-  it('has strips with an empty chain, and a master chain with one limiter whose id never changes', () => {
+  it('has strips with an empty chain, and a master chain with a limiter and a sync delay (at 0 ms) whose ids never change', () => {
     expect(defaultStrip(0).chain).toEqual([])
-    expect(defaultMixer().masterChain).toEqual([{ id: 'master-limiter', type: 'limiter', on: true, ceilingDb: -1 }])
+    expect(defaultMixer().masterChain).toEqual([{ id: 'master-limiter', type: 'limiter', on: true, ceilingDb: -1 }, { id: 'master-sync-delay', type: 'syncdelay', on: true, timeMs: 0 }])
     expect(defaultMixer()).toEqual(defaultMixer())
   })
   it('gives every effect an id of its own', () => {
@@ -150,6 +150,53 @@ describe('mixer files saved before chains existed', () => {
     const strip = { ...withoutChain(old({})), ...legacyOff, gate: { ...legacyOff.gate, on: true } }
     const once = sanitizeMixer({ strips: [strip], masterLimiter: { on: true, ceilingDb: -2 } })
     expect(sanitizeMixer(once)).toEqual(once)
+  })
+})
+
+describe('the sync delay effect', () => {
+  it('is an effect like the others, on a channel or on the master, with its time clamped', () => {
+    expect(EFFECT_TYPES).toContain('syncdelay')
+    expect(EFFECT_INFO.syncdelay.label).toBe('Sync delay')
+    expect(defaultEffect('syncdelay')).toMatchObject({ type: 'syncdelay', on: true, timeMs: 150 })
+    const [a, b] = sanitizeChain([{ type: 'syncdelay', id: 'a', timeMs: 99999 }, { type: 'syncdelay', id: 'b', timeMs: -5 }], new Set())
+    expect([(a as { timeMs: number }).timeMs, (b as { timeMs: number }).timeMs]).toEqual([RANGES.syncDelayMs[1], 0])
+  })
+})
+
+describe('mixer files saved when the master delay was a box of its own', () => {
+  const limiter = [{ type: 'limiter', id: 'master-limiter', on: true, ceilingDb: -1 }]
+  const sync = (m: MixerConfig) => m.masterChain.filter((e) => e.type === 'syncdelay') as { timeMs: number; id: string; on: boolean }[]
+
+  it('turns a delay into a Sync delay effect at the end of the master chain, with the same time', () => {
+    const m = sanitizeMixer({ strips: [], masterChain: limiter, delayMs: 250 })
+    expect(types(m.masterChain)).toEqual(['limiter', 'syncdelay'])
+    expect(sync(m)[0]).toMatchObject({ timeMs: 250, on: true, id: 'master-sync-delay' })
+  })
+  it('a delay of 0 still brings the Sync delay along, so the master keeps showing a place for it', () => {
+    expect(sync(sanitizeMixer({ strips: [], masterChain: limiter, delayMs: 0 }))[0].timeMs).toBe(0)
+  })
+  it('works together with the old master limiter', () => {
+    const m = sanitizeMixer({ strips: [], masterLimiter: { on: true, ceilingDb: -3 }, delayMs: 120 })
+    expect(types(m.masterChain)).toEqual(['limiter', 'syncdelay'])
+    expect(sync(m)[0].timeMs).toBe(120)
+  })
+  it('clamps a silly delay', () => {
+    expect(sync(sanitizeMixer({ strips: [], masterChain: limiter, delayMs: 99999 }))[0].timeMs).toBe(RANGES.syncDelayMs[1])
+  })
+  it('does not add a second one when the chain already has a Sync delay, nor to a chain with no room', () => {
+    const own = [...limiter, { type: 'syncdelay', id: 'mine', on: true, timeMs: 40 }]
+    expect(sync(sanitizeMixer({ strips: [], masterChain: own, delayMs: 250 }))).toHaveLength(1)
+    const full = Array.from({ length: MAX_EFFECTS }, () => defaultEffect('eq'))
+    expect(sanitizeMixer({ strips: [], masterChain: full, delayMs: 250 }).masterChain).toHaveLength(MAX_EFFECTS)
+  })
+  it('a file in the new format (no delay setting) is left as it is, even without a Sync delay', () => {
+    expect(sanitizeMixer({ strips: [], masterChain: limiter }).masterChain).toHaveLength(1)
+    expect(sanitizeMixer({ strips: [], masterChain: [] }).masterChain).toEqual([])
+  })
+  it('migrating twice gives the same as migrating once (and the delay setting is gone)', () => {
+    const once = sanitizeMixer({ strips: [], masterChain: limiter, delayMs: 180 })
+    expect(sanitizeMixer(once)).toEqual(once)
+    expect('delayMs' in once).toBe(false)
   })
 })
 

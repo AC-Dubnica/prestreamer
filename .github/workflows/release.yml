@@ -26,6 +26,8 @@ jobs:
           - { os: macos-latest, label: macOS (Apple silicon), artifact: mac-arm64 }
           - { os: macos-15-intel, label: macOS (Intel), artifact: mac-x64 }
           - { os: windows-latest, label: Windows (x64), artifact: win-x64 }
+          - { os: ubuntu-latest, label: Linux (x64), artifact: linux-x64 }
+          - { os: ubuntu-24.04-arm, label: Linux (arm64), artifact: linux-arm64 }
     steps:
       - uses: actions/checkout@v4
 
@@ -59,7 +61,7 @@ jobs:
 
       - name: Installers
         shell: bash
-        run: ls -la release/*.dmg release/*.zip release/*.exe 2>/dev/null || true
+        run: ls -la release/*.dmg release/*.zip release/*.exe release/*.AppImage release/*.deb 2>/dev/null || true
 
       - uses: actions/upload-artifact@v4
         with:
@@ -68,6 +70,8 @@ jobs:
             release/*.dmg
             release/*.zip
             release/*.exe
+            release/*.AppImage
+            release/*.deb
           if-no-files-found: error
           retention-days: 30
 
@@ -100,3 +104,4 @@ jobs:
 
             - **macOS:** open the `.dmg`, drag PreStreamer to Applications, then right-click the app and choose **Open** once (or run `xattr -cr /Applications/PreStreamer.app`). Apple silicon: `*-mac-arm64`; Intel: `*-mac-x64`.
             - **Windows:** run the `.exe` installer. If SmartScreen appears, choose **More info**, then **Run anyway**. The `.zip` is a portable copy.
+            - **Linux (Ubuntu, Debian and relatives):** install the `.deb` (`sudo apt install ./PreStreamer-*-linux-x64.deb`). Any other distribution: make the `.AppImage` executable and run it (it needs FUSE 2: on Ubuntu 22.04 and later `sudo apt install libfuse2t64`, or `libfuse2` on older ones). `linux-x64` is for Intel/AMD, `linux-arm64` for ARM.

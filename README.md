@@ -2,9 +2,9 @@
 
 Presentation software for church services with a built-in live streamer: **presenter + streamer**.
 
-Run a Sunday service from one window: a run sheet of songs, Bible passages, videos, presentations and pictures; lyrics over picture or video backgrounds on any number of physical and virtual screens; a stage monitor; live announcements; a mixing console for the stream audio; ATEM switcher control; and one-click streaming to YouTube. Built with Electron for macOS and Windows.
+Run a Sunday service from one window: a run sheet of songs, Bible passages, videos, presentations and pictures; lyrics over picture or video backgrounds on any number of physical and virtual screens; a stage monitor; live announcements; a mixing console for the stream audio; ATEM switcher control; and one-click streaming to YouTube. Built with Electron for macOS, Windows and Linux.
 
-**Download:** installers for macOS (Apple silicon and Intel) and Windows are on the [Releases page](https://github.com/AC-Dubnica/prestreamer/releases). They are not code-signed yet, so the first start needs one extra step (see *Build, CI and releases*).
+**Download:** installers for macOS (Apple silicon and Intel), Windows and Linux (`.deb` and `.AppImage`, Intel/AMD and ARM) are on the [Releases page](https://github.com/AC-Dubnica/prestreamer/releases). They are not code-signed yet, so the first start needs one extra step (see *Build, CI and releases*).
 
 | Present | Monitor (all screens) |
 |---|---|
@@ -34,12 +34,14 @@ Run a Sunday service from one window: a run sheet of songs, Bible passages, vide
 - **App-wide backgrounds.** Settings → *Backgrounds and logo* sets one picture or looping video for **all songs** and another for **all Bible readings**. A song's or slide's own picture or video always wins; next comes the one chosen here, then the screen's own background, then its colour.
 - **Logo.** Choose a logo picture in the same place; the **Logo** button in the top bar (or the **L** key) puts it on every screen and takes it off again. It is a picture slide, so the camera-only stream does not carry it. Deleting the picture from the library clears every use of it.
 - **Announcements.** Press **A** (any tab) for a live message over every screen, with quick messages you can save and reuse. While one is on air a red button in the top bar clears it.
-- **Monitor tab.** Watch what is on the screens, larger than the Present tab can show. **One screen** fills all the room with the selected screen (in its own shape), with a strip of the others to pick from; **All screens** shows every screen at once in a grid that fits the room, like a multiviewer (click selects, double-click shows one large). Below: Previous/Next, Clear, video play/pause, Camera only (stream screen), Announce and Open/Close; the arrow keys work there too. The choice is remembered, and the previews exist only while the tab is open.
-- **Stage monitor.** A display screen for the people on stage: current slide, the **next** slide and the clock. Add it from Settings → *Stage monitor*.
+- **Resizable panels.** The side panels of the Present tab (run sheet, screens) and the Songs tab, and the screens panel of the Monitor tab, can be dragged wider or narrower by their edge (double-click resets, the arrow keys nudge); each width is remembered.
+- **Preview size.** The slider above the slides in the Present tab makes the slide previews smaller or bigger (double-click it to go back to the usual size); it is remembered.
+- **Monitor tab.** Watch what is on the screens, larger than the Present tab can show. **One screen** puts the selected screen as large as the room allows on the left (in its own shape) and, in a resizable panel on the right, the other screens to pick from, what is on air and the switcher; **All screens** shows every screen at once in a grid that fits the room, like a multiviewer (click selects, double-click shows one large). Above the picture, in one row: Previous/Next, video play/pause and Announce, with Camera only (stream screen) on the right. Each screen's own picture has **Clear** (takes the slide off that screen only; it turns into **Show** to bring it back, and the next slide shown puts everything back) and **Open/Close**; Esc still clears all screens; the arrow keys work there too. The choice is remembered, and the previews exist only while the tab is open.
+- **Stage monitor.** A display screen for the people on stage: current slide, the **next** slide and the clock. Add a display screen from Settings → Screens → *Add screen…* and set *Shows* to *Stage monitor* (you can also change an existing screen to it later with *Edit…*).
 
 **Screens**
 - **Screens.** A screen is a logical output, independent of any monitor: bind it to a physical display or make it virtual (rendered off-screen, the source of the stream). Each screen has its own look (background, font, colours, whether to show backgrounds, whether it plays video sound, lower-third caption box) and a live preview in the Present tab. The chevron on a screen card folds its preview away (the title bar and buttons stay), for screens you rarely need to watch; it is remembered per screen. Drag a screen by its ⠿ handle in the Present tab (or press ↑ ↓ on the handle) to change the order; Settings shows the same order, and moving screens there changes the Present tab.
-- **Stream mirror.** A display screen that shows exactly what the stream shows (look, size and camera-only), for a monitor in the room or the control booth.
+- **Stream mirror.** A display screen whose *Shows* is *Mirror of Stream*: it shows exactly what the stream shows (look, size and camera-only), for a monitor in the room or the control booth.
 - **LIVE badge.** A screen can show a "LIVE" badge while the stream runs, so the room knows the service is being broadcast.
 - **Settings tab.** Categories are listed down the left side: **Visuals** (app-wide backgrounds and the logo), **Screens** (add, order, bind and remove outputs, below the connected monitors and their arrangement map); the open one is remembered.
 - **Displays.** The Settings tab shows the connected displays on an arrangement map with an **Identify displays** button, and new or removed monitors and audio devices are picked up automatically.
@@ -47,11 +49,11 @@ Run a Sunday service from one window: a run sheet of songs, Bible passages, vide
 - **Remembers how it was left.** Window position, tab, service, selected screen and which screens were open come back at the next start. A full-screen output is never reopened on the main display, and a stream is never started automatically.
 
 **Streaming and audio**
-- **Streaming.** The virtual screen plus the mixer's stereo mix, encoded to H.264/AAC (resolution, frame rate, bitrate and encoder in *Stream → Settings*) and sent to YouTube over RTMP, or recorded to a file. A hardware encoder (VideoToolbox, NVENC, Quick Sync, AMF) is used when one works, with software x264 as the fallback. The stream key is stored encrypted by the OS keychain.
+- **Streaming.** The virtual screen plus the mixer's stereo mix, encoded to H.264/AAC (destination, screen and key, resolution, frame rate, bitrate and encoder, all on the *Settings → Stream* page) and sent to YouTube over RTMP, or recorded to a file. A hardware encoder (VideoToolbox, NVENC, Quick Sync, AMF) is used when one works, with software x264 as the fallback. The stream key is stored encrypted by the OS keychain.
 - **Camera only.** An icon button in the Stream header makes the stream carry just the live camera, without text, backgrounds, videos or announcements, while the room screens keep presenting.
 - **Stream health.** Bitrate against target with a two-minute graph, frame rate, dropped frames (including the share dropped in the last 60 seconds), encoding speed, data sent, and advice when something is wrong. The Stream section and the statistics collapse to a one-line summary.
-- **Mixer.** One strip per channel (a Behringer Wing exposes 48) with trim, fader, pan, mute, solo and meters, and a **chain of effects** that you build: select a strip and the signal is drawn as a chain, Input → effect → effect → … → Fader, left to right. **Add effect** puts one at the end; drag a card by its ⠿ handle (or press ← →) to change the order, the switch on a card bypasses it, ✕ removes it, and **Start from…** fills the chain with a ready-made one (*Worship vocal*, *Speaker / preacher*, *Instrument*, *Room / audience mic*). Each strip shows its chain at a glance, and compressors, limiters, gates and de-essers show how much they are turning the signal down. The **master** is selectable too and has a chain of its own (a limiter at -1 dB to start with; *Stream loudness* and *Safety limiter* presets) for effects on the whole mix. Effects: **High-pass**, **EQ** (3 bands, with a response graph you can drag), **Gate**, **Compressor** (with make-up gain and a transfer curve), **Limiter**, **De-esser** (softens harsh "s" sounds on vocals and speech), **Reverb** (for close microphones and direct feeds that sound dry on a stream) and **Delay** (a soft echo for worship). Strips can be reordered by dragging. Every change applies at once and is saved. **Undo / Redo** (the arrows in the Mixer bar, or Cmd/Ctrl+Z and Cmd/Ctrl+Shift+Z) step back and forward through the changes made since the app opened: a whole knob drag or a new effect is one step. Mixer files from before chains came along are converted when the app opens.
-- **ATEM control.** A panel on the Present tab drives an ATEM switcher over the network: program and preview buttons per input, **Cut** and **Auto**. While no switcher is found the panel is greyed out and says why. See *ATEM switcher* below.
+- **Mixer.** One strip per channel (a Behringer Wing exposes 48) with trim, fader, pan, mute, solo and meters, and a **chain of effects** that you build: select a strip and the signal is drawn as a chain, Input → effect → effect → … → Fader, left to right. **Add effect** puts one at the end; drag a card by its ⠿ handle (or press ← →) to change the order, the switch on a card bypasses it, ✕ removes it, and **Start from…** fills the chain with a ready-made one (*Worship vocal*, *Speaker / preacher*, *Instrument*, *Room / audience mic*). Each strip shows its chain at a glance as a column of small labels beside its meter, and compressors, limiters, gates and de-essers show how much they are turning the signal down. The **master** looks like a channel strip (without the move, number, remove, mute, solo and pan controls), is selectable too and has a chain of its own (a limiter at -1 dB and a Sync delay at 0 ms to start with; *Stream loudness* and *Safety limiter* presets) for effects on the whole mix. Effects: **High-pass**, **EQ** (3 bands, with a response graph you can drag), **Gate**, **Compressor** (with make-up gain and a transfer curve), **Limiter**, **De-esser** (softens harsh "s" sounds on vocals and speech), **Reverb** (for close microphones and direct feeds that sound dry on a stream) and **Delay** (a soft echo for worship) and **Sync delay** (holds the signal back by a fixed time with nothing added: on the master it lines the sound up with the picture, which the camera and encoding delay; on a channel it lines that channel up with the others). Strips can be reordered by dragging. Every change applies at once and is saved. The page is two panels. **Stream** holds every channel, then the master (with its chain) and, beside it, the **Monitor**: a copy of the stream mix played on an output of your choice, such as headphones. **Audience**, a panel of its own, is laid out like the master and shows where the sound of the videos goes for the room: which screen plays it, its output device, a fader, mute and a meter. The monitor plays a copy of the stream mix on an output of your choice, such as headphones, apart from what plays to the room; see *Three sounds* below. **Undo / Redo** (the arrows in the Mixer bar, or Cmd/Ctrl+Z and Cmd/Ctrl+Shift+Z) step back and forward through the changes made since the app opened: a whole knob drag or a new effect is one step. Mixer files from before chains came along are converted when the app opens.
+- **ATEM control.** While a switcher is connected, a panel on the Present tab (right under the screens, above the Stream section) and the same controls under the picture on the Monitor tab drive an ATEM switcher over the network: program and preview buttons per input, **Cut** and **Auto** (Settings → ATEM can hide the Preview row, Cut and Auto, and shows the switcher's address). Without a switcher nothing ATEM-related is shown at all; the address, the connection status and which buttons to show are in Settings → ATEM. See *ATEM switcher* below.
 
 ## Getting started
 
@@ -73,9 +75,9 @@ First steps: **Present** tab → pick or create a service → add songs (♪ ico
 Open the **Settings** tab to set up outputs.
 
 - **Display screen.** Shown full-screen on the display you pick (or in a window while none is chosen). Use *Identify displays* to see which monitor is which. If you bind a screen to the display your operator window is on, the live screen covers the controls; the page warns you.
-- **Virtual screen.** Rendered inside PreStreamer at a size you choose (1080p, 720p, 4K, vertical, or custom). It is not a monitor: it does not appear in macOS or Windows display settings. It is what the stream picks up, and where text over a camera is composed. A real extra monitor without hardware needs an OS-level virtual display tool or an HDMI dummy plug; PreStreamer cannot create one.
-- **Stage monitor and Stream mirror** are one-click additions in Settings (see *Features*).
-- Colours, fonts, backgrounds, the video source and the caption layout are set per screen with the gear button on its card in the Present tab.
+- **Virtual screen.** Rendered inside PreStreamer at a size you choose (1080p, 720p, 4K, vertical, or custom). It is not a monitor: it does not appear in the operating system's display settings. It is what the stream picks up, and where text over a camera is composed. A real extra monitor without hardware needs an OS-level virtual display tool or an HDMI dummy plug; PreStreamer cannot create one.
+- **Adding and changing screens.** *Add screen…* opens one dialog: a name, the type (display or virtual; fixed once added), and then for a display screen *Shows* (slides in its own look, stage monitor, or a mirror of another screen), the display and video sound, or for a virtual screen the resolution. Each screen's card has *Edit…* (the same dialog; changes wait for *Apply*), *Look…* (colours, fonts, backgrounds, text layout, video source: the same as the ⚙ in the Present tab), Open/Close, the order arrows and Remove. A virtual screen's size cannot change while a stream is running.
+- Colours, fonts, backgrounds, the video source and the caption layout are set per screen with the gear button on its card in the Present tab. Changes show in the popup's preview only: **Apply** puts them on the screen, **Cancel** (or Esc) throws them away.
 
 ### Text over camera (captions, "alpha")
 
@@ -92,22 +94,32 @@ This is real compositing (the text box is semi-transparent over the live picture
 An ATEM Mini attached over **USB** appears to the computer as a webcam, so it is just another camera source (*Video source* above). That USB port cannot carry control. To switch inputs from PreStreamer, connect the ATEM to the same network over **Ethernet**:
 
 1. Find its IP address in ATEM Software Control (or set one there). A factory-fresh ATEM answers on `192.168.10.240`, which is what PreStreamer tries first.
-2. In the **ATEM** section of the Present tab press the gear and enter the address. It is remembered.
-3. The panel lights up when the switcher answers: its model, one **Program** row and one **Preview** row of buttons for the inputs (labels as set on the switcher), and **Cut** / **Auto**. Red is on air, green is on preview, and the buttons follow changes made on the switcher itself. The first mix effect is controlled.
+2. Open **Settings → ATEM**, press *Change…* and enter the address. It is remembered. Nothing ATEM-related is shown anywhere else until the switcher answers.
+3. The panel appears when the switcher answers: its model, one **Program** row and one **Preview** row of buttons for the inputs (labels as set on the switcher), and **Cut** / **Auto**. Red is on air, green is on preview, and the buttons follow changes made on the switcher itself. The first mix effect is controlled.
 
-If no switcher is found, or the cable is unplugged, the whole panel is greyed out with "No ATEM found at …" and keeps looking every few seconds. *Not tested with real hardware; see below.*
+If no switcher is found, or the cable is unplugged, the ATEM panels disappear (Settings → ATEM says "No ATEM found at …") and PreStreamer keeps looking every few seconds. *Not tested with real hardware; see below.*
 
 ### Streaming to YouTube
 
 1. In YouTube Studio create a **reusable RTMP stream key** (resolution *Variable* or 1080p30) and enable **auto-start** on the broadcast bound to it, otherwise the stream connects but does not go live.
-2. Stream section → target *YouTube (RTMP)* → paste the key once → *Start streaming*. It is remembered (encrypted); *Forget saved key* removes it.
+2. **Settings → Stream** → *Destination*: *Send to* = *Stream to YouTube*, pick the screen if you have more than one virtual screen, and paste the key once. It is remembered (encrypted); *Forget saved key* removes it. Then press *Start streaming* in the Stream section, which says which screen goes where. *Record to a file on this computer* needs no key: it writes a `.mkv` named with the date and time into your Videos folder.
 3. Try it with a private or unlisted broadcast first. Never share or commit a stream key: if one has been pasted somewhere it should not be, reset it in YouTube Studio.
 
 ### Stream audio from a mixer (Behringer Wing)
 
-The Wing's USB interface is 48 in / 48 out at 48 kHz and appears to the computer as one multichannel audio device. Route the bus you want on the stream (for example your STREAM bus) to USB outputs 1-2 on the console, then open the **Mixer** tab and pick the device for the strips. The panel shows how many channels the system actually delivered. On Windows the manufacturer's ASIO/USB driver is probably required. *This path has not been tested with real hardware; see below.*
+The Wing's USB interface is 48 in / 48 out at 48 kHz and appears to the computer as one multichannel audio device. Route the bus you want on the stream (for example your STREAM bus) to USB outputs 1-2 on the console, then open the **Mixer** tab and pick the device for the strips. The panel shows how many channels the system actually delivered. On Windows the manufacturer's ASIO/USB driver is probably required; on Linux the interface shows up through PipeWire or PulseAudio (class-compliant USB audio needs no driver). *This path has not been tested with real hardware; see below.*
 
 Use *Multichannel test tones* as a source to try the mixer without any hardware.
+
+### Three sounds: the room, the stream, and your headphones
+
+PreStreamer keeps these apart, and each has its own output:
+
+1. **Sound for the room (the video's own sound).** The **Audience** panel in the Mixer tab sets it: which screen plays it (only one does; "Nobody" turns it off), the **output device** that feeds your PA or room speakers, a **fader** (it can only turn the sound down), **mute**, and a **meter** showing the level going out. It plays from that screen's own window, so it stays in step with the picture, and it never passes through the mixer. (These are settings of that screen, the same as *Video sound* and *Output* in its ⚙ dialog and in Settings.)
+2. **Sound for the stream.** The mixer's master mix goes to the encoder; nothing plays it out loud. The video's sound reaches the stream through the mixer's *Video L / R* strips (mute them if your room mixer already sends the video's sound back to this computer).
+3. **Your monitor.** In the Mixer tab, the **Monitor** beside the master (in the Stream panel) plays a copy of the stream mix on the output you pick (headphones, a monitor speaker, a second USB interface), with its own level. Switch it on and you hear what the stream carries, any sync delay on the master included. It never changes what the stream carries.
+
+The monitor must not play where a microphone can hear it (the room output, or speakers next to an open mic), or the sound feeds back. A device plays its first stereo pair; to reach other channels of a multichannel interface, use that interface's own routing. If the chosen device is unplugged the box says so and the stream is not affected.
 
 ## How it works
 
@@ -170,7 +182,18 @@ Each script launches the real app against a scratch data folder (`PRESTREAMER_US
 | `e2e:monitor` | The Monitor tab: big preview that fills the room, One screen / All screens, slide controls, picking a screen, open/close, camera only |
 | `e2e:appearance` | App-wide song and scripture backgrounds, the logo and the Logo button/key, deleting a library picture clears them |
 | `e2e:songeditor` | The song editor: a card per slide, a picture for one slide saved with the song only on Save, song details kept, pictures of removed slides dropped |
-| `e2e:atem` | The ATEM panel with no switcher: greyed out, nothing pressable, address dialog |
+| `e2e:atem` | ATEM without a switcher: no ATEM section anywhere, Settings → ATEM (status, address dialog, button choices) |
+
+### Platforms
+
+| | macOS | Windows | Linux |
+|---|---|---|---|
+| Installer | `.dmg`, `.zip` (arm64, Intel) | `.exe` (NSIS), portable `.zip` | `.deb` (Ubuntu, Debian and relatives), `.AppImage` (any distribution), x64 and arm64 |
+| Hardware encoder (*Auto* tries it, then falls back to software x264) | VideoToolbox | NVENC, Quick Sync, AMF | NVENC (VAAPI is not used) |
+| Presentations other than `.pptx` and PDF | Keynote, PowerPoint, LibreOffice | PowerPoint, LibreOffice | LibreOffice |
+| Quelea Bible auto-import | `/Applications/Quelea.app` and the home folder | Program Files and the home folder | `/opt/quelea`, `/usr/share/quelea` and the home folder |
+
+Linux notes. The `.AppImage` needs FUSE 2 (`libfuse2t64` on Ubuntu 22.04 and later); it starts without the Chromium sandbox because an AppImage cannot carry a root-owned sandbox helper, while the `.deb` keeps it. Output windows have to be placed on a particular display, which a Wayland client may not do, so under a Wayland session the app runs through XWayland (`PRESTREAMER_NATIVE_WAYLAND=1` turns that off). Windows and Linux builds have no menu bar. Development needs `ffmpeg`/`ffprobe` on PATH on every platform.
 
 ### What is tested, and what is not
 
@@ -185,8 +208,8 @@ Each script launches the real app against a scratch data folder (`PRESTREAMER_US
 | ATEM control | unit (model and controller against a fake switcher), e2e (no-switcher state) | **a real ATEM** |
 | Behringer Wing capture (48 ch) | mixer verified on synthetic channels | **no hardware** |
 | Hardware encoding | | VideoToolbox verified on macOS; NVENC / Quick Sync / AMF untested |
-| **Windows** | unit tests in CI, installer builds | **running the app**: everything else |
-| Installers | built in CI for macOS (arm64, Intel) and Windows; the Apple silicon build was run | the Intel and Windows builds, signed/notarised builds |
+| **Windows and Linux** | unit tests in CI, installer builds (Linux packaging was checked on a Mac; the Linux and Windows end-to-end jobs have never been seen passing) | **running the app**: everything else |
+| Installers | built in CI for macOS (arm64, Intel), Windows and Linux (x64, arm64); the Apple silicon build was run | the Intel, Windows and Linux builds, signed/notarised builds |
 | Stream-key encryption | | needs a real OS keychain prompt |
 
 Known measured behaviour: audio lags the picture by roughly 150 ms and drifts by a few milliseconds per 20 s (audio clock versus system clock) in the synthetic flash-and-beep test; a video-delay control and drift correction are not built yet.
@@ -198,7 +221,7 @@ npm run package        # installers for the current OS into release/
 npm run package:dir    # unpacked app, faster, for checking
 ```
 
-- **`.github/workflows/ci.yml`** (every push and pull request): typecheck, unit tests on macOS and Windows, end-to-end tests (reported but non-blocking until proven stable on hosted runners, which may lack a display or audio stack), installers uploaded as build artifacts.
+- **`.github/workflows/ci.yml`** (every push and pull request): typecheck, unit tests on macOS, Windows and Linux, end-to-end tests (reported but non-blocking until proven stable on hosted runners, which may lack a display or audio stack), installers uploaded as build artifacts.
 - **`.github/workflows/release.yml`**: builds the installers and attaches them to a GitHub release. To release:
 
   ```bash
@@ -206,7 +229,7 @@ npm run package:dir    # unpacked app, faster, for checking
   git push --follow-tags     # the pushed tag starts the workflow
   ```
 
-  It builds macOS for Apple silicon (`*-mac-arm64`) and for Intel (`*-mac-x64`), and Windows x64 (`*-win-x64` installer and portable zip), each on a runner of its own kind because ffmpeg is bundled per architecture. It stops if the tag does not match the version in `package.json`. A tag with a dash (`v0.3.0-beta.1`) is marked as a pre-release. **Run workflow** in the Actions tab does a trial build with the installers as downloadable artifacts and publishes nothing.
+  It builds macOS for Apple silicon (`*-mac-arm64`) and for Intel (`*-mac-x64`), Windows x64 (`*-win-x64` installer and portable zip) and Linux x64 and arm64 (`*-linux-x64` / `*-linux-arm64`, a `.deb` and an `.AppImage` each), each on a runner of its own kind because ffmpeg is bundled per architecture. It stops if the tag does not match the version in `package.json`. A tag with a dash (`v0.3.0-beta.1`) is marked as a pre-release. **Run workflow** in the Actions tab does a trial build with the installers as downloadable artifacts and publishes nothing.
 - Installers bundle `ffmpeg` and `ffprobe` (`ffmpeg-static`, `ffprobe-static`), pruned to the target platform. **Licensing:** the bundled ffmpeg includes GPL components (libx264); if you distribute installers, check the licence files of those packages and your obligations. The `.pptx` renderer (`pptx-preview`) is a closed-source freely licensed package; check its terms before redistributing.
 - **Builds are unsigned.** On macOS open the `.dmg`, drag PreStreamer to Applications, then right-click the app and choose **Open** once (or run `xattr -cr /Applications/PreStreamer.app`). On Windows SmartScreen shows a warning: choose **More info**, then **Run anyway**. Signing needs an Apple Developer ID and a Windows certificate, configured in `package.json` → `build`. On a managed machine the warning may block the app entirely.
 

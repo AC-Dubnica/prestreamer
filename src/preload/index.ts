@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { Announcement, AnnounceRequest, QuickMessage } from '../shared/announce'
 import type { Appearance } from '../shared/appearance'
-import type { AtemCommand, AtemStatus } from '../shared/atem'
+import type { AtemButtons, AtemCommand, AtemStatus } from '../shared/atem'
 import type { MixerConfig } from '../shared/mixer'
 import type { StreamSettings } from '../shared/stream-settings'
 import type { BibleImportResult, BibleSummary, BibleVerse } from '../shared/bible'
@@ -39,6 +39,7 @@ const api = {
   removeScreen: (id: string) => ipcRenderer.invoke(IPC.removeScreen, id),
   setLive: (id: string, live: boolean) => ipcRenderer.invoke(IPC.setLive, id, live),
   showSlide: (slide: Slide | null) => ipcRenderer.invoke(IPC.showSlide, slide),
+  clearScreen: (id: string, blank: boolean) => ipcRenderer.invoke(IPC.clearScreen, id, blank),
   outputInit: (id: string): Promise<OutputPayload | null> => ipcRenderer.invoke(IPC.outputInit, id),
   onOutputUpdate: (cb: (p: OutputPayload) => void) => {
     ipcRenderer.on(IPC.outputUpdate, (_e, p: OutputPayload) => cb(p))
@@ -81,12 +82,14 @@ const api = {
   },
   atemSetAddress: (address: string): Promise<AtemStatus> => ipcRenderer.invoke(IPC.atemSetAddress, address),
   atemSend: (cmd: AtemCommand): Promise<boolean> => ipcRenderer.invoke(IPC.atemSend, cmd),
+  atemSetButtons: (patch: Partial<AtemButtons>): Promise<AtemStatus> => ipcRenderer.invoke(IPC.atemSetButtons, patch),
   mediaRemove: (file: string): Promise<boolean> => ipcRenderer.invoke(IPC.mediaRemove, file),
   picturesImport: (): Promise<{ title: string; slides: string[] } | null> => ipcRenderer.invoke(IPC.picturesImport),
   mediaList: (): Promise<import('../shared/types').MediaEntry[]> => ipcRenderer.invoke(IPC.mediaList),
   mediaImport: (kind: MediaKind) => ipcRenderer.invoke(IPC.mediaImport, kind) as Promise<import('../shared/types').Background | null>,
   streamKeySaved: (): Promise<boolean> => ipcRenderer.invoke(IPC.streamKeyState),
   streamKeyForget: (): Promise<void> => ipcRenderer.invoke(IPC.streamKeyForget),
+  streamKeySet: (key: string): Promise<void> => ipcRenderer.invoke(IPC.streamKeySet, key),
   audioConfigure: (cfg: AudioConfig): Promise<AudioStatus> => ipcRenderer.invoke(AUDIO_IPC.configure, cfg),
   audioGetStatus: (): Promise<AudioStatus> => ipcRenderer.invoke(AUDIO_IPC.getStatus),
   audioMixerGet: (): Promise<MixerConfig> => ipcRenderer.invoke(AUDIO_IPC.mixerGet),

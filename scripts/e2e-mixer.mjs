@@ -66,6 +66,8 @@ const checks = [
   ['the de-esser lowers a 1760 Hz tone above its threshold', L('deesser', 1760) < L('ch3-baseline', 1760) - 5, fmt(L('deesser', 1760) - L('ch3-baseline', 1760))],
   ['a delay with no feedback and an echo as loud as the voice adds 6 dB when the two line up', Math.abs(L('delay-in-phase', 440) - (base + 6)) < 1.5, fmt(L('delay-in-phase', 440) - base)],
   ['reverb passes the signal on (neither silent nor wildly louder)', L('reverb', 440) > base - 20 && L('reverb', 440) < base + 12, fmt(L('reverb', 440) - base)],
+  ['switching the monitor output on leaves the stream mix as it was (the monitor is a copy of it)', Math.abs(L('monitor-on', 440) - base) < 1, fmt(L('monitor-on', 440) - base)],
+  ['a sync delay passes the signal on at the same level (it only holds it back)', Math.abs(L('syncdelay', 440) - base) < 1, fmt(L('syncdelay', 440) - base)],
   ['a limiter in the MASTER chain holds the whole mix near its -20 dB ceiling', L('master-limiter', 440) < base - 6 && L('master-limiter', 440) > -30, fmt(L('master-limiter', 440))],
   ['high-pass at 500 Hz cuts a 220 Hz tone', L('ch0-hpf500', 220) < L('ch0-baseline', 220) - 8, fmt(L('ch0-hpf500', 220) - L('ch0-baseline', 220))],
 ]

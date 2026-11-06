@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { randomUUID as uuid } from 'node:crypto'
 import type { Announcement, AnnounceRequest } from '../shared/announce'
 import { moveBefore } from '../shared/curves'
-import { moveById, sanitizeScreens } from '../shared/screens'
+import { STAGE_LOOK, clampSize, isBlank, moveById, sanitizeScreens } from '../shared/screens'
 import type { ListStore } from './store'
 import {
   IPC,
@@ -39,6 +39,11 @@ export class ScreenManager {
   /** Paint rate of virtual screens: the stream's frame rate. */
   private virtualFps = 30
   private announceTimer: NodeJS.Timeout | null = null
+  /** Screens cleared on their own; any slide shown on all screens ends that. */
+  private blank = new Set<string>()
+  private reconcileTimer: NodeJS.Timeout | null = null
+  /** The display each open display-screen window was placed on (null: the windowed stand-in). */
+  private placedOn = new Map<string, number | null>()
 
   constructor(
     private readonly onChange: (state: ScreenState) => void,
@@ -47,9 +52,14 @@ export class ScreenManager {
   ) {
     for (const cfg of sanitizeScreens(store.load())) this.screens.set(cfg.id, cfg)
     this.rebindDisplays()
-    electronScreen.on('display-added', () => this.reconcile())
-    electronScreen.on('display-removed', () => this.reconcile())
-    electronScreen.on('display-metrics-changed', () => this.reconcile())
+    // macOS reports metrics changes in bursts (and again whenever a window changes the menu bar or Dock), so settle first.
+    const settle = () => {
+      if (this.reconcileTimer) clearTimeout(this.reconcileTimer)
+      this.reconcileTimer = setTimeout(() => { this.reconcileTimer = null; this.reconcile() }, 400)
+    }
+    electronScreen.on('display-added', settle)
+    electronScreen.on('display-removed', settle)
+    electronScreen.on('display-metrics-changed', settle)
   }
 
   getState(): ScreenState {
@@ -58,6 +68,7 @@ export class ScreenManager {
       displays: electronScreen.getAllDisplays().map(toDisplayInfo),
       live: [...this.windows.keys()],
       slide: this.slide,
+      blank: [...this.blank],
       announcement: this.announcement,
       cameraOnly: this.cameraOnly,
       next: this.next,
@@ -70,8 +81,7 @@ export class ScreenManager {
       name,
       kind: 'virtual',
       displayId: null,
-      width,
-      height,
+      ...clampSize(width, height),
       look: { ...defaultLook },
     }
     this.screens.set(cfg.id, cfg)
@@ -91,7 +101,7 @@ export class ScreenManager {
       width: 1920,
       height: 1080,
       ...(mirror ? { mirrorOf: mirror } : {}),
-      look: stage ? { ...defaultLook, layout: 'stage', background: '#000', showMedia: false, showLabel: true, fontSize: 80 } : { ...defaultLook },
+      look: stage ? { ...defaultLook, ...STAGE_LOOK } : { ...defaultLook },
     }
     this.screens.set(cfg.id, cfg)
     this.persist()
@@ -121,6 +131,7 @@ export class ScreenManager {
     const cur = this.screens.get(id)
     if (!cur) return
     const next: ScreenConfig = { ...cur, ...patch, look: { ...cur.look, ...patch.look } }
+    if ('width' in patch || 'height' in patch) Object.assign(next, clampSize(next.width, next.height))
     if ('mirrorOf' in patch) {
       // '' or undefined stops mirroring. Only a display screen can mirror, and only a screen that is not a mirror itself,
       // and a screen that others mirror cannot become a mirror.
@@ -177,8 +188,18 @@ export class ScreenManager {
     this.emit()
   }
 
+  /** Takes the slide off one screen (or lets it come back) without touching the others. */
+  setBlank(id: string, blank: boolean): void {
+    if (!this.screens.has(id) || this.blank.has(id) === blank) return
+    if (blank) this.blank.add(id)
+    else this.blank.delete(id)
+    for (const wid of this.windows.keys()) this.push(wid) // mirrors of it change too
+    this.emit()
+  }
+
   remove(id: string): void {
     this.close(id)
+    this.blank.delete(id)
     this.screens.delete(id)
     // Whatever mirrored it becomes an ordinary screen again.
     for (const cfg of this.screens.values()) if (cfg.mirrorOf === id) delete cfg.mirrorOf
@@ -194,6 +215,7 @@ export class ScreenManager {
 
   showSlide(slide: Slide | null): void {
     this.slide = slide
+    this.blank.clear()
     for (const id of this.windows.keys()) this.push(id)
     this.emit()
   }
@@ -253,7 +275,7 @@ export class ScreenManager {
     // A mirror gets the look, size and announcement targeting of the screen it follows, but never plays that screen's sound twice.
     const source = own?.mirrorOf ? this.screens.get(own.mirrorOf) : undefined
     const screen = source ? { ...source, look: { ...source.look, videoAudio: false } } : own
-    return screen ? { screen, slide: this.slide, playback: this.playback, announcement: this.announcement, streamLive: this.streamLive, cameraOnly: this.cameraOnly && screen.kind === 'virtual', next: this.next } : null
+    return screen ? { screen, slide: isBlank([...this.screens.values()], [...this.blank], id) ? null : this.slide, playback: this.playback, announcement: this.announcement, streamLive: this.streamLive, cameraOnly: this.cameraOnly && screen.kind === 'virtual', next: this.next } : null
   }
 
   private open(id: string): void {
@@ -288,14 +310,14 @@ export class ScreenManager {
       const bounds = display?.bounds
       win = new BrowserWindow({
         ...(bounds
-          ? { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height, fullscreen: false, frame: false }
+          ? { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height, fullscreen: false, frame: false, enableLargerThanScreen: true }
           : { width: 960, height: 540, frame: true, title: `${cfg.name} (no display bound)` }),
         backgroundColor: '#000000',
         webPreferences,
       })
-      if (display && display.id !== electronScreen.getPrimaryDisplay().id) {
-        win.setAlwaysOnTop(true, 'screen-saver')
-      }
+      // 'screen-saver' is above the menu bar and Dock, so the picture covers the whole display (primary one too).
+      if (display) win.setAlwaysOnTop(true, 'screen-saver')
+      this.placedOn.set(id, display?.id ?? null)
     }
 
     win.on('closed', () => {
@@ -309,6 +331,7 @@ export class ScreenManager {
   private close(id: string): void {
     const win = this.windows.get(id)
     this.windows.delete(id)
+    this.placedOn.delete(id)
     this.lastFrames.delete(id)
     if (win && !win.isDestroyed()) win.destroy()
   }
@@ -385,9 +408,18 @@ export class ScreenManager {
   private reconcile(): void {
     this.rebindDisplays()
     for (const cfg of this.screens.values()) {
-      if (cfg.kind === 'display' && this.windows.has(cfg.id)) {
+      const win = this.windows.get(cfg.id)
+      if (cfg.kind !== 'display' || !win || win.isDestroyed()) continue
+      const display = this.resolveDisplay(cfg.displayId)
+      if ((display?.id ?? null) !== this.placedOn.get(cfg.id)) {
+        // It moved to another display, or its display came or went: start over there.
         this.close(cfg.id)
         this.open(cfg.id)
+      } else if (display) {
+        // Same display: only fix the size if it really changed; recreating the window would make it flicker.
+        const b = win.getBounds()
+        const d = display.bounds
+        if (b.x !== d.x || b.y !== d.y || b.width !== d.width || b.height !== d.height) win.setBounds(d)
       }
     }
     this.emit()

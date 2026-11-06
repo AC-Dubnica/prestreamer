@@ -6,7 +6,7 @@ describe('sanitizeStreamSettings', () => {
     for (const bad of [null, undefined, 5, 'x', [], {}]) expect(sanitizeStreamSettings(bad)).toEqual(defaultStreamSettings)
   })
   it('keeps valid settings', () => {
-    const s = { width: 1280, height: 720, fps: 60, videoKbps: 5000, audioKbps: 192, keyframeSec: 3, encoder: 'libx264', preset: 'fast' }
+    const s = { mode: 'file', screenId: 'cam', width: 1280, height: 720, fps: 60, videoKbps: 5000, audioKbps: 192, keyframeSec: 3, encoder: 'libx264', preset: 'fast' }
     expect(sanitizeStreamSettings(s)).toEqual(s)
   })
   it('only accepts known picture sizes (width and height together)', () => {
@@ -66,5 +66,16 @@ describe('recommendations', () => {
     expect(settingsWarnings({ ...base, videoKbps: 15000 })[0]).toMatch(/Above/)
     expect(settingsWarnings({ ...base, fps: 60, videoKbps: 6000, preset: 'medium' }).some((w) => /heavy/.test(w))).toBe(true)
     expect(settingsWarnings({ ...base, fps: 60, videoKbps: 6000, preset: 'veryfast' })).toEqual([])
+  })
+})
+
+describe('stream destination', () => {
+  it('goes to YouTube from the first virtual screen unless told otherwise', () => {
+    expect(defaultStreamSettings).toMatchObject({ mode: 'youtube', screenId: '' })
+  })
+
+  it('keeps a valid mode and screen, and repairs anything else', () => {
+    expect(sanitizeStreamSettings({ mode: 'file', screenId: 'abc' })).toMatchObject({ mode: 'file', screenId: 'abc' })
+    expect(sanitizeStreamSettings({ mode: 'rtmp', screenId: 42 })).toMatchObject({ mode: 'youtube', screenId: '' })
   })
 })

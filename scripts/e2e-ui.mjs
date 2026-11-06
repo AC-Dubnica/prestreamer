@@ -87,9 +87,11 @@ const scenario = `(async () => {
   const size = qa('input[type=number]', modal())[0]
   size.value = '52'; size.dispatchEvent(new Event('change', { bubbles: true })); await w(400)
   st = (await screens()).find((s) => s.id === 'stream')
+  r.fontWaitsForApply = st.look.fontSize !== 52
+  button('Apply', modal()).click(); await w(400)
+  st = (await screens()).find((s) => s.id === 'stream')
   r.streamAfterFont = [st.look.layout, st.look.fontSize]
   r.audienceUntouched = (await screens()).find((s) => s.id === 'audience').look.layout === before2.find((s) => s.id === 'audience').look.layout
-  button('Done', modal()).click(); await w(200)
   r.doneClosesDialog = !modal()
 
   q('button[title^="Settings for Audience"]', card('Audience')).click(); await w(300)
@@ -161,7 +163,8 @@ const checks = [
   ['changing the layout changes that screen (lower third with a text box)', r.streamLayout?.[0] === 'lower-third' && r.streamLayout?.[1] > 0, JSON.stringify(r.streamLayout)],
   ['a second change does not undo the first (no stale overwrite)', r.streamAfterFont?.[0] === 'lower-third' && r.streamAfterFont?.[1] === 52, JSON.stringify(r.streamAfterFont)],
   ['editing one screen leaves the others alone', r.audienceUntouched === true && r.streamBackgroundUntouched === true && r.audienceBackgroundChanged === true, ''],
-  ['Done closes the popup', r.doneClosesDialog === true, ''],
+  ['Changes wait for Apply', r.fontWaitsForApply === true, ''],
+  ['Apply closes the popup', r.doneClosesDialog === true, ''],
   ['clicking anywhere on a screen card selects it', r.cardClickSelects === true && r.cardClickMovesSelection === true, ''],
   ['the header buttons say what they do', JSON.stringify(r.headerLabels) === JSON.stringify(['Announce', 'Clear slide', 'Open all screens', 'Close all screens']), JSON.stringify(r.headerLabels)],
   ['the header buttons have space between them', r.headerGaps?.length === 3 && r.headerGaps.every((g) => g >= 8), JSON.stringify(r.headerGaps)],

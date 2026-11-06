@@ -263,6 +263,10 @@ const MIXER_SEGMENTS: { name: string; channels: (number | { channel: number; sou
   // 227.27 ms is exactly 100 periods of 440 Hz: with no feedback and the echo as loud as the voice, the two add up in phase (+6 dB).
   { name: 'delay-in-phase', channels: [1], apply: (m) => { m.strips[0].chain.push(makeEffect('delay', { timeMs: 227.27, feedback: 0, toneHz: 12000, mix: 1 })) } },
   { name: 'reverb', channels: [1], apply: (m) => { m.strips[0].chain.push(makeEffect('reverb', { decaySec: 1, dampingHz: 8000, preDelayMs: 0, mix: 1 })) } },
+  // The monitor output is a copy of the mix: switching it on (here at -60 dB, so it cannot be heard) must not change the mix.
+  { name: 'monitor-on', channels: [1], apply: (m) => { m.monitor = { on: true, deviceId: '', label: '', gainDb: -60 } } },
+  // A sync delay holds the signal back by a fixed time and changes nothing else.
+  { name: 'syncdelay', channels: [1], apply: (m) => { m.strips[0].chain.push(makeEffect('syncdelay', { timeMs: 500 })) } },
   // The master has a chain of its own: a limiter there holds the whole mix.
   { name: 'master-limiter', channels: [1], apply: (m) => { m.masterChain = [makeEffect('limiter', { ceilingDb: -20 })] } },
 ]

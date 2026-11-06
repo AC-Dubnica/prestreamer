@@ -1,4 +1,4 @@
-import { atemAddress, canSend, idleAtem, sanitizeAtemSettings, switchableInputs, type AtemCommand, type AtemSettings, type AtemStatus } from '../shared/atem'
+import { atemAddress, canSend, idleAtem, sanitizeAtemButtons, sanitizeAtemSettings, switchableInputs, type AtemButtons, type AtemCommand, type AtemSettings, type AtemStatus } from '../shared/atem'
 
 /** The few parts of atem-connection's `Atem` that are used, so a fake can stand in for it in tests. */
 export interface AtemClient {
@@ -39,7 +39,20 @@ export class AtemController {
     initial: AtemSettings,
   ) {
     this.settings = sanitizeAtemSettings(initial)
-    this.status = { ...idleAtem, address: atemAddress(this.settings), message: this.searching() }
+    this.status = this.idle()
+  }
+
+  /** The status of a switcher that is not there, keeping what the operator chose to show. */
+  private idle(): AtemStatus {
+    return { ...idleAtem, address: atemAddress(this.settings), buttons: this.settings.buttons, message: this.searching() }
+  }
+
+  /** Shows or hides switching controls, and remembers it. */
+  setButtons(patch: Partial<AtemButtons>): AtemStatus {
+    const buttons = sanitizeAtemButtons({ ...this.settings.buttons, ...patch })
+    this.settings = { ...this.settings, buttons }
+    this.saveSettings(this.settings)
+    return this.update({ buttons })
   }
 
   getStatus(): AtemStatus { return this.status }
@@ -60,13 +73,14 @@ export class AtemController {
   /** Changes the address (empty = factory default), remembers it and reconnects. */
   async setAddress(raw: unknown): Promise<AtemStatus> {
     const text = typeof raw === 'string' ? raw.trim() : ''
-    const next = text === '' ? { address: '' } : sanitizeAtemSettings({ address: text })
-    if (text !== '' && next.address === '') return this.update({ message: `"${text}" is not an IP address or host name` })
+    const parsed = text === '' ? { address: '' } : sanitizeAtemSettings({ address: text })
+    if (text !== '' && parsed.address === '') return this.update({ message: `"${text}" is not an IP address or host name` })
+    const next: AtemSettings = { address: parsed.address, buttons: this.settings.buttons }
     this.settings = next
     this.saveSettings(next)
     this.clearTimer()
     await this.close()
-    this.update({ ...idleAtem, address: atemAddress(next), message: this.searching() })
+    this.update(this.idle())
     if (!this.stopped) void this.open()
     return this.status
   }
@@ -115,7 +129,7 @@ export class AtemController {
     }
     this.client = c
     c.on('connected', () => { if (this.client === c) { this.clearTimer(); this.refresh(c) } })
-    c.on('disconnected', () => { if (this.client === c) { this.update({ ...idleAtem, address: atemAddress(this.settings), message: this.searching() }); this.scheduleRetry() } })
+    c.on('disconnected', () => { if (this.client === c) { this.update(this.idle()); this.scheduleRetry() } })
     c.on('stateChanged', () => { if (this.client === c) this.refresh(c) })
     c.on('error', () => { /* a silent switcher is just "not found"; the retry timer handles it */ })
     try {

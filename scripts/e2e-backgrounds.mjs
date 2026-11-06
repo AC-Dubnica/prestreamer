@@ -37,31 +37,33 @@ const scenario = `(async () => {
   btn('Picture or video…', modal()).click(); await w(500)
   r.emptyPicker = !!modal()?.classList.contains('bgpicker') && /Nothing imported yet/.test(modal().textContent)
   btn('Import picture…', modal()).click(); await w(800)
+  r.importWaits = (await streamLook()).backgroundMedia === null
+  const back = !!modal() && /screen settings/.test(modal().textContent), thumb = !!q('.bgcur img', modal())
+  btn('Apply', modal()).click(); await w(400)
   const look1 = await streamLook()
-  r.imported = { kind: look1.backgroundMedia?.kind, back: !!modal() && /screen settings/.test(modal().textContent), thumb: !!q('.bgcur img', modal()) }
+  r.imported = { kind: look1.backgroundMedia?.kind, back, thumb }
   r.cardShows = !!q('img[src^="media://"]', card())
-  btn('Done', modal()).click(); await w(300)
   const list1 = await prestreamer.mediaList()
   r.library1 = list1.length
 
   // remove it, then choose it again from the library: nothing is imported twice
   await openDialog()
   btn('Remove', modal()).click(); await w(400)
+  btn('Apply', modal()).click(); await w(400)
   r.removed = (await streamLook()).backgroundMedia === null
-  btn('Done', modal()).click(); await w(300)
   await openDialog()
   btn('Picture or video…', modal()).click(); await w(500)
   r.pickerCards = qa('.mcard', modal()).length
   q('.mcard', modal()).click(); await w(800)
+  btn('Apply', modal()).click(); await w(400)
   r.reused = { same: (await streamLook()).backgroundMedia?.file === list1[0].file, library: (await prestreamer.mediaList()).length }
-  btn('Done', modal()).click(); await w(300)
 
   // "No picture or video" in the picker clears it
   await openDialog()
   btn('Picture or video…', modal()).click(); await w(500)
   btn('No picture or video', modal()).click(); await w(800)
+  btn('Apply', modal()).click(); await w(400)
   r.cleared = (await streamLook()).backgroundMedia === null
-  btn('Done', modal()).click(); await w(300)
 
   // the song editor uses the same picker; a song's own picture shows in its preview
   qa('#tabs button').find((b) => b.textContent.trim() === 'Songs').click(); await w(600)

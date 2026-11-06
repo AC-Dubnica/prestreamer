@@ -22,7 +22,7 @@ const scenario = `(async () => {
   const button = (text) => qa('#view-mixer button').find((b) => b.textContent.trim() === text)
   const selects = () => qa('#view-mixer .mxadd select')
   const choose = async (sel, value) => { sel.value = value; sel.dispatchEvent(new Event('change', { bubbles: true })); await w(400) }
-  const strips = () => qa('#view-mixer .strip:not(.master)')
+  const strips = () => qa('#view-mixer .strip:not(.master):not(.monitor):not(.audience)')
   const status = () => prestreamer.audioGetStatus()
   const r = {}
 

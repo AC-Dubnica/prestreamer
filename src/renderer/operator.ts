@@ -12,9 +12,10 @@ import { createAtemPanel } from './atem-panel'
 import { askText, confirmDialog } from './dialogs'
 import { createMixerView, type MixerDeps } from './mixer'
 import { createMonitorView } from './monitor'
+import { isBlank } from '../shared/screens'
+import { makeSplitter } from './splitter'
 import { openScreenDialog } from './screen-dialog'
 import { createSettingsView } from './settings'
-import { openStreamSettings } from './stream-dialog'
 import { ENCODER_CHOICES, defaultStreamSettings, type StreamSettings } from '../shared/stream-settings'
 import { scaledPreview, type ScaledPreview } from './slideview'
 
@@ -41,7 +42,7 @@ const BACKGROUNDS = [
 const SECTION_COLORS: Record<string, string> = { verse: '#2563eb', chorus: '#dc2626', bridge: '#7c3aed' }
 const sectionColor = (label: string) => SECTION_COLORS[label.split(' ')[0].toLowerCase()] ?? '#475569'
 
-let state: ScreenState = { screens: [], displays: [], live: [], slide: null, announcement: null, cameraOnly: false, next: null }
+let state: ScreenState = { screens: [], displays: [], live: [], slide: null, blank: [], announcement: null, cameraOnly: false, next: null }
 let quickMessages: QuickMessage[] = []
 let streamSettings: StreamSettings = defaultStreamSettings
 let songs: Song[] = []
@@ -291,6 +292,23 @@ let lastLiveKey = ''
  * through that item) and all its slides in one grid that uses the full width. The next song is right below, so the
  * arrow keys flow from one into the next without changing the view.
  */
+// The side panels of the Present and Songs tabs can be dragged wider or narrower; each width is remembered.
+makeSplitter($('split-pl'), { host: $('view-present'), variable: '--pl', side: 'left', min: 200, max: 520, initial: 270, key: 'prestreamer.present.left', panel: () => $('presentleft') })
+makeSplitter($('split-pr'), { host: $('view-present'), variable: '--pr', side: 'right', min: 280, max: 640, initial: 380, key: 'prestreamer.present.right', panel: () => $('right') })
+makeSplitter($('split-sl'), { host: $('view-songs'), variable: '--sl', side: 'left', min: 200, max: 520, initial: 270, key: 'prestreamer.songs.left', panel: () => $('songsleft') })
+
+/** How big the slide previews are (the grid's minimum card width), remembered between runs. */
+const ZOOM_KEY = 'prestreamer.cardZoom'
+{
+  const zoom = $('cardzoom') as HTMLInputElement
+  const saved = Number(recallText(ZOOM_KEY))
+  if (saved >= Number(zoom.min) && saved <= Number(zoom.max)) zoom.value = String(saved)
+  const apply = () => { $('center').style.setProperty('--cardmin', `${zoom.value}px`); rememberText(ZOOM_KEY, zoom.value) }
+  zoom.addEventListener('input', apply)
+  zoom.addEventListener('dblclick', () => { zoom.value = '190'; apply() }) // back to the usual size
+  apply()
+}
+
 function renderCenter(): void {
   const ref = state.screens.find((s) => s.id === selectedScreenId) ?? state.screens[0]
   const root = $('center')
@@ -354,7 +372,7 @@ function renderCenter(): void {
     },
   })
   const section = (id: string | null, title: (Node | string)[], body: HTMLElement[]): HTMLElement => {
-    const sec = el('section', { className: `slist ${id !== null && id === selectedItemId ? 'sel' : ''}` }, el('h1', {}, ...title), ...body)
+    const sec = el('section', { className: `slist ${id !== null && id === selectedItemId ? 'sel' : ''}` }, el('h1', {}, el('span', { className: 'stitle' }, title[0]), ...title.slice(1)), ...body)
     if (id) sec.dataset.item = id
     return sec
   }
@@ -703,7 +721,7 @@ function renderScreens(): void {
     const shown = (sc.mirrorOf && state.screens.find((x) => x.id === sc.mirrorOf)) || sc
     const folded = foldedScreens.has(sc.id)
     if (!folded) { // a folded preview is not drawn at all; it is brought up to date when unfolded
-      c.pv.update(shown.look, state.slide, w, h, true, state.cameraOnly && shown.kind === 'virtual') // the stream's card shows what the stream shows
+      c.pv.update(shown.look, isBlank(state.screens, state.blank, sc.id) ? null : state.slide, w, h, true, state.cameraOnly && shown.kind === 'virtual') // the stream's card shows what the stream shows
       c.pv.setNext(state.next)
       c.pv.setPlayback(playback)
       c.pv.setAnnouncement(appliesTo(state.announcement, shown.id) ? state.announcement : null) // the operator sees what each screen shows
@@ -754,12 +772,8 @@ async function detectCameras(): Promise<void> {
 // --- Stream panel ---------------------------------------------------------------------------
 
 const streamUi = {
-  screen: el<HTMLSelectElement>('select'),
-  mode: el<HTMLSelectElement>('select'),
-  key: el<HTMLInputElement>('input', { type: 'password', placeholder: 'YouTube stream key' }),
-  forget: el<HTMLButtonElement>('button', { textContent: 'Forget saved key' }),
-  hint: el('div', { className: 'status' }),
-  sound: el<HTMLSelectElement>('select', { title: 'What the stream carries as sound' }),
+  /** Where the stream goes and from which screen (chosen in Settings → Stream). */
+  summary: el('div', { className: 'streamsum' }),
   audio: el('div', { className: 'status' }),
   button: el<HTMLButtonElement>('button'),
   status: el('div', { className: 'status' }),
@@ -890,38 +904,37 @@ function renderHealth(): void {
   bad(healthUi.speed, st.speed !== null && st.speed < 0.98)
   healthUi.advice.textContent =
     st.health === 'good' ? ''
-    : st.speed !== null && st.speed < 0.98 ? 'The encoder is falling behind. In Stream settings, lower the resolution, frame rate or bitrate, or choose hardware encoding.'
-    : 'Frames are being dropped, so the connection may be too slow for this bitrate. In Stream settings, lower the bitrate.'
+    : st.speed !== null && st.speed < 0.98 ? 'The encoder is falling behind. In Settings → Stream, lower the resolution, frame rate or bitrate, or choose hardware encoding.'
+    : 'Frames are being dropped, so the connection may be too slow for this bitrate. In Settings → Stream, lower the bitrate.'
   drawSpark(st.history, st.targetKbps)
 }
 
-const SOUND_KEY = 'prestreamer.streamSound'
-function recallSound(): 'mixer' | 'none' {
-  try { return localStorage.getItem(SOUND_KEY) === 'none' ? 'none' : 'mixer' } catch { return 'mixer' }
+/** The virtual screen the stream is made from: the one chosen in Settings → Stream, else the first. */
+const streamScreen = (): ScreenConfig | undefined => {
+  const virtuals = state.screens.filter((x) => x.kind === 'virtual')
+  return virtuals.find((x) => x.id === streamSettings.screenId) ?? virtuals[0]
+}
+
+/** Everything about the stream is set on one page, Settings → Stream. The Stream section here only starts and stops it. */
+let streamPageChanged: () => void = () => {}
+const streamPageDeps = {
+  getSettings: () => streamSettings,
+  setSettings: (next: StreamSettings) => { streamSettings = next; renderStream() },
+  isStreaming: () => streamStatus.state === 'running' || streamStatus.state === 'starting',
+  getScreens: () => state.screens,
+  onKeyChanged: (saved: boolean) => { keySaved = saved; renderStream() },
 }
 
 function buildStream(): void {
-  streamUi.sound.append(
-    el<HTMLOptionElement>('option', { value: 'mixer', textContent: 'Mixer master' }),
-    el<HTMLOptionElement>('option', { value: 'none', textContent: 'No sound' }),
-  )
-  streamUi.sound.value = recallSound()
-  streamUi.sound.onchange = () => { try { localStorage.setItem(SOUND_KEY, streamUi.sound.value) } catch { /* only a convenience */ } renderStream() }
-  streamUi.mode.append(
-    el<HTMLOptionElement>('option', { value: 'file', textContent: 'Local test file' }),
-    el<HTMLOptionElement>('option', { value: 'youtube', textContent: 'YouTube (RTMP)' }),
-  )
-  streamUi.mode.onchange = renderStream
-  streamUi.forget.onclick = async () => { await prestreamer.streamKeyForget(); keySaved = false; renderStream() }
   streamUi.button.onclick = async () => {
     const active = streamStatus.state === 'running' || streamStatus.state === 'starting'
     try {
       if (active) await prestreamer.streamStop()
       else {
-        if (streamUi.sound.value === 'mixer' && audioStatus.state !== 'running') await setMixerRunning(true) // start the mixer first if it has something to run
-        await prestreamer.streamStart({ screenId: streamUi.screen.value, mode: streamUi.mode.value as 'file' | 'youtube', streamKey: streamUi.key.value.trim() || undefined, audio: streamUi.sound.value as 'mixer' | 'none' })
-        streamUi.key.value = ''
-        keySaved = await prestreamer.streamKeySaved()
+        const screen = streamScreen()
+        if (!screen) throw new Error('There is no virtual screen to stream: add one in Settings → Screens')
+        if (audioStatus.state !== 'running') await setMixerRunning(true) // start the mixer first if it has something to run
+        await prestreamer.streamStart({ screenId: screen.id, mode: streamSettings.mode, audio: 'mixer' })
         renderStream()
       }
     } catch (err) {
@@ -929,41 +942,36 @@ function buildStream(): void {
       renderStream()
     }
   }
-  const form = el('div', { className: 'form' })
-  form.append(el('span', { textContent: 'Screen' }), streamUi.screen, el('span', { textContent: 'Target' }), streamUi.mode, el('span', { textContent: 'Stream key' }), streamUi.key, el('span', { textContent: 'Sound' }), streamUi.sound)
   // The controls sit in a panel that looks like the health panel below it.
-  const panel = el('div', { className: 'panelbox' }, form, el('div', { className: 'form' }, el('span'), streamUi.button, el('span'), streamUi.forget), streamUi.audio, streamUi.cameraNote, streamUi.status, streamUi.hint)
+  const panel = el('div', { className: 'panelbox' }, streamUi.summary, el('div', { className: 'streamgo' }, streamUi.button), streamUi.audio, streamUi.cameraNote, streamUi.status)
   $('stream').replaceChildren(panel)
   $('healthsec').replaceChildren(healthHead, healthRoot)
 }
 
 function renderStream(): void {
   $('onair').hidden = streamStatus.state !== 'running'
-  const keep = streamUi.screen.value
-  streamUi.screen.replaceChildren(
-    ...state.screens.filter((s) => s.kind === 'virtual').map((s) => el<HTMLOptionElement>('option', { value: s.id, textContent: s.name, selected: s.id === keep })),
-  )
   const active = streamStatus.state === 'running' || streamStatus.state === 'starting'
-  const youtube = streamUi.mode.value === 'youtube'
-  streamUi.key.disabled = !youtube || active
-  streamUi.key.placeholder = keySaved ? 'Saved — leave empty to use it' : 'YouTube stream key (saved once)'
-  streamUi.forget.style.display = youtube && keySaved && !active ? '' : 'none'
-  streamUi.hint.textContent = youtube
-    ? 'The key is stored encrypted by the OS. In YouTube Studio, enable auto-start on the broadcast bound to this key (or schedule one), otherwise the stream connects but does not go live.'
-    : ''
-  streamUi.mode.disabled = streamUi.screen.disabled = streamUi.sound.disabled = active
-  streamUi.button.textContent = active ? 'Stop streaming' : 'Start streaming'
+  streamPageChanged()
+  $('healthsec').hidden = !active // the health numbers only mean something while a stream (or recording) is running
+  const youtube = streamSettings.mode === 'youtube'
+  const screen = streamScreen()
+  // Say plainly what Start will do: which screen goes where.
+  const missingKey = youtube && !keySaved
+  streamUi.summary.replaceChildren(
+    el('div', {}, screen ? `${screen.name} (${streamSettings.width}×${streamSettings.height}) → ` : 'No virtual screen to send', el('b', { textContent: screen ? (youtube ? 'YouTube' : 'a file on this computer') : '' })),
+    ...(missingKey ? [el('div', { className: 'streamwarn', textContent: 'No stream key yet. Add it in Settings → Stream.' })] : []),
+  )
+  streamUi.button.disabled = !active && (!screen || missingKey)
+  streamUi.button.textContent = active ? 'Stop streaming' : youtube ? 'Start streaming' : 'Start recording'
   streamUi.button.className = active ? 'danger' : 'primary'
-  // Say plainly what the stream carries right now.
-  const mixer = streamUi.sound.value === 'mixer'
-  // Only said when something is wrong or unusual: normally the mixer's master simply is the stream's sound.
-  const audioOk = mixer && audioStatus.state === 'running'
+  // Only said when something is wrong: normally the mixer's master simply is the stream's sound.
+  const audioOk = audioStatus.state === 'running'
   streamUi.audio.hidden = audioOk
   streamUi.audio.className = 'status warn'
-  streamUi.audio.textContent = !mixer ? 'The stream will have no sound.' : 'The mixer has not started, so the stream is silent. Open the Mixer tab to see why.'
+  streamUi.audio.textContent = 'The mixer has not started, so the stream is silent. Open the Mixer tab to see why.'
   cameraButton.classList.toggle('primary', state.cameraOnly)
   cameraButton.setAttribute('aria-pressed', String(state.cameraOnly))
-  const target = state.screens.find((s) => s.id === streamUi.screen.value)
+  const target = screen
   const noCamera = target && target.look.source.type === 'none'
   streamUi.cameraNote.className = `status ${state.cameraOnly && noCamera ? 'warn' : ''}`
   streamUi.cameraNote.textContent = state.cameraOnly
@@ -1046,6 +1054,7 @@ function renderAll(): void {
   renderTabs()
   applyView()
   settingsView.render(state)
+  mixerView.screensChanged()
   monitorView.render()
   renderSchedule()
   renderLibrary()
@@ -1098,6 +1107,8 @@ window.addEventListener('keydown', (e) => {
 
 const mixerDeps: MixerDeps = {
   getDevices: () => audioDevices,
+  getOutputs: () => audioOutputs,
+  getScreens: () => state.screens,
   probeChannels,
   startAudio: () => setMixerRunning(true),
 }
@@ -1113,7 +1124,12 @@ const monitorView = createMonitorView($('view-monitor'), {
   toggleScreen: (id) => void toggleScreen(id),
   openAnnounce: () => openAnnounce(),
 })
-const settingsView = createSettingsView($('view-settings'), prestreamer, (id) => void toggleScreen(id))
+const settingsView = createSettingsView($('view-settings'), prestreamer, (id) => void toggleScreen(id), {
+  configure: (id) => configureScreen(id),
+  stream: streamPageDeps,
+  streaming: () => streamStatus.state === 'running' || streamStatus.state === 'starting',
+})
+streamPageChanged = () => settingsView.refreshStream()
 const bibleView = createBibleView($('view-bible'), {
   api: prestreamer,
   getLook: () => (state.screens.find((x) => x.id === selectedScreenId) ?? state.screens[0])?.look ?? defaultLook,
@@ -1225,7 +1241,7 @@ $('addtools').append(iconButton('music', 'Add a song to the run sheet', openSong
 $('songtools').append(iconButton('plus', 'New song', () => startEdit({ id: crypto.randomUUID(), title: 'New song', body: '[Verse 1]\n\n', background: { kind: 'css', css: BACKGROUNDS[0] } }, true)))
 /** Opens the live announcement popup. */
 function openAnnounce(): void {
-  openAnnounceDialog({ api: prestreamer, getState: () => state, getQuick: () => quickMessages, setQuick: (list) => { quickMessages = list } })
+  openAnnounceDialog({ api: prestreamer, getState: () => state, getQuick: () => quickMessages, setQuick: (list) => { quickMessages = list }, only: monitorView.single() })
 }
 
 /** Opening or closing one screen. Closing the screen a stream is being made from would cut the picture, so that asks first. */
@@ -1234,7 +1250,7 @@ async function toggleScreen(id: string): Promise<void> {
   if (!sc) return
   if (!state.live.includes(id)) return void prestreamer.setLive(id, true)
   const streaming = streamStatus.state === 'running' || streamStatus.state === 'starting'
-  if (streaming && sc.kind === 'virtual' && streamUi.screen.value === id) {
+  if (streaming && sc.kind === 'virtual' && streamScreen()?.id === id) {
     const ok = await confirmDialog({ title: `Close ${sc.name}?`, message: 'The stream is being made from this screen. Closing it stops the picture going out. Stop the stream first unless you mean it.', confirm: `Close ${sc.name}`, danger: true })
     if (!ok) return
   }
@@ -1318,19 +1334,14 @@ prestreamer.onPlayback((st) => { playback = st; cards.forEach((c) => c.pv.setPla
 prestreamer.playbackGet().then((st) => { playback = st })
 void refreshAudioDevices(false)
 void setMixerRunning(true) // the mixer always runs: changes in the Mixer tab are heard at once, and the stream can use it any time
-$('streamtools').append(cameraButton, iconButton('gear', 'Stream settings: resolution, frame rate, bitrate, encoder', () => openStreamSettings({
-  api: prestreamer,
-  getSettings: () => streamSettings,
-  setSettings: (next) => { streamSettings = next; renderStream() },
-  isStreaming: () => streamStatus.state === 'running' || streamStatus.state === 'starting',
-}), { size: 15 }))
+$('streamtools').append(cameraButton)
 disclosure($('streamtools').parentElement!, toggleSection)
 disclosure(healthHead, toggleStats)
 disclosure($('atemtools').parentElement!, toggleAtem)
 applyCollapse()
 void prestreamer.streamSettingsGet().then((next) => { streamSettings = next; renderStream() })
 buildStream()
-createAtemPanel($('atemtools'), $('atem'), prestreamer)
+createAtemPanel($('atem'), prestreamer, $('atemsec'))
 prestreamer.onAppearance((a) => { appearance = a; settingsView.setAppearance(a); renderAll() })
 prestreamer.appearanceGet().then((a) => { appearance = a; settingsView.setAppearance(a); renderAll() })
 prestreamer.onAudio((s) => { audioStatus = s; renderAudio() })

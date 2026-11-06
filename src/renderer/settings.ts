@@ -1,10 +1,12 @@
 import type { PrestreamerApi } from '../preload'
 import { defaultAppearance, type Appearance } from '../shared/appearance'
 import { mediaThumb, pickBackground } from './background-picker'
-import { SCREEN_LIMITS, SIZE_PRESETS } from '../shared/screens'
 import type { DisplayInfo, ScreenConfig, ScreenState } from '../shared/types'
-import { confirmDialog } from './dialogs'
+import { idleAtem, type AtemStatus } from '../shared/atem'
+import { askText, confirmDialog } from './dialogs'
 import { iconButton } from './icons'
+import { describeRole, openScreenForm } from './screen-form'
+import { createStreamSettings, type StreamDialogDeps } from './stream-settings'
 
 function el<T extends HTMLElement = HTMLElement>(tag: string, props: Partial<T> = {}, ...kids: (Node | string)[]): T {
   const e = Object.assign(document.createElement(tag) as T, props)
@@ -38,69 +40,33 @@ function displayMap(displays: DisplayInfo[]): HTMLElement {
  * The Settings tab: detected displays and the screens (outputs) built on them.
  * It only rebuilds when the screens or displays change, so a slide change does not steal focus from a field you are editing.
  */
-export function createSettingsView(root: HTMLElement, api: PrestreamerApi, toggleScreen: (id: string) => void) {
+export function createSettingsView(root: HTMLElement, api: PrestreamerApi, toggleScreen: (id: string) => void, deps: { configure: (id: string) => void; streaming: () => boolean; stream: Omit<StreamDialogDeps, 'api'> }) {
   let lastSignature = ''
   let appearance: Appearance = defaultAppearance
   let lastState: ScreenState | null = null
+  let atemStatus: AtemStatus = idleAtem
+  let streamPage: ReturnType<typeof createStreamSettings> | null = null
   let appearanceNote = ''
   // The categories listed down the left side; the one open is remembered.
   const CATEGORIES = [
     { id: 'visuals', label: 'Visuals', icon: 'image', hint: 'Backgrounds for songs and Bible readings, and the logo' },
     { id: 'screens', label: 'Screens', icon: 'present', hint: 'The outputs (audience displays, stage monitor, stream, mirrors) and the monitors connected to this computer' },
+    { id: 'stream', label: 'Stream', icon: 'play', hint: 'Where the stream goes (YouTube or a file), the screen and key, and how it is encoded' },
+    { id: 'atem', label: 'ATEM', icon: 'camera', hint: 'The video switcher: its address and which switching buttons to show' },
   ] as const
   type CategoryId = (typeof CATEGORIES)[number]['id']
   const CATEGORY_KEY = 'prestreamer.settingsCategory'
   const recallCategory = (): CategoryId => { try { const v = localStorage.getItem(CATEGORY_KEY) === 'displays' ? 'screens' : localStorage.getItem(CATEGORY_KEY); return CATEGORIES.find((c) => c.id === v)?.id ?? 'visuals' } catch { return 'visuals' } }
   let category: CategoryId = recallCategory()
-  let newName = ''
-  let newPreset = 0
 
   function screenCard(sc: ScreenConfig, state: ScreenState, index: number): HTMLElement {
     const live = state.live.includes(sc.id)
-    const name = el<HTMLInputElement>('input', { type: 'text', value: sc.name, maxLength: 40 })
-    name.onchange = () => { const v = name.value.trim(); if (v) void api.updateScreen(sc.id, { name: v }) }
-
-    const rows: HTMLElement[] = []
-    if (sc.kind === 'display') {
-      const select = el<HTMLSelectElement>('select')
-      select.append(el<HTMLOptionElement>('option', { value: '', textContent: 'None (opens in a window)', selected: sc.displayId === null }))
-      state.displays.forEach((d, i) => {
-        const other = state.screens.find((x) => x.id !== sc.id && x.kind === 'display' && x.displayId === d.id)
-        select.append(el<HTMLOptionElement>('option', { value: String(d.id), textContent: `${i + 1} · ${d.label} · ${d.width}×${d.height}${d.primary ? ' · main display' : ''}${other ? ` (also used by ${other.name})` : ''}`, selected: sc.displayId === d.id }))
-      })
-      // A saved binding whose display is not connected right now stays visible instead of silently showing "None".
-      if (sc.displayId !== null && !state.displays.some((d) => d.id === sc.displayId)) {
-        select.append(el<HTMLOptionElement>('option', { value: String(sc.displayId), textContent: `${sc.displayLabel ?? 'Display'} (not connected)`, selected: true }))
-      }
-      select.onchange = () => void api.updateScreen(sc.id, { displayId: select.value ? Number(select.value) : null })
-      rows.push(el('label', { className: 'srow2' }, el('span', { textContent: 'Display' }), select))
-      const followed = state.screens.some((x) => x.mirrorOf === sc.id)
-      const targets = state.screens.filter((x) => x.id !== sc.id && !x.mirrorOf)
-      if (!followed && targets.length) {
-        const mirror = el<HTMLSelectElement>('select', { title: 'Show exactly what another screen shows (for example the stream, on a stage monitor)' })
-        mirror.append(el<HTMLOptionElement>('option', { value: '', textContent: 'No: this screen has its own look', selected: !sc.mirrorOf }), ...targets.map((x) => el<HTMLOptionElement>('option', { value: x.id, textContent: `Mirror ${x.name}`, selected: sc.mirrorOf === x.id })))
-        mirror.onchange = () => void api.updateScreen(sc.id, { mirrorOf: mirror.value })
-        rows.push(el('label', { className: 'srow2' }, el('span', { textContent: 'Shows' }), mirror))
-      }
-      // A full-screen output on the display that also hosts this window would cover the controls while it is live.
-      const bound = state.displays.find((d) => d.id === sc.displayId)
-      if (bound?.primary && state.displays.length > 1) rows.push(el('div', { className: 'warn', textContent: 'This is your main display, where this window is. While live, the screen will cover it. Pick another display for the audience.' }))
-      else if (bound?.primary) rows.push(el('div', { className: 'warn', textContent: 'This is your only display, so a live screen will cover this window. Use "None (opens in a window)" until a second display is connected.' }))
-    } else {
-      const w = el<HTMLInputElement>('input', { type: 'number', value: String(sc.width), min: String(SCREEN_LIMITS.width[0]), max: String(SCREEN_LIMITS.width[1]) })
-      const h = el<HTMLInputElement>('input', { type: 'number', value: String(sc.height), min: String(SCREEN_LIMITS.height[0]), max: String(SCREEN_LIMITS.height[1]) })
-      const commit = () => void api.updateScreen(sc.id, { width: Number(w.value), height: Number(h.value) })
-      w.onchange = commit
-      h.onchange = commit
-      const preset = el<HTMLSelectElement>('select')
-      preset.append(el<HTMLOptionElement>('option', { value: '', textContent: 'Preset…' }), ...SIZE_PRESETS.map((p, i) => el<HTMLOptionElement>('option', { value: String(i), textContent: p.label })))
-      preset.onchange = () => { const p = SIZE_PRESETS[Number(preset.value)]; if (p) void api.updateScreen(sc.id, { width: p.width, height: p.height }) }
-      rows.push(el('label', { className: 'srow2' }, el('span', { textContent: 'Size' }), el('span', { className: 'inl' }, w, el('span', { textContent: '×' }), h, preset)))
-    }
-
-    const sound = el<HTMLInputElement>('input', { type: 'checkbox', checked: sc.look.videoAudio })
-    sound.onchange = () => void api.updateScreen(sc.id, { look: { ...sc.look, videoAudio: sound.checked } })
-    if (!sc.mirrorOf) rows.push(el('label', { className: 'srow2' }, el('span', { textContent: 'Video sound' }), el('span', { className: 'inl' }, sound, el('span', { className: 'dim', textContent: 'play the sound of video cues from this screen' }))))
+    const bound = state.displays.find((d) => d.id === sc.displayId)
+    // A summary: what the screen is for, and where it is (or how big). Everything is changed in the Edit dialog.
+    const where = sc.kind === 'virtual'
+      ? `${sc.width}×${sc.height}`
+      : sc.displayId === null ? 'Opens in a window (no display chosen)' : bound ? `Display ${state.displays.indexOf(bound) + 1} · ${bound.label} · ${bound.width}×${bound.height}${bound.primary ? ' · main display' : ''}` : `${sc.displayLabel ?? 'Display'} (not connected)`
+    const warn = sc.kind === 'display' && bound?.primary ? el('div', { className: 'warn', textContent: state.displays.length > 1 ? 'This is your main display, where this window is. While live, the screen covers it.' : 'This is your only display, so a live screen covers this window.' }) : null
 
     const del = iconButton('trash', 'Remove this screen', async () => {
       const ok = await confirmDialog({
@@ -115,14 +81,56 @@ export function createSettingsView(root: HTMLElement, api: PrestreamerApi, toggl
     return el('div', { className: 'setcard' },
       el('div', { className: 'sethead' },
         el('span', { className: `dot ${live ? 'on' : ''}` }),
-        name,
+        el('strong', { className: 'scname', textContent: sc.name }),
         el('span', { className: 'badge', textContent: sc.kind === 'display' ? 'Display screen' : 'Virtual screen' }),
+        el('span', { className: 'grow' }),
         el('button', { className: live ? 'danger' : 'primary', textContent: live ? 'Close' : 'Open', title: live ? `Close ${sc.name}` : `Open ${sc.name}`, onclick: () => toggleScreen(sc.id) }),
+        iconButton('gear', 'Look: colours, fonts, background, text layout, video source', () => deps.configure(sc.id), { size: 15, label: 'Look…' }),
+        iconButton('pencil', 'Change name, what it shows, display or size', () => openScreenForm(api, () => lastState ?? state, sc.id, { streaming: deps.streaming }), { size: 15, label: 'Edit…' }),
         iconButton('up', 'Move up: higher priority', () => void api.moveScreen(sc.id, -1), { size: 15, disabled: index === 0 }),
         iconButton('down', 'Move down: lower priority', () => void api.moveScreen(sc.id, 1), { size: 15, disabled: index === state.screens.length - 1 }),
         del,
       ),
-      ...rows,
+      el('div', { className: 'scrole', textContent: describeRole(sc, state) }),
+      el('div', { className: 'dim', textContent: where }),
+      ...(warn ? [warn] : []),
+    )
+  }
+
+  /** The Stream page: the only place for stream settings (the Present tab's Stream section just starts and stops it). */
+  function streamSection(): HTMLElement {
+    streamPage ??= createStreamSettings({ api, ...deps.stream })
+    streamPage.refresh()
+    return el('div', { className: 'setsec' }, el('div', { className: 'sethead2' }, el('h2', { textContent: 'Stream' })), streamPage.root)
+  }
+
+  /** The ATEM page: where the switcher is, and which switching buttons the panels (Present and Monitor tabs) show. */
+  function atemSection(): HTMLElement {
+    const tick = (label: string, hint: string, key: 'preview' | 'cut' | 'auto') => {
+      const box = el<HTMLInputElement>('input', { type: 'checkbox', checked: atemStatus.buttons[key] })
+      box.onchange = () => void api.atemSetButtons({ [key]: box.checked }).then((s) => { atemStatus = s })
+      return el('label', { className: 'srow2' }, el('span', { textContent: label }), el('span', { className: 'inl' }, box, el('span', { className: 'dim', textContent: hint })))
+    }
+    const change = el('button', { textContent: 'Change…', onclick: async () => {
+      const value = await askText({ title: 'ATEM address', label: 'IP address of the switcher (ATEM Software Control shows it; factory setting 192.168.10.240)', value: atemStatus.address, placeholder: '192.168.10.240', confirm: 'Connect' })
+      if (value !== null) atemStatus = await api.atemSetAddress(value)
+      if (lastState) render(lastState, true)
+    } })
+    return el('div', { className: 'setsec' },
+      el('div', { className: 'sethead2' }, el('h2', { textContent: 'ATEM switcher' })),
+      el('div', { className: 'setcard' },
+        el('div', { className: 'sethead' }, el('span', { className: `dot ${atemStatus.state === 'connected' ? 'on' : ''}` }), el('strong', { className: 'scname', textContent: atemStatus.state === 'connected' ? atemStatus.model : 'Not connected' }), el('span', { className: 'grow' })),
+        el('div', { className: 'dim', textContent: atemStatus.message }),
+        el('label', { className: 'srow2' }, el('span', { textContent: 'Address' }), el('span', { className: 'inl' }, el('span', { textContent: atemStatus.address }), change)),
+      ),
+      el('h3', { className: 'sethead3', textContent: 'Buttons in the ATEM panels' }),
+      el('div', { className: 'setcard' },
+        el('label', { className: 'srow2' }, el('span', { textContent: 'Program' }), el('span', { className: 'dim', textContent: 'always shown: one button per input' })),
+        tick('Preview', 'the preview row, to line up the next camera before a Cut or Auto', 'preview'),
+        tick('Cut', 'swap preview and program at once', 'cut'),
+        tick('Auto', 'swap them with the switcher\'s transition', 'auto'),
+      ),
+      el('p', { className: 'dim', textContent: 'The ATEM is controlled over Ethernet: the Mini\'s USB port is only a webcam. The panels are in the Present tab (under the screens) and the Monitor tab (under the picture), and appear only while a switcher is connected.' }),
     )
   }
 
@@ -184,37 +192,17 @@ export function createSettingsView(root: HTMLElement, api: PrestreamerApi, toggl
       el('p', { className: 'dim', textContent: 'Plug in a monitor or projector and it appears here at once. A display screen below is shown full-screen on the display you pick.' }),
     )
 
-    const nameInput = el<HTMLInputElement>('input', { type: 'text', placeholder: `Virtual ${state.screens.filter((s) => s.kind === 'virtual').length + 1}`, value: newName, maxLength: 40 })
-    nameInput.oninput = () => { newName = nameInput.value }
-    const presetSelect = el<HTMLSelectElement>('select')
-    presetSelect.append(...SIZE_PRESETS.map((p, i) => el<HTMLOptionElement>('option', { value: String(i), textContent: p.label, selected: i === newPreset })))
-    presetSelect.onchange = () => { newPreset = Number(presetSelect.value) }
-
-    // Both ways of adding a screen sit together, at the top.
-    const addBar = el('div', { className: 'setcard addbar' },
-      el('strong', { textContent: 'Add a screen' }),
-      iconButton('screen', 'A screen shown full-screen on a display', () => void api.addDisplayScreen(`Display screen ${state.screens.filter((s) => s.kind === 'display').length + 1}`), { badge: true, label: 'Display screen' }),
-      iconButton('screen', 'A monitor for the people on stage: the current slide, the next one and the clock. Not shown on the stream.', () => void api.addDisplayScreen(`Stage monitor ${state.screens.filter((s) => s.look.layout === 'stage').length + 1}`, { stage: true }), { label: 'Stage monitor' }),
-      iconButton('screen', 'A display that shows exactly what the stream shows: the same picture, text and announcements, for the people on stage.', () => {
-        const stream = state.screens.find((s) => s.kind === 'virtual')
-        void api.addDisplayScreen(`Stream monitor ${state.screens.filter((s) => s.mirrorOf).length + 1}`, { mirrorOf: stream?.id })
-      }, { label: 'Stream mirror' }),
-      el('span', { className: 'sep' }),
-      nameInput,
-      presetSelect,
-      iconButton('plus', 'A screen rendered inside PreStreamer, for the stream', () => {
-        const p = SIZE_PRESETS[newPreset] ?? SIZE_PRESETS[0]
-        void api.addVirtual(newName.trim() || nameInput.placeholder, p.width, p.height)
-        newName = ''
-      }, { label: 'Virtual screen' }),
+    const addBar = el('div', { className: 'addbar' },
+      el('button', { className: 'primary', textContent: 'Add screen…', title: 'A display screen (audience, stage monitor, stream copy) or a virtual screen for the stream', onclick: () => openScreenForm(api, () => lastState ?? state, null, { streaming: deps.streaming }) }),
+      el('span', { className: 'dim', textContent: 'Display screens are shown on a monitor or projector; a virtual screen is what the stream picks up.' }),
     )
 
     const screens = el('div', { className: 'setsec' },
       el('div', { className: 'sethead2' }, el('h2', { textContent: 'Screens' })),
       addBar,
-      el('p', { className: 'dim', textContent: 'The order is the priority: it is the order of the screens in the Present tab, and the top screen is the one whose look is used for slide previews. Use the arrows to change it.' }),
+      el('p', { className: 'dim', textContent: 'The order is the priority: it is the order of the screens in the Present tab, and the top screen is the one whose look is used for slide previews. Use the arrows to change it. Look… opens the same settings as the ⚙ on the screen in the Present tab.' }),
       ...state.screens.map((sc, i) => screenCard(sc, state, i)),
-      el('p', { className: 'dim', textContent: 'A virtual screen is rendered inside PreStreamer, not shown on a monitor: it is what the stream picks up (and where text over a camera is composed). It does not appear as a display in macOS or Windows. Colours, fonts, backgrounds, video source and the caption layout are set per screen with its ⚙ button in the Present tab.' }),
+      el('p', { className: 'dim', textContent: 'A virtual screen is rendered inside PreStreamer, not shown on a monitor: it is what the stream picks up (and where text over a camera is composed). It does not appear as a display in macOS or Windows.' }),
     )
 
     const nav = el('nav', { className: 'setnav', role: 'tablist' }, ...CATEGORIES.map((c) => {
@@ -229,11 +217,16 @@ export function createSettingsView(root: HTMLElement, api: PrestreamerApi, toggl
       return b
     }))
     // The connected monitors come first: they are what the screens below are bound to.
-    root.replaceChildren(nav, el('div', { className: 'setbody', role: 'tabpanel' }, ...(category === 'visuals' ? [lookSection()] : [displays, screens])))
+    root.replaceChildren(nav, el('div', { className: 'setbody', role: 'tabpanel' }, ...(category === 'visuals' ? [lookSection()] : category === 'stream' ? [streamSection()] : category === 'atem' ? [atemSection()] : [displays, screens])))
   }
+
+  void api.atemGet().then((s) => { atemStatus = s; if (category === 'atem' && lastState) render(lastState, true) })
+  api.onAtem((s) => { atemStatus = s; if (category === 'atem' && lastState) render(lastState, true) })
 
   return {
     render,
+    /** The stream started or stopped, or its settings or the screens changed: bring the Stream page up to date if it is open. */
+    refreshStream(): void { if (category === 'stream') streamPage?.refresh() },
     /** The saved look changed (here or elsewhere, e.g. a library file was deleted). */
     setAppearance(a: Appearance): void { appearance = a; if (lastState) render(lastState, true) },
   }

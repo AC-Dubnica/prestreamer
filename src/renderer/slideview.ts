@@ -298,6 +298,8 @@ export class SlideView {
   /** Full-screen video cue. Thumbnails get a marker, and only the sound-enabled output window is unmuted. */
   private setVideo(cue: Slide['video'] | null, look: Look, live: boolean, audioAllowed: boolean): void {
     const sound = audioAllowed && look.videoAudio
+    // The level and the mute follow the settings at once, without restarting the video.
+    if (this.video) this.applyLevel(this.video, look, sound)
     const key = `${cue?.file ?? ''}|${live}|${sound}|${look.audioOutput}`
     if (key === this.videoKey) return
     this.videoKey = key
@@ -317,7 +319,7 @@ export class SlideView {
     v.src = mediaUrl(cue.file)
     v.preload = 'auto'
     v.playsInline = true
-    v.muted = !sound
+    this.applyLevel(v, look, sound)
     Object.assign(v.style, { ...fill, objectFit: 'contain' })
     if (sound && look.audioOutput && 'setSinkId' in v) void (v as HTMLVideoElement & { setSinkId(id: string): Promise<void> }).setSinkId(look.audioOutput).catch(() => {})
     this.videoLayer.append(v)
@@ -325,6 +327,12 @@ export class SlideView {
     this.videoFile = cue.file
     this.syncTimer = setInterval(() => this.applyPlayback(), 300) // also corrects drift while playing
     this.applyPlayback()
+  }
+
+  /** The sound of a video cue: off unless this window is the one that plays it, otherwise at the level set for the audience. */
+  private applyLevel(v: HTMLVideoElement, look: Look, sound: boolean): void {
+    v.muted = !sound || look.videoMuted
+    v.volume = Math.min(1, Math.max(0, 10 ** (look.videoVolumeDb / 20)))
   }
 
   /** Follow the shared clock: seek when off by more than a quarter second, then play or pause. */
@@ -361,11 +369,14 @@ export class SlideView {
       Object.assign(video.style, fill)
       this.backdrop.append(video)
     } else {
-      // A <video> per thumbnail is too heavy; show a marker instead.
-      const mark = document.createElement('div')
-      Object.assign(mark.style, { ...fill, background: '#1f2937', color: '#6b7280', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '80px' })
-      mark.textContent = '▶ video'
-      this.backdrop.append(mark)
+      // A thumbnail shows one still frame of the video: metadata only, paused, never playing (a playing video per thumbnail is too heavy).
+      const still = document.createElement('video')
+      still.src = `${mediaUrl(bg.file)}#t=0.5`
+      still.muted = true
+      still.preload = 'metadata'
+      still.playsInline = true
+      Object.assign(still.style, fill, { pointerEvents: 'none' })
+      this.backdrop.append(still)
     }
   }
 

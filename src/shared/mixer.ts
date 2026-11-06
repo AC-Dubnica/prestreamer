@@ -14,8 +14,10 @@ export interface LimiterConfig { on: boolean; ceilingDb: number }
 export interface DeesserConfig { on: boolean; freq: number; thresholdDb: number; reductionDb: number }
 export interface ReverbConfig { on: boolean; decaySec: number; dampingHz: number; preDelayMs: number; mix: number }
 export interface DelayConfig { on: boolean; timeMs: number; feedback: number; toneHz: number; mix: number }
+/** A plain delay with nothing added: the signal arrives later, by a fixed time. On the master it lines the sound up with the picture. */
+export interface SyncDelayConfig { on: boolean; timeMs: number }
 
-export const EFFECT_TYPES = ['hpf', 'eq', 'gate', 'comp', 'limiter', 'deesser', 'reverb', 'delay'] as const
+export const EFFECT_TYPES = ['hpf', 'eq', 'gate', 'comp', 'limiter', 'deesser', 'reverb', 'delay', 'syncdelay'] as const
 export type EffectType = (typeof EFFECT_TYPES)[number]
 
 /** One effect in a chain. `id` is stable (the audio engine tells chains apart by it), `type` says what it is. */
@@ -29,6 +31,7 @@ export type Effect =
   | Fx<'deesser', DeesserConfig>
   | Fx<'reverb', ReverbConfig>
   | Fx<'delay', DelayConfig>
+  | Fx<'syncdelay', SyncDelayConfig>
 export type EffectOf<T extends EffectType> = Extract<Effect, { type: T }>
 
 /** An audio input on this machine. Test sources use ids starting with "test:". */
@@ -53,18 +56,31 @@ export interface Strip {
   chain: Effect[]
 }
 
+/**
+ * Listening to the stream mix: a copy of it played on an output device of your choice (headphones, a monitor speaker), apart
+ * from whatever plays to the room. It does not change what the stream carries.
+ */
+export interface MonitorConfig {
+  on: boolean
+  /** Output device id; empty = the system's default output. */
+  deviceId: string
+  label: string
+  gainDb: number
+}
+
 export interface MixerConfig {
   strips: Strip[]
   masterDb: number
   /** The effects everything passes through together, before the master fader (a limiter, usually). */
   masterChain: Effect[]
-  /** Delays the whole mix so the sound lines up with the picture (camera and encoding delay the picture). */
-  delayMs: number
+  monitor: MonitorConfig
 }
+
+export const defaultMonitor: MonitorConfig = { on: false, deviceId: '', label: '', gainDb: -6 }
 
 /** [min, max] per parameter: used by the UI sliders and to clamp anything read from disk. */
 export const RANGES = {
-  trimDb: [-24, 24], faderDb: [-100, 10], pan: [-1, 1], masterDb: [-100, 10], delayMs: [0, 2000],
+  trimDb: [-24, 24], faderDb: [-100, 10], pan: [-1, 1], masterDb: [-100, 10], syncDelayMs: [0, 2000], monitorDb: [-60, 6],
   hpfFreq: [20, 500],
   eqFreq: [20, 20000], eqGainDb: [-18, 18], eqQ: [0.1, 10],
   gateThresholdDb: [-80, 0], gateRangeDb: [0, 80], gateAttackMs: [0.1, 100], gateHoldMs: [0, 1000], gateReleaseMs: [5, 2000],
@@ -128,6 +144,7 @@ export const EFFECT_INFO: Record<EffectType, { label: string; blurb: string }> =
   deesser: { label: 'De-esser', blurb: 'Softens sharp "s" and "t" sounds on vocals and speech, which microphones and streaming exaggerate.' },
   reverb: { label: 'Reverb', blurb: 'Adds a sense of space. Close microphones and direct feeds sound dry on a stream; a little reverb makes it sound like the room.' },
   delay: { label: 'Delay', blurb: 'A soft echo behind the voice or an instrument, common in worship music. Use sparingly.' },
+  syncdelay: { label: 'Sync delay', blurb: 'Holds the signal back by a fixed time with nothing added. On the master it lines the sound up with the picture (the camera and encoding delay the picture); on a channel it lines that channel up with the others.' },
 }
 
 /** Ids only need to be unique inside one mixer; they are made once, when the effect is added, and never change. */
@@ -146,7 +163,8 @@ export function defaultEffect<T extends EffectType>(type: T, id: string = newEff
     : type === 'limiter' ? { ...base, type: 'limiter', on: true, ceilingDb: -1 }
     : type === 'deesser' ? { ...base, type: 'deesser', on: true, freq: 6500, thresholdDb: -30, reductionDb: 8 }
     : type === 'reverb' ? { ...base, type: 'reverb', on: true, decaySec: 1.4, dampingHz: 6000, preDelayMs: 20, mix: 0.15 }
-    : { ...base, type: 'delay', on: true, timeMs: 350, feedback: 0.3, toneHz: 3500, mix: 0.15 }
+    : type === 'delay' ? { ...base, type: 'delay', on: true, timeMs: 350, feedback: 0.3, toneHz: 3500, mix: 0.15 }
+    : { ...base, type: 'syncdelay', on: true, timeMs: 150 }
   return e as EffectOf<T>
 }
 
@@ -177,6 +195,9 @@ export const MASTER_PRESETS: ChainPreset[] = [
     build: () => [makeEffect('comp', { thresholdDb: -18, ratio: 2, attackMs: 30, releaseMs: 300, kneeDb: 10, makeupDb: 3 }), makeEffect('limiter', { ceilingDb: -1 })] },
 ]
 
+/** The master starts with a safety limiter and a sync delay (at 0 ms, so it does nothing until set): the two things the master was always for. */
+export const defaultMasterChain = (): Effect[] => [makeEffect('limiter', { ceilingDb: -1 }, 'master-limiter'), makeEffect('syncdelay', { timeMs: 0 }, 'master-sync-delay')]
+
 export function defaultStrip(channel: number, name?: string, source?: StripSource): Strip {
   return {
     channel,
@@ -196,8 +217,8 @@ export function defaultMixer(): MixerConfig {
   return {
     strips: videoStrips(),
     masterDb: 0,
-    masterChain: [makeEffect('limiter', { ceilingDb: -1 }, 'master-limiter')],
-    delayMs: 0,
+    masterChain: defaultMasterChain(),
+    monitor: { ...defaultMonitor },
   }
 }
 
@@ -232,6 +253,7 @@ function effectParams(type: EffectType, r: Record<string, unknown>, d: Effect): 
     case 'limiter': return { id: d.id, type, on, ceilingDb: n('ceilingDb', RANGES.limiterCeilingDb) }
     case 'deesser': return { id: d.id, type, on, freq: n('freq', RANGES.deesserFreq), thresholdDb: n('thresholdDb', RANGES.deesserThresholdDb), reductionDb: n('reductionDb', RANGES.deesserReductionDb) }
     case 'reverb': return { id: d.id, type, on, decaySec: n('decaySec', RANGES.reverbDecaySec), dampingHz: n('dampingHz', RANGES.reverbDampingHz), preDelayMs: n('preDelayMs', RANGES.reverbPreDelayMs), mix: n('mix', RANGES.reverbMix) }
+    case 'syncdelay': return { id: d.id, type, on, timeMs: n('timeMs', RANGES.syncDelayMs) }
     case 'delay': return { id: d.id, type, on, timeMs: n('timeMs', RANGES.delayTimeMs), feedback: n('feedback', RANGES.delayFeedback), toneHz: n('toneHz', RANGES.delayToneHz), mix: n('mix', RANGES.delayMix) }
   }
 }
@@ -295,6 +317,16 @@ function sanitizeStrip(raw: unknown, used: Set<string>): Strip | null {
   }
 }
 
+function sanitizeMonitor(raw: unknown): MonitorConfig {
+  const r = obj(raw)
+  return {
+    on: bool(r.on, defaultMonitor.on),
+    deviceId: typeof r.deviceId === 'string' && r.deviceId.length <= 300 ? r.deviceId : '',
+    label: typeof r.label === 'string' ? r.label.slice(0, 120) : '',
+    gainDb: num(r.gainDb, defaultMonitor.gainDb, RANGES.monitorDb),
+  }
+}
+
 /** Validates untrusted JSON (a file on disk, or an IPC payload). Anything unusable falls back to defaults. */
 export function sanitizeMixer(raw: unknown): MixerConfig {
   const r = obj(raw)
@@ -315,10 +347,17 @@ export function sanitizeMixer(raw: unknown): MixerConfig {
     const lim = obj(r.masterLimiter)
     masterChain = sanitizeChain([{ type: 'limiter', id: 'master-limiter', on: lim.on, ceilingDb: lim.ceilingDb }], used)
   } else masterChain = defaultMixer().masterChain
+  // Files saved while the master's delay was a box of its own (they have `delayMs`): it becomes a Sync delay effect, at the end of the chain.
+  if ('delayMs' in r && !masterChain.some((e) => e.type === 'syncdelay') && masterChain.length < MAX_EFFECTS) {
+    let id = 'master-sync-delay'
+    while (used.has(id)) id = newEffectId()
+    used.add(id)
+    masterChain = [...masterChain, makeEffect('syncdelay', { timeMs: num(r.delayMs, 0, RANGES.syncDelayMs) }, id)]
+  }
   return {
     strips,
     masterDb: num(r.masterDb, 0, RANGES.masterDb),
     masterChain,
-    delayMs: num(r.delayMs, 0, RANGES.delayMs),
+    monitor: sanitizeMonitor(r.monitor),
   }
 }

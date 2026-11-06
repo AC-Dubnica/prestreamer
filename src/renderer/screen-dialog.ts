@@ -33,17 +33,25 @@ const SAMPLE: Slide = { label: 'Preview', text: 'Amazing grace, how sweet the so
 
 const SAMPLE_NEXT: Slide = { label: 'Preview', text: 'I once was lost, but now am found\nWas blind, but now I see' }
 
+/** Unapplied changes handed from one screen dialog to the next (see the picture picker). */
+let carried: { id: string; draft: Partial<Look> } | null = null
+
 const sourceValue = (s: VideoSource): string => (s.type === 'camera' ? `camera:${s.deviceId}` : s.type)
 
 /**
- * Popup with every look setting of ONE screen (the one whose gear was pressed), with a live preview.
- * Changes apply immediately. Each patch carries only the field that changed: the main process merges it
- * into the saved look, so a stale copy here can never overwrite another setting.
+ * Popup with every look setting of ONE screen (the one whose gear was pressed), with a preview.
+ * Changes only show in the preview: Apply sends them to the screen (and so on air), Cancel or Esc throws them away.
+ * Only the fields that were changed are sent: the main process merges them into the saved look, so a stale copy
+ * here can never overwrite another setting.
  */
 export function openScreenDialog(id: string, deps: ScreenDialogDeps): { refresh(): void; close(): void } {
   const { api } = deps
   const screen = () => deps.getState().screens.find((s) => s.id === id)
-  const patch = (look: Partial<Look>) => void api.updateScreen(id, { look: look as Look })
+  // The changes not applied yet. The picture picker replaces this dialog for a moment, so they are carried over to the next one.
+  const draft: Partial<Look> = carried?.id === id ? carried.draft : {}
+  carried = null
+  const shown = (): Look | undefined => { const sc = screen(); return sc && { ...sc.look, ...draft } }
+  const patch = (look: Partial<Look>) => { Object.assign(draft, look); refresh() }
 
   const pv = scaledPreview()
   const previewBox = el('div', { className: 'sdprev' }, pv.box)
@@ -63,10 +71,11 @@ export function openScreenDialog(id: string, deps: ScreenDialogDeps): { refresh(
   // A picture or looping video behind the text of this screen
   const bgNow = el('span', { className: 'bgcur' })
   const chooseBg = iconButton('screen', 'A picture or looping video behind the text on this screen, from your library or imported', async () => {
-    const current = screen()?.look.backgroundMedia ?? null
+    const current = shown()?.backgroundMedia ?? null
+    carried = { id, draft }
     close() // one dialog at a time: the picker takes its place, and this one comes back after
     const picked = await pickBackground(api, current, { title: `Background for ${screen()?.name ?? 'this screen'}`, onDeleted: deps.onMediaDeleted })
-    if (picked !== undefined) await api.updateScreen(id, { look: { backgroundMedia: picked } as Look })
+    if (picked !== undefined && carried) carried.draft.backgroundMedia = picked as Look['backgroundMedia']
     deps.reopen()
   }, { badge: true, label: 'Picture or video…' })
   const clearBg = el('button', { textContent: 'Remove', title: 'Back to the plain colour', onclick: () => patch({ backgroundMedia: null }) })
@@ -83,9 +92,9 @@ export function openScreenDialog(id: string, deps: ScreenDialogDeps): { refresh(
     el<HTMLOptionElement>('option', { value: 'stage', textContent: 'Stage monitor (current, next, clock)' }),
   )
   layout.onchange = () => {
-    const sc = screen()
+    const sc = shown()
     // A caption needs a box to stay readable over a moving picture: give it one the first time it is chosen.
-    patch({ layout: layout.value as Look['layout'], ...(layout.value === 'lower-third' && sc?.look.textBoxOpacity === 0 ? { textBoxOpacity: 0.55 } : {}) })
+    patch({ layout: layout.value as Look['layout'], ...(layout.value === 'lower-third' && sc?.textBoxOpacity === 0 ? { textBoxOpacity: 0.55 } : {}) })
   }
   const box = el<HTMLInputElement>('input', { type: 'range', min: '0', max: '1', step: '0.05', title: 'Opacity of the dark box behind the text' })
   box.oninput = () => patch({ textBoxOpacity: Number(box.value) })
@@ -114,9 +123,16 @@ export function openScreenDialog(id: string, deps: ScreenDialogDeps): { refresh(
   const row = (name: string, ...controls: HTMLElement[]) => el('label', { className: 'sdrow' }, el('span', { textContent: name }), el('span', { className: 'inl' }, ...controls))
   const group = (title: string, ...rows: HTMLElement[]) => el('div', { className: 'sdgroup' }, el('h4', { textContent: title }), ...rows)
 
+  const apply = el<HTMLButtonElement>('button', { className: 'primary', textContent: 'Apply', title: 'Put the changes on this screen' })
+  apply.onclick = async () => {
+    if (Object.keys(draft).length) await api.updateScreen(id, { look: draft as Look })
+    carried = null
+    close()
+  }
+
   const dialogEl = (close: () => void) =>
     el('div', { className: 'dialog sd', role: 'dialog' },
-      el('div', { className: 'sdhead' }, el('h3', { className: 'sdtitle' }), el('button', { className: 'primary', textContent: 'Done', onclick: () => close() })),
+      el('div', { className: 'sdhead' }, el('h3', { className: 'sdtitle' }), el('span', { className: 'grow' }), el('button', { textContent: 'Cancel', title: 'Throw the changes away', onclick: () => close() }), apply),
       el('div', { className: 'sdbody' },
         previewBox,
         group('Background', swatches, row('Picture or video', chooseBg, bgNow, clearBg)),
@@ -132,7 +148,8 @@ export function openScreenDialog(id: string, deps: ScreenDialogDeps): { refresh(
   function refresh(): void {
     const sc = screen()
     if (!sc) return close() // removed while open
-    const look = sc.look
+    const look = shown()!
+    apply.disabled = !Object.keys(draft).length
     document.querySelector<HTMLElement>('.sdtitle')!.textContent = `${sc.name} · screen settings`
 
     const [w, h] = deps.screenSize(sc)

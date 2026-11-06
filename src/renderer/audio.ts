@@ -1,5 +1,5 @@
 import type { AudioApi } from '../preload/audio'
-import { dbToGain, effectiveGains, gainToDb, stripKey, type Effect, type MixerConfig, type Strip } from '../shared/mixer'
+import { dbToGain, effectiveGains, gainToDb, stripKey, type Effect, type MixerConfig, type MonitorConfig, type Strip } from '../shared/mixer'
 import { createFx, param, type Fx } from './effects'
 import { mediaUrl, type AudioConfig, type Meters, type PlaybackState } from '../shared/types'
 
@@ -67,13 +67,26 @@ interface Source {
   stop: () => void
 }
 
+/**
+ * The monitor output: a copy of the stream mix played on an output device of its own. The mix goes into a stream node, and
+ * an audio element plays that stream on the chosen device (an AudioContext has only one output, which here stays silent).
+ */
+interface Monitor {
+  gain: GainNode
+  el: HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> }
+  deviceId: string | null
+  error: string
+}
+
 interface Graph {
   ctx: AudioContext
   sum: GainNode
   /** sum -> the master's effects -> masterGain */
   masterRig: Rig
   masterGain: GainNode
-  delay: DelayNode
+  monitor: Monitor
+  /** Level of the video's soundtrack (what the audience hears, before its level setting), while that source is open. */
+  videoMeter: { node: AnalyserNode; buf: Float32Array<ArrayBuffer> } | null
   masterMeters: [AnalyserNode, AnalyserNode]
   mute: GainNode
   strips: Map<string, StripNodes>
@@ -96,6 +109,8 @@ function teardown(): void {
   graph = null
   if (!g) return
   g.timers.forEach(clearInterval)
+  g.monitor.el.pause()
+  g.monitor.el.srcObject = null
   for (const src of g.sources.values()) closeSource(src)
   void g.ctx.close()
 }
@@ -158,6 +173,20 @@ function applyStrip(ctx: AudioContext, n: StripNodes, s: Strip, gain: number): v
   param(n.pan.pan, s.pan, ctx)
 }
 
+/** Applies the monitor settings: how loud, which device, and whether it plays at all. The copy is the stream mix itself, whatever the master's effects (a sync delay too) do to it. */
+function syncMonitor(g: Graph, cfg: MonitorConfig): void {
+  const mon = g.monitor
+  param(mon.gain.gain, cfg.on ? dbToGain(cfg.gainDb) : 0, g.ctx)
+  const fail = (err: unknown) => { mon.error = `${cfg.label || 'The monitor output'}: ${(err as Error).message}`; if (graph === g) reportStatus(g) }
+  if (cfg.deviceId !== mon.deviceId) {
+    mon.deviceId = cfg.deviceId
+    void (mon.el.setSinkId ? mon.el.setSinkId(cfg.deviceId) : Promise.resolve())
+      .then(() => { if (mon.error) { mon.error = ''; if (graph === g) reportStatus(g) } })
+      .catch(fail)
+  }
+  if (cfg.on) { if (mon.el.paused) void mon.el.play().catch(fail) } else if (!mon.el.paused) mon.el.pause()
+}
+
 /**
  * Brings the graph in line with the mixer: adds/removes strips, updates every parameter, and opens or closes the input
  * devices strips need (a strip added while running opens its device on the fly).
@@ -184,11 +213,12 @@ function applyMixer(m: MixerConfig): void {
     applyStrip(g.ctx, nodes, s, gains[i])
   })
   param(g.masterGain.gain, dbToGain(m.masterDb), g.ctx)
-  param(g.delay.delayTime, Math.min(5, Math.max(0, m.delayMs / 1000)), g.ctx) // changes live, from the mixer's master section
   syncChain(g.ctx, g.masterRig, m.masterChain)
+  syncMonitor(g, m.monitor)
 
   // Close inputs no strip uses any more; open the ones that are new.
   const needed = new Map<string, string>()
+  needed.set('app:video', 'Video playback (stereo)') // always open: its level is what the Audience box shows, whether or not a channel uses it
   for (const s of m.strips) {
     const key = sourceKeyOf(g, s)
     if (key !== null) needed.set(key, s.source?.label ?? g.defaultLabel)
@@ -211,14 +241,16 @@ function applyMixer(m: MixerConfig): void {
 
 /** Reports every open input and what it delivered, so the interface can show them and offer the right channels. */
 function reportStatus(g: Graph): void {
-  const devices = [...g.sources.values()].map((s) => ({ id: s.key, label: s.label, channels: s.channelCount, ...(s.error ? { error: s.error } : {}) }))
+  // The video's soundtrack is open for its meter even when no channel uses it; the status lists it only when a channel does.
+  const videoInMix = !!mixer?.strips.some((s) => s.source?.deviceId === 'app:video')
+  const devices = [...g.sources.values()].filter((s) => s.key !== 'app:video' || videoInMix).map((s) => ({ id: s.key, label: s.label, channels: s.channelCount, ...(s.error ? { error: s.error } : {}) }))
   const failed = devices.filter((d) => d.error)
   const allFailed = devices.length > 0 && failed.length === devices.length
   const message = devices.length
     ? devices.map((d) => `${d.label}: ${d.error ? `cannot open (${d.error})` : `${d.channels} channel${d.channels === 1 ? '' : 's'}`}`).join(' · ')
     : 'Running, no inputs in the mix yet'
   const def = g.defaultKey ? g.sources.get(g.defaultKey) : undefined
-  audioBridge.report({ state: allFailed ? 'error' : 'running', message, channelCount: def?.channelCount ?? 0, devices })
+  audioBridge.report({ state: allFailed ? 'error' : 'running', message, channelCount: def?.channelCount ?? 0, devices, ...(g.monitor.error ? { monitorError: g.monitor.error } : {}) })
 }
 
 const peakOf = (buf: Float32Array): number => {
@@ -249,7 +281,15 @@ function readMeters(g: Graph, m: MixerConfig): Meters {
     a.getFloatTimeDomainData(buf)
     return gainToDb(peakOf(buf))
   }) as [number, number]
-  return { strips, masterPeakDb: master, reductions }
+  let audience: Meters['audience'] = null
+  if (g.videoMeter) {
+    const { node, buf } = g.videoMeter
+    node.getFloatTimeDomainData(buf)
+    let sumSq = 0
+    for (let i = 0; i < buf.length; i++) sumSq += buf[i] * buf[i]
+    audience = { peakDb: gainToDb(peakOf(buf)), rmsDb: gainToDb(Math.sqrt(sumSq / buf.length)) }
+  }
+  return { strips, masterPeakDb: master, reductions, audience }
 }
 
 /** 1 kHz beep at the start of every wall-clock second, for the A/V sync check. Returns a stop function. */
@@ -331,7 +371,14 @@ async function openSource(g: Graph, key: string, label: string): Promise<Source>
     ctx.createMediaElementSource(el).connect(upmix)
     const timer = setInterval(applyVideoPlayback, 250) // also corrects drift while playing
     applyVideoPlayback()
+    const meter = ctx.createAnalyser()
+    meter.fftSize = 1024
+    upmix.connect(meter)
+    meter.connect(g.mute) // pulled by the graph like the other analysers
+    g.videoMeter = { node: meter, buf: new Float32Array(1024) }
     return finish(upmix, 2, () => {
+      meter.disconnect()
+      if (g.videoMeter?.node === meter) g.videoMeter = null
       clearInterval(timer)
       el.pause()
       el.removeAttribute('src')
@@ -394,20 +441,27 @@ async function apply(cfg: AudioConfig, initialMixer: MixerConfig): Promise<void>
     const masterGain = c.createGain()
     masterGain.channelCount = 2 // the master is always stereo, whatever its effects do
     masterGain.channelCountMode = 'explicit'
-    const delay = c.createDelay(5)
-    delay.delayTime.value = Math.min(5, Math.max(0, initialMixer.delayMs / 1000))
     const tap = new AudioWorkletNode(c, 'pcm-tap', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCount: 2, channelCountMode: 'explicit' })
     const mute = c.createGain()
     mute.gain.value = 0 // keeps analysers and the tap pulled by the graph without playing anything out loud
     sum.connect(masterGain) // until the master's effects are wired
-    masterGain.connect(delay).connect(tap).connect(mute).connect(c.destination)
+    masterGain.connect(tap).connect(mute).connect(c.destination)
+    // The monitor: a copy of the mix (silent until switched on) into a stream that an audio element plays on its own device.
+    const monGain = c.createGain()
+    monGain.gain.value = 0
+    const monDest = c.createMediaStreamDestination()
+    monGain.connect(monDest)
+    masterGain.connect(monGain)
+    const monEl: Monitor['el'] = new Audio()
+    monEl.srcObject = monDest.stream
+    const monitor: Monitor = { gain: monGain, el: monEl, deviceId: null, error: '' }
 
     const masterSplit = c.createChannelSplitter(2)
     masterGain.connect(masterSplit)
     const masterMeters = [c.createAnalyser(), c.createAnalyser()] as [AnalyserNode, AnalyserNode]
     masterMeters.forEach((a, i) => { a.fftSize = 1024; masterSplit.connect(a, i); a.connect(mute) })
 
-    const g: Graph = { ctx: c, sum, masterRig: { head: sum, tail: masterGain, fx: [], shape: '\u0000' }, masterGain, delay, masterMeters, mute, strips: new Map(), sources: new Map(), opening: new Map(), defaultKey: def.key, defaultLabel: def.label, timers: [] }
+    const g: Graph = { ctx: c, sum, masterRig: { head: sum, tail: masterGain, fx: [], shape: '\u0000' }, masterGain, monitor, videoMeter: null, masterMeters, mute, strips: new Map(), sources: new Map(), opening: new Map(), defaultKey: def.key, defaultLabel: def.label, timers: [] }
     graph = g
     applyMixer(initialMixer)
     await Promise.allSettled([...g.opening.values()]) // wait for the first devices so the status already says what each delivered

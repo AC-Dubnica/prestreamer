@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { DEFAULT_ATEM_ADDRESS, atemAddress, canSend, idleAtem, isValidAtemAddress, sanitizeAtemSettings, switchableInputs, type AtemStatus } from '../src/shared/atem'
+import { DEFAULT_ATEM_ADDRESS, atemAddress, canSend, defaultAtemButtons, idleAtem, isValidAtemAddress, sanitizeAtemButtons, sanitizeAtemSettings, switchableInputs, type AtemStatus } from '../src/shared/atem'
 import { AtemController, type AtemClient } from '../src/main/atem'
 
 const raw = (inputId: number, shortName: string, meAvailability = 15) => ({ inputId, shortName, longName: `${shortName} long`, meAvailability })
@@ -20,11 +20,19 @@ describe('ATEM addresses', () => {
   })
 
   it('falls back to the factory address', () => {
-    expect(sanitizeAtemSettings({ address: 'nonsense url' })).toEqual({ address: '' })
-    expect(sanitizeAtemSettings(null)).toEqual({ address: '' })
-    expect(sanitizeAtemSettings({ address: ' 10.1.1.9 ' })).toEqual({ address: '10.1.1.9' })
+    expect(sanitizeAtemSettings({ address: 'nonsense url' })).toEqual({ address: '', buttons: defaultAtemButtons })
+    expect(sanitizeAtemSettings(null)).toEqual({ address: '', buttons: defaultAtemButtons })
+    expect(sanitizeAtemSettings({ address: ' 10.1.1.9 ' })).toEqual({ address: '10.1.1.9', buttons: defaultAtemButtons })
     expect(atemAddress({ address: '' })).toBe(DEFAULT_ATEM_ADDRESS)
     expect(atemAddress({ address: '10.1.1.9' })).toBe('10.1.1.9')
+  })
+})
+
+describe('ATEM buttons', () => {
+  it('show everything unless told otherwise, and repair anything that is not a yes or no', () => {
+    expect(sanitizeAtemButtons(undefined)).toEqual({ preview: true, cut: true, auto: true })
+    expect(sanitizeAtemButtons({ preview: false, cut: 'no', auto: 0 })).toEqual({ preview: false, cut: true, auto: true })
+    expect(sanitizeAtemSettings({ address: '10.0.0.5', buttons: { auto: false } })).toEqual({ address: '10.0.0.5', buttons: { preview: true, cut: true, auto: false } })
   })
 })
 
@@ -154,10 +162,27 @@ describe('AtemController', () => {
     expect(t.saved).toEqual([])
     expect(t.ctl.getStatus().state).toBe('connected')
     await t.ctl.setAddress('10.9.9.9')
-    expect(t.saved).toEqual([{ address: '10.9.9.9' }])
+    expect(t.saved).toEqual([{ address: '10.9.9.9', buttons: defaultAtemButtons }])
     expect(t.client.disconnect).toHaveBeenCalled()
     expect(t.ctl.getStatus()).toMatchObject({ state: 'searching', address: '10.9.9.9' })
     await vi.waitFor(() => expect(t.client.connect).toHaveBeenLastCalledWith('10.9.9.9'))
+    await t.ctl.stop()
+  })
+
+  it('hides and shows buttons, remembers the choice, and keeps it through a new address and a lost switcher', async () => {
+    const t = make()
+    t.ctl.start()
+    await vi.waitFor(() => expect(t.client.connect).toHaveBeenCalled())
+    t.emit('connected')
+    expect(t.ctl.getStatus().buttons).toEqual(defaultAtemButtons)
+    const after = t.ctl.setButtons({ preview: false, auto: false })
+    expect(after.buttons).toEqual({ preview: false, cut: true, auto: false })
+    expect(t.saved.at(-1)).toMatchObject({ buttons: { preview: false, cut: true, auto: false } })
+    t.emit('disconnected')
+    expect(t.ctl.getStatus().buttons).toEqual({ preview: false, cut: true, auto: false })
+    await t.ctl.setAddress('10.9.9.9')
+    expect(t.ctl.getStatus().buttons).toEqual({ preview: false, cut: true, auto: false })
+    expect(t.saved.at(-1)).toEqual({ address: '10.9.9.9', buttons: { preview: false, cut: true, auto: false } })
     await t.ctl.stop()
   })
 

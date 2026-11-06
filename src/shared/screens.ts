@@ -1,6 +1,42 @@
 import { defaultLook, type MediaBackground, type Look, type ScreenConfig, type VideoSource } from './types'
 
-export const SCREEN_LIMITS = { width: [320, 7680], height: [240, 4320], fontSize: [16, 200] } as const
+export const SCREEN_LIMITS = { width: [320, 7680], height: [240, 4320], fontSize: [16, 200], videoVolumeDb: [-60, 0] } as const
+
+/** The look a stage monitor starts with: current slide, next slide and clock on black, no slide media. */
+export const STAGE_LOOK: Partial<Look> = { layout: 'stage', background: '#000', showMedia: false, showLabel: true, fontSize: 80 }
+
+/** What a display screen shows: slides in its own look, the stage view, or whatever another screen shows. */
+export type ScreenRole = { kind: 'own' } | { kind: 'stage' } | { kind: 'mirror'; of: string }
+
+export function roleOf(sc: ScreenConfig): ScreenRole {
+  if (sc.mirrorOf) return { kind: 'mirror', of: sc.mirrorOf }
+  return sc.look.layout === 'stage' ? { kind: 'stage' } : { kind: 'own' }
+}
+
+/** The patch for `ScreenManager.update` that gives a screen a role. Leaving the stage view puts back the plain slide look. */
+export function rolePatch(role: ScreenRole, cur: ScreenConfig): { mirrorOf: string; look?: Look } {
+  if (role.kind === 'mirror') return { mirrorOf: role.of }
+  if (role.kind === 'stage') return { mirrorOf: '', look: { ...cur.look, ...STAGE_LOOK } as Look }
+  if (cur.look.layout !== 'stage') return { mirrorOf: '' }
+  const d = defaultLook
+  return { mirrorOf: '', look: { ...cur.look, layout: d.layout, background: d.background, showMedia: d.showMedia, showLabel: d.showLabel, fontSize: d.fontSize } }
+}
+
+/** A size the screen (and the encoder) can take: within the limits, and even (yuv420p needs even width and height). */
+export function clampSize(width: number, height: number): { width: number; height: number } {
+  const fit = (v: number, [lo, hi]: readonly [number, number], fallback: number) => {
+    const n = Number.isFinite(v) ? Math.round(v) : fallback
+    return Math.min(hi, Math.max(lo, n)) & ~1
+  }
+  return { width: fit(width, SCREEN_LIMITS.width, 1920), height: fit(height, SCREEN_LIMITS.height, 1080) }
+}
+
+/** Whether a screen was cleared on its own (a mirror is also empty when the screen it follows is). */
+export function isBlank(screens: readonly ScreenConfig[], blank: readonly string[], id: string): boolean {
+  if (blank.includes(id)) return true
+  const source = screens.find((s) => s.id === id)?.mirrorOf
+  return !!source && blank.includes(source)
+}
 
 /** Common output sizes offered when creating or resizing a virtual screen. */
 export const SIZE_PRESETS: { label: string; width: number; height: number }[] = [
@@ -64,6 +100,8 @@ export function sanitizeLook(raw: unknown): Look {
     layout: r.layout === 'lower-third' || r.layout === 'stage' ? r.layout : 'full',
     textBoxOpacity: opacity,
     audioOutput: str(r.audioOutput, d.audioOutput, 300),
+    videoVolumeDb: typeof r.videoVolumeDb === 'number' && Number.isFinite(r.videoVolumeDb) ? Math.min(SCREEN_LIMITS.videoVolumeDb[1], Math.max(SCREEN_LIMITS.videoVolumeDb[0], r.videoVolumeDb)) : d.videoVolumeDb,
+    videoMuted: bool(r.videoMuted, d.videoMuted),
     backgroundMedia: sanitizeBackgroundMedia(r.backgroundMedia),
     liveBadge: bool(r.liveBadge, d.liveBadge),
     source: sanitizeSource(r.source),

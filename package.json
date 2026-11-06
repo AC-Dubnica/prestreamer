@@ -92,6 +92,22 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
     },
-    "afterPack": "scripts/after-pack.cjs"
+    "afterPack": "scripts/after-pack.cjs",
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage"
+        },
+        {
+          "target": "deb"
+        }
+      ],
+      "category": "AudioVideo",
+      "maintainer": "AC Dubnica <noreply@github.com>",
+      "synopsis": "Presenter and YouTube streamer for church services",
+      "icon": "build/icon.png",
+      "executableName": "prestreamer"
+    },
+    "npmRebuild": false
   }
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { SCREEN_LIMITS, SIZE_PRESETS, defaultScreens, moveById, sanitizeLook, sanitizeScreens } from '../src/shared/screens'
+import { SCREEN_LIMITS, SIZE_PRESETS, STAGE_LOOK, clampSize, defaultScreens, isBlank, moveById, roleOf, rolePatch, sanitizeLook, sanitizeScreens } from '../src/shared/screens'
 import { defaultLook } from '../src/shared/types'
 
 describe('defaultScreens', () => {
@@ -132,5 +132,79 @@ describe('mirror screens', () => {
     ])
     const m = Object.fromEntries(out.map((s) => [s.id, s.mirrorOf]))
     expect(m).toEqual({ stream: undefined, aud: undefined, a: undefined, b: undefined, c: undefined, d: 'aud' })
+  })
+})
+
+describe('the level of the video sound for the audience', () => {
+  it('starts at full level, not muted', () => {
+    expect(defaultLook).toMatchObject({ videoVolumeDb: 0, videoMuted: false })
+    expect(sanitizeLook({})).toMatchObject({ videoVolumeDb: 0, videoMuted: false })
+  })
+  it('keeps a level and the mute through validation', () => {
+    expect(sanitizeLook({ videoVolumeDb: -12.5, videoMuted: true })).toMatchObject({ videoVolumeDb: -12.5, videoMuted: true })
+  })
+  it('can only turn the sound down, and never below -60 dB', () => {
+    expect(sanitizeLook({ videoVolumeDb: 12 }).videoVolumeDb).toBe(SCREEN_LIMITS.videoVolumeDb[1])
+    expect(sanitizeLook({ videoVolumeDb: -500 }).videoVolumeDb).toBe(SCREEN_LIMITS.videoVolumeDb[0])
+  })
+  it('replaces wrong types with the defaults, and old saved screens (without them) get the defaults', () => {
+    expect(sanitizeLook({ videoVolumeDb: 'loud', videoMuted: 'yes' })).toMatchObject({ videoVolumeDb: 0, videoMuted: false })
+    expect(sanitizeLook({ videoVolumeDb: NaN }).videoVolumeDb).toBe(0)
+  })
+  it('is stable: sanitising a look changes nothing', () => {
+    const once = sanitizeLook({ videoVolumeDb: -20, videoMuted: true })
+    expect(sanitizeLook(once)).toEqual(once)
+  })
+})
+
+describe('isBlank', () => {
+  const [audience, stream] = defaultScreens()
+  const mirror = { ...audience, id: 'copy', mirrorOf: 'audience' }
+  const all = [audience, stream, mirror]
+
+  it('is true only for a cleared screen', () => {
+    expect(isBlank(all, ['stream'], 'stream')).toBe(true)
+    expect(isBlank(all, ['stream'], 'audience')).toBe(false)
+    expect(isBlank(all, [], 'stream')).toBe(false)
+  })
+
+  it('a mirror is empty with the screen it follows, but clearing the mirror leaves the original', () => {
+    expect(isBlank(all, ['audience'], 'copy')).toBe(true)
+    expect(isBlank(all, ['copy'], 'audience')).toBe(false)
+  })
+})
+
+describe('screen roles', () => {
+  const [audience] = defaultScreens()
+  const stage = { ...audience, id: 'st', look: { ...audience.look, ...STAGE_LOOK } }
+
+  it('tells what a display screen shows', () => {
+    expect(roleOf(audience)).toEqual({ kind: 'own' })
+    expect(roleOf(stage)).toEqual({ kind: 'stage' })
+    expect(roleOf({ ...audience, mirrorOf: 'stream' })).toEqual({ kind: 'mirror', of: 'stream' })
+  })
+
+  it('becoming a stage monitor takes the stage look and stops mirroring', () => {
+    const p = rolePatch({ kind: 'stage' }, { ...audience, mirrorOf: 'stream' })
+    expect(p.mirrorOf).toBe('')
+    expect(p.look).toMatchObject({ layout: 'stage', background: '#000', showMedia: false, fontSize: 80 })
+  })
+
+  it('leaving the stage view brings back the plain slide look, and keeps other settings', () => {
+    const p = rolePatch({ kind: 'own' }, { ...stage, look: { ...stage.look, textColor: '#ff0' } })
+    expect(p.look).toMatchObject({ layout: defaultLook.layout, background: defaultLook.background, showMedia: defaultLook.showMedia, fontSize: defaultLook.fontSize, textColor: '#ff0' })
+    expect(rolePatch({ kind: 'own' }, audience)).toEqual({ mirrorOf: '' })
+  })
+
+  it('a mirror only names its target', () => {
+    expect(rolePatch({ kind: 'mirror', of: 'stream' }, audience)).toEqual({ mirrorOf: 'stream' })
+  })
+})
+
+describe('clampSize', () => {
+  it('keeps sizes inside the limits and even', () => {
+    expect(clampSize(1921, 1081)).toEqual({ width: 1920, height: 1080 })
+    expect(clampSize(10, 99999)).toEqual({ width: 320, height: 4320 })
+    expect(clampSize(NaN, 721)).toEqual({ width: 1920, height: 720 })
   })
 })

@@ -1,7 +1,5 @@
 import type { PrestreamerApi } from '../preload'
 import { canSend, idleAtem, type AtemCommand, type AtemStatus } from '../shared/atem'
-import { askText } from './dialogs'
-import { iconButton } from './icons'
 
 function el<T extends HTMLElement = HTMLElement>(tag: string, props: Partial<T> = {}, ...kids: (Node | string)[]): T {
   const e = Object.assign(document.createElement(tag) as T, props)
@@ -10,10 +8,10 @@ function el<T extends HTMLElement = HTMLElement>(tag: string, props: Partial<T> 
 }
 
 /**
- * The ATEM section of the Present tab: program and preview rows, Cut and Auto. While no switcher answers the whole
- * panel is shown greyed out with the reason; only the address button stays usable. Control is over Ethernet.
+ * The ATEM controls: program and preview rows, Cut and Auto. The whole section (`host`) is shown only while a switcher is
+ * connected, so nobody without one sees it; the address and which buttons to show are in Settings → ATEM. Control is over Ethernet.
  */
-export function createAtemPanel(head: HTMLElement, body: HTMLElement, api: PrestreamerApi) {
+export function createAtemPanel(body: HTMLElement, api: PrestreamerApi, host: HTMLElement) {
   let status: AtemStatus = idleAtem
 
   const dot = el('span', { className: 'hdot' })
@@ -24,18 +22,15 @@ export function createAtemPanel(head: HTMLElement, body: HTMLElement, api: Prest
   const cut = el<HTMLButtonElement>('button', { textContent: 'Cut', title: 'Swap preview and program at once' })
   const auto = el<HTMLButtonElement>('button', { textContent: 'Auto', title: 'Swap preview and program with the switcher\'s transition' })
   const note = el('div', { className: 'status' })
-  const panel = el('div', { className: 'panelbox atem' }, title, el('div', { className: 'atemcap', textContent: 'Program' }), program, el('div', { className: 'atemcap', textContent: 'Preview' }), preview, el('div', { className: 'form atemgo' }, cut, auto), note)
+  const group = (caption: string, row: HTMLElement) => el('div', { className: 'atemgrp' }, el('div', { className: 'atemcap', textContent: caption }), row)
+  const previewGroup = group('Preview', preview)
+  const go = el('div', { className: 'form atemgo' }, cut, auto)
+  const panel = el('div', { className: 'panelbox atem' }, title, el('div', { className: 'atemgrid' }, group('Program', program), previewGroup, go), note)
   body.replaceChildren(panel)
 
   const send = (cmd: AtemCommand) => { if (canSend(status, cmd)) void api.atemSend(cmd) }
   cut.onclick = () => send({ type: 'cut' })
   auto.onclick = () => send({ type: 'auto' })
-
-  const settingsButton = iconButton('gear', 'ATEM address: the switcher is controlled over Ethernet (its USB port is only a webcam)', async () => {
-    const value = await askText({ title: 'ATEM address', label: 'IP address of the switcher (ATEM Software Control shows it; factory setting 192.168.10.240)', value: status.address, placeholder: '192.168.10.240', confirm: 'Connect' })
-    if (value !== null) { status = await api.atemSetAddress(value); render() }
-  }, { size: 15 })
-  head.append(settingsButton)
 
   function inputButtons(row: HTMLElement, kind: 'program' | 'preview'): void {
     const cmdFor = (input: number): AtemCommand => ({ type: kind, input })
@@ -51,18 +46,16 @@ export function createAtemPanel(head: HTMLElement, body: HTMLElement, api: Prest
 
   function render(): void {
     const on = status.state === 'connected'
-    panel.classList.toggle('off', !on)
-    panel.setAttribute('aria-disabled', String(!on))
-    dot.className = `hdot ${on ? 'good' : ''}`
-    label.textContent = on ? status.model : 'ATEM not connected'
+    host.hidden = !on
+    dot.className = 'hdot good'
+    label.textContent = status.model
     inputButtons(program, 'program')
     inputButtons(preview, 'preview')
-    if (!on) {
-      // Placeholder buttons so the disabled panel still shows what it will offer.
-      for (const [row, kind] of [[program, 'program'], [preview, 'preview']] as const) {
-        row.replaceChildren(...[1, 2, 3, 4].map((n) => Object.assign(el<HTMLButtonElement>('button', { textContent: `CAM ${n}`, className: `atembtn ${kind}` }), { disabled: true })))
-      }
-    }
+    // What the operator chose to show (Settings → ATEM).
+    previewGroup.hidden = !status.buttons.preview
+    cut.hidden = !status.buttons.cut
+    auto.hidden = !status.buttons.auto
+    go.hidden = !status.buttons.cut && !status.buttons.auto
     cut.disabled = !canSend(status, { type: 'cut' })
     auto.disabled = !canSend(status, { type: 'auto' })
     note.textContent = status.message

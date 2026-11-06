@@ -14,7 +14,13 @@ export interface AtemInput {
 /** searching: looking for / waiting for the switcher. connected: answering. */
 export type AtemLinkState = 'searching' | 'connected'
 
+/** Which switching controls the panels show (the operator may want only program buttons and a Cut). */
+export interface AtemButtons { preview: boolean; cut: boolean; auto: boolean }
+export const defaultAtemButtons: AtemButtons = { preview: true, cut: true, auto: true }
+
 export interface AtemStatus {
+  /** Which controls to show. */
+  buttons: AtemButtons
   state: AtemLinkState
   /** The address being tried or connected to. */
   address: string
@@ -30,6 +36,7 @@ export interface AtemStatus {
 }
 
 export const idleAtem: AtemStatus = {
+  buttons: defaultAtemButtons,
   state: 'searching',
   address: DEFAULT_ATEM_ADDRESS,
   model: '',
@@ -49,8 +56,9 @@ export type AtemCommand =
 export interface AtemSettings {
   /** Empty = the factory address. */
   address: string
+  buttons: AtemButtons
 }
-export const defaultAtemSettings: AtemSettings = { address: '' }
+export const defaultAtemSettings: AtemSettings = { address: '', buttons: defaultAtemButtons }
 
 const IPV4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/
 const HOSTNAME = /^(?=.{1,253}$)[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/
@@ -65,9 +73,15 @@ export function isValidAtemAddress(raw: unknown): raw is string {
   return !/^[\d.]+$/.test(a) && HOSTNAME.test(a)
 }
 
+export function sanitizeAtemButtons(raw: unknown): AtemButtons {
+  const r = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
+  const flag = (v: unknown, d: boolean) => (typeof v === 'boolean' ? v : d)
+  return { preview: flag(r.preview, true), cut: flag(r.cut, true), auto: flag(r.auto, true) }
+}
+
 export function sanitizeAtemSettings(raw: unknown): AtemSettings {
-  const address = (raw as { address?: unknown } | null)?.address
-  return { address: isValidAtemAddress(address) ? address.trim() : '' }
+  const r = raw as { address?: unknown; buttons?: unknown } | null
+  return { address: isValidAtemAddress(r?.address) ? r.address.trim() : '', buttons: sanitizeAtemButtons(r?.buttons) }
 }
 
 export const atemAddress = (s: AtemSettings): string => s.address || DEFAULT_ATEM_ADDRESS

@@ -24,6 +24,7 @@ const scenario = `(async () => {
 
   r.tabExists = !!tab('Monitor')
   r.noPreviewsBefore = qa('#view-monitor .monthumb').length === 0
+  await prestreamer.showSlide(null); await w(300) // selecting the service may already have put its first slide on air
   tab('Monitor').click(); await w(600)
   const s0 = await st()
   r.big = { box: !!q('#view-monitor .mbig canvas, #view-monitor .mbig div'), title: q('#view-monitor .mtitle').textContent, thumbs: qa('#view-monitor .monthumb').length, screens: s0.screens.length }
@@ -37,8 +38,20 @@ const scenario = `(async () => {
   r.moved = (await st()).slide?.text !== s1.slide?.text
   btn('Previous').click(); await w(500)
   r.back = (await st()).slide?.text === s1.slide?.text
-  btn('Clear').click(); await w(500)
-  r.cleared = (await st()).slide === null && q('#view-monitor .mnow').textContent === 'Nothing on air'
+  // Clear on a screen's own picture takes the slide off that screen only, and Show brings it back
+  const tool = (t) => qa('#view-monitor .mbig .mtool').find((b) => b.textContent.trim() === t)
+  const shownId = q('#view-monitor .monthumb.sel').dataset.id
+  tool('Clear').click(); await w(500)
+  const afterClear = await st()
+  r.cleared = afterClear.slide !== null && afterClear.blank.includes(shownId) && afterClear.blank.length === 1 && !!tool('Show')
+  tool('Show').click(); await w(500)
+  r.shownAgain = (await st()).blank.length === 0
+  // Open / close the shown screen from its own picture
+  const wasLive = (await st()).live.includes(shownId)
+  tool(wasLive ? 'Close' : 'Open').click(); await w(600)
+  r.toggled = (await st()).live.includes(shownId) !== wasLive && !!tool(wasLive ? 'Open' : 'Close')
+  tool(wasLive ? 'Open' : 'Close').click(); await w(600)
+  await prestreamer.showSlide(null); await w(300)
 
   // Picking another screen in the strip changes the big preview
   const thumbs = () => qa('#view-monitor .monthumb')
@@ -46,13 +59,6 @@ const scenario = `(async () => {
   const otherName = q('.monname', other).textContent
   other.click(); await w(500)
   r.pick = { title: q('#view-monitor .mtitle').textContent, selMarked: thumbs().filter((t) => t.classList.contains('sel')).length === 1 && q('.monname', q('#view-monitor .monthumb.sel')).textContent === otherName, name: otherName }
-
-  // Open / close the shown screen from here
-  const toggle = () => qa('#view-monitor .mbar button').find((b) => /screen$/.test(b.textContent.trim()))
-  const id = q('#view-monitor .monthumb.sel').dataset.id
-  const wasLive = (await st()).live.includes(id)
-  toggle().click(); await w(600)
-  r.toggled = (await st()).live.includes(id) !== wasLive && toggle().textContent.trim() === (wasLive ? 'Open screen' : 'Close screen')
 
   // Camera only is offered for the stream (virtual) screen only
   const stream = (await st()).screens.find((x) => x.kind === 'virtual')
@@ -120,9 +126,10 @@ const checks = [
   ['it shows a big preview of the selected screen and one small preview per screen', r.big.box && r.big.thumbs === r.big.screens && /\d+×\d+/.test(r.big.title), j(r.big)],
   ['it says "Nothing on air" at first', r.nothing === 'Nothing on air', j(r.nothing)],
   ['Next puts a slide on air and names it and the one after it', r.onAir.slide && /^On air: /.test(r.onAir.text) && r.onAir.nextInState && /^Next: /.test(r.onAir.next), j(r.onAir)],
-  ['Next and Previous step through the slides; Clear takes the slide off', r.moved && r.back && r.cleared, j([r.moved, r.back, r.cleared])],
+  ['Next and Previous step through the slides', r.moved && r.back, j([r.moved, r.back])],
+  ['Clear on a screen clears only that screen, Show brings it back', r.cleared && r.shownAgain, j([r.cleared, r.shownAgain])],
+  ['Open/Close works from the screen\'s own picture', r.toggled === true, ''],
   ['clicking a small preview selects that screen for the big one', r.pick.selMarked && r.pick.title.startsWith(r.pick.name), j(r.pick)],
-  ['Open/Close screen works from here and the label follows', r.toggled === true, ''],
   ['Camera only appears for the stream screen only, and switches the mode', r.cameraHiddenOnDisplay && r.camera.shown && r.camera.on, j([r.cameraHiddenOnDisplay, r.camera])],
   ['the arrow keys step through the slides on this tab too', r.keys === true, ''],
   ['the big picture fills the room it is given (limited only by the width or the height of the space, never both unused) and keeps its shape', r.fills.touches && r.fills.shape && r.fills.inside, j(r.fills)],

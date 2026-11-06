@@ -21,11 +21,17 @@ const scenario = `(async () => {
   const key = async (k) => { document.body.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true })); await w(500) }
   const stageCard = () => qa('#screens .screen').find((c) => /Stage monitor/.test(q('.name', c).textContent))
   const r = {}
+  // Adding / editing a screen goes through the dialog (Settings → Add screen… / Edit…), and waits for its button
+  const dlg = () => q('#modal:not([hidden]) .dialog')
+  const dbtn = (t) => qa('button', dlg()).find((b) => b.textContent.trim() === t)
+  const choose = async (value) => { const sel = q('select[title="What this screen shows"]', dlg()); sel.value = value; sel.dispatchEvent(new Event('change', { bubbles: true })); await w(200) }
+  const addScreenShowing = async (value) => { qa('#view-settings button').find((b) => b.textContent.trim() === 'Add screen…').click(); await w(300); await choose(value); dbtn('Add screen').click(); await w(700) }
+  const cardNamed = (name) => qa('#view-settings .setcard').find((c) => q('.scname', c)?.textContent === name)
 
   const before = (await st()).screens.length
   tab('Settings').click(); await w(500)
   qa('#view-settings .setnav button').find((b) => b.textContent.trim() === 'Screens').click(); await w(300) // the choice is remembered for the later visits
-  qa('#view-settings button').find((b) => b.textContent.trim() === 'Stage monitor').click(); await w(600)
+  await addScreenShowing('stage')
   const s = await st()
   const stage = s.screens.find((x) => x.look.layout === 'stage')
   r.added = { count: s.screens.length - before, kind: stage?.kind, background: stage?.look.background, showMedia: stage?.look.showMedia }
@@ -50,7 +56,7 @@ const scenario = `(async () => {
 
   // Reordering in Settings reorders the cards in the Present tab
   const presentOrder = () => qa('#screens .screen .name').map((n) => n.textContent)
-  const settingsCard = () => qa('#view-settings .setcard').find((c) => /Stage monitor/.test(q('input', c)?.value ?? c.textContent))
+  const settingsCard = () => qa('#view-settings .setcard').find((c) => /Stage monitor/.test(q('.scname', c).textContent))
   tab('Settings').click(); await w(500)
   const orderBefore = (await st()).screens.map((x) => x.name)
   settingsCard().querySelector('button[title="Move up: higher priority"]').click(); await w(600)
@@ -80,7 +86,7 @@ const scenario = `(async () => {
     grip.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true })); await w(600)
     const afterKey = (await st()).screens.map((x) => x.name)
     tab('Settings').click(); await w(500)
-    const settingsNames = qa('#view-settings .setcard input').map((i) => i.value).filter((v) => afterKey.includes(v))
+    const settingsNames = qa('#view-settings .setcard .scname').map((i) => i.textContent).filter((v) => afterKey.includes(v))
     tab('Present').click(); await w(300)
     return { before, marked, saved, afterKey, present: names(), settings: settingsNames }
   }
@@ -102,7 +108,7 @@ const scenario = `(async () => {
   await prestreamer.updateScreen(audience.id, { look: { layout: 'lower-third', textBoxOpacity: 0.55 } }); await w(400)
   const audCard = () => qa('#screens .screen').find((c) => q('.name', c).textContent === 'Audience')
   const caption = () => getComputedStyle(q('[data-slide-text]', audCard())).display
-  tab('Present').click(); await w(300)
+  tab('Present').click(); await prestreamer.showSlide(null); await w(400) // earlier steps left a slide on air
   r.emptyCaption = { noSlide: caption() }
   await prestreamer.showSlide({ label: 'Verse', text: 'Hello caption' }); await w(400)
   r.emptyCaption.withSlide = caption()
@@ -127,7 +133,7 @@ const scenario = `(async () => {
   // Removing a screen asks in a dialog (cancel keeps it, confirm removes it)
   tab('Settings').click(); await w(500)
   const count = (await st()).screens.length
-  const trash = () => qa('#view-settings .setcard').find((c) => /Stage monitor/.test(q('input', c)?.value ?? c.textContent))?.querySelector('button[title="Remove this screen"]')
+  const trash = () => qa('#view-settings .setcard').find((c) => /Stage monitor/.test(q('.scname', c).textContent))?.querySelector('button[title="Remove this screen"]')
   const modal = () => q('#modal:not([hidden]) .dialog')
   const btn = (t) => qa('button', modal()).find((b) => b.textContent.trim() === t)
   trash().click(); await w(300)
@@ -141,9 +147,9 @@ const scenario = `(async () => {
   // A stream mirror: a display screen that shows exactly what the stream shows
   tab('Settings').click(); await w(400)
   const beforeMirror = (await st()).screens.length
-  qa('#view-settings button').find((b) => b.textContent.trim() === 'Stream mirror').click(); await w(600)
+  const stream = (await st()).screens.find((x) => x.kind === 'virtual')
+  await addScreenShowing('mirror:' + stream.id)
   const sMirror = await st()
-  const stream = sMirror.screens.find((x) => x.kind === 'virtual')
   const mirror = sMirror.screens.find((x) => x.mirrorOf)
   r.mirror = { added: sMirror.screens.length - beforeMirror, follows: mirror?.mirrorOf === stream.id, kind: mirror?.kind }
   await prestreamer.updateScreen(stream.id, { look: { background: '#123456', videoAudio: true } }); await w(300)
@@ -153,9 +159,21 @@ const scenario = `(async () => {
   pl = await prestreamer.outputInit(mirror.id)
   r.mirror.camOnlyFollows = pl.cameraOnly === true
   await prestreamer.setCameraOnly(false); await w(200)
-  const sel2 = qa('#view-settings .setcard').find((c) => q('input', c)?.value === mirror.name).querySelector('select[title^="Show exactly"]')
-  sel2.value = ''; sel2.dispatchEvent(new Event('change', { bubbles: true })); await w(400)
+  // Cancel changes nothing; Apply with "Slides, in its own look" stops the mirroring; "Stage monitor" turns it into one
+  q('button[title^="Change name"]', cardNamed(mirror.name)).click(); await w(300)
+  await choose('stage'); dbtn('Cancel').click(); await w(300)
+  r.mirror.cancelKeeps = (await st()).screens.find((x) => x.id === mirror.id).mirrorOf === stream.id
+  q('button[title^="Change name"]', cardNamed(mirror.name)).click(); await w(300)
+  await choose('own'); dbtn('Apply').click(); await w(500)
   r.mirror.stopped = !(await st()).screens.find((x) => x.id === mirror.id).mirrorOf
+  q('button[title^="Change name"]', cardNamed(mirror.name)).click(); await w(300)
+  await choose('stage'); dbtn('Apply').click(); await w(500)
+  const nowStage = (await st()).screens.find((x) => x.id === mirror.id)
+  r.mirror.becameStage = nowStage.look.layout === 'stage' && nowStage.look.background === '#000'
+  q('button[title^="Change name"]', cardNamed(mirror.name)).click(); await w(300)
+  await choose('own'); dbtn('Apply').click(); await w(500)
+  const backToSlides = (await st()).screens.find((x) => x.id === mirror.id)
+  r.mirror.leftStage = backToSlides.look.layout !== 'stage' && backToSlides.look.background !== '#000'
   await prestreamer.updateScreen(mirror.id, { mirrorOf: stream.id }); await w(300)
   await prestreamer.removeScreen(stream.id); await w(400)
   r.mirror.sourceRemoved = !(await st()).screens.find((x) => x.id === mirror.id).mirrorOf
@@ -184,7 +202,7 @@ const checks = [
   ['stepping forward moves "next" along', r.nextMoved === true, ''],
   ['clearing the slide clears "next" too', r.nextClearedWithSlide === true, ''],
   ['moving a screen up in Settings moves it in the Present tab too', r.reorder.changed === true && JSON.stringify(r.reorder.present) === JSON.stringify(r.reorder.saved), JSON.stringify(r.reorder)],
-  ['a Stream mirror display follows the stream screen: same look, silent, camera-only too; it can stop mirroring; it becomes ordinary if its source is removed', r.mirror.added === 1 && r.mirror.kind === 'display' && r.mirror.follows && r.mirror.payload.id && r.mirror.payload.bg === '#123456' && r.mirror.payload.silent && r.mirror.payload.camOnly === false && r.mirror.camOnlyFollows && r.mirror.stopped && r.mirror.sourceRemoved, JSON.stringify(r.mirror)],
+  ['a Stream mirror display follows the stream screen: same look, silent, camera-only too; it can stop mirroring; it becomes ordinary if its source is removed', r.mirror.added === 1 && r.mirror.kind === 'display' && r.mirror.follows && r.mirror.payload.id && r.mirror.payload.bg === '#123456' && r.mirror.payload.silent && r.mirror.payload.camOnly === false && r.mirror.camOnlyFollows && r.mirror.cancelKeeps && r.mirror.stopped && r.mirror.becameStage && r.mirror.leftStage && r.mirror.sourceRemoved, JSON.stringify(r.mirror)],
   ['dragging a screen card by its grip moves it (the drop marker shows), the order is saved, ↑ ↓ on the grip moves it a step, and Present and Settings show the same order', r.drag.marked === true && r.drag.saved[r.drag.saved.length - 1] === r.drag.before[0] && r.drag.afterKey.indexOf(r.drag.before[0]) === r.drag.afterKey.length - 2 && JSON.stringify(r.drag.present) === JSON.stringify(r.drag.afterKey) && JSON.stringify(r.drag.settings) === JSON.stringify(r.drag.afterKey), JSON.stringify(r.drag)],
   ['a screen card folds to its title bar (buttons stay), the choice is saved, and it unfolds again', r.fold.before && r.fold.hidden && r.fold.barStays && r.fold.saved && r.fold.shownAgain, JSON.stringify(r.fold)],
   ['lower third: no text block (no empty dark box) without a slide; the caption appears with one and goes away again', r.emptyCaption.noSlide === 'none' && r.emptyCaption.withSlide === 'flex' && r.emptyCaption.cleared === 'none', JSON.stringify(r.emptyCaption)],

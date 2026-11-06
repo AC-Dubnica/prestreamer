@@ -48,6 +48,10 @@ export interface Look {
   textBoxOpacity: number
   /** Output device id for that sound ('' = system default). Point it at the mixer's USB return. */
   audioOutput: string
+  /** How loud that sound is, in dB below full level (0 = full, down to -60); it can only be turned down. */
+  videoVolumeDb: number
+  /** That sound switched off without losing the level. */
+  videoMuted: boolean
   /** A picture or looping video behind the text of this screen, for slides that bring no picture or video of their own. */
   backgroundMedia: MediaBackground | null
   /** Show a "LIVE" badge on this screen while the stream is running, so the room knows the service is being broadcast. */
@@ -167,6 +171,8 @@ export interface ScreenState {
   /** Screen ids currently live (window open). */
   live: string[]
   slide: Slide | null
+  /** Screens that were cleared on their own: they show nothing until the next slide is shown. */
+  blank: string[]
   /** The live announcement, if one is on air. Independent of the slide and the video. */
   announcement: Announcement | null
   /** The stream's screens show only the live camera: no text, slide media, video cues or announcements. */
@@ -213,6 +219,8 @@ export const defaultLook: Look = {
   layout: 'full',
   textBoxOpacity: 0,
   audioOutput: '',
+  videoVolumeDb: 0,
+  videoMuted: false,
   backgroundMedia: null,
   liveBadge: false,
   source: { type: 'none' },
@@ -228,6 +236,7 @@ export const IPC = {
   removeScreen: 'screen:remove',
   setLive: 'screen:set-live',
   showSlide: 'slide:show',
+  clearScreen: 'slide:clear-screen',
   outputInit: 'output:init',
   outputUpdate: 'output:update',
   streamStart: 'stream:start',
@@ -254,6 +263,7 @@ export const IPC = {
   playbackGet: 'playback:get',
   streamKeyState: 'streamkey:state',
   streamKeyForget: 'streamkey:forget',
+  streamKeySet: 'streamkey:set',
   streamSettingsGet: 'streamsettings:get',
   streamSettingsSet: 'streamsettings:set',
   identifyDisplays: 'screens:identify',
@@ -280,6 +290,7 @@ export const IPC = {
   atemState: 'atem:state',
   atemSetAddress: 'atem:set-address',
   atemSend: 'atem:send',
+  atemSetButtons: 'atem:set-buttons',
 } as const
 
 export interface OutputPayload {
@@ -315,6 +326,8 @@ export interface AudioStatus {
   channelCount: number
   /** Every input that is open, with the channels it delivered, or why it could not be opened. */
   devices?: { id: string; label: string; channels: number; error?: string }[]
+  /** Why the monitor output could not be used (the device is gone, say); absent while it works or is off. */
+  monitorError?: string
 }
 
 export const defaultAudio: AudioConfig = { source: { type: 'silence' } }
@@ -340,6 +353,8 @@ export interface Meters {
   /** Per strip, in the same order as the mixer config: peak and RMS in dBFS, compressor gain reduction in dB (≤ 0). */
   strips: { peakDb: number; rmsDb: number; reductionDb: number }[]
   masterPeakDb: [number, number]
+  /** The sound of the video playing for the audience, before its level is applied (null while the audio engine is not running). */
+  audience: { peakDb: number; rmsDb: number } | null
   /** Gain reduction in dB (≤ 0) of every effect that reduces gain (gate, compressor, limiter, de-esser), by effect id. */
   reductions: Record<string, number>
 }

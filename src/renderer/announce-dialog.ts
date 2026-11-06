@@ -15,6 +15,8 @@ export interface AnnounceDeps {
   getState(): ScreenState
   getQuick(): QuickMessage[]
   setQuick(list: QuickMessage[]): void
+  /** Announcing from a single-screen view: start with just this screen ticked (and don't remember that as the usual choice). */
+  only?: string | null
 }
 
 interface Remembered { style: AnnounceStyle; tone: AnnounceTone; autoHideSec: number | null; screens: string[] | null }
@@ -42,7 +44,7 @@ const TIME_LABELS: [string, string][] = [['', 'Until I clear it'], ['10', '10 se
  * Ctrl/Cmd+Enter. The announcement lays over the screens without changing the slide or the video underneath.
  */
 export function openAnnounceDialog(deps: AnnounceDeps): void {
-  const { api } = deps
+  const { api, only } = deps
   const mem = recall()
   const state = deps.getState()
 
@@ -55,7 +57,7 @@ export function openAnnounceDialog(deps: AnnounceDeps): void {
   time.append(...TIME_LABELS.map(([v, t]) => el<HTMLOptionElement>('option', { value: v, textContent: t, selected: v === String(mem.autoHideSec ?? '') })))
   const save = el<HTMLInputElement>('input', { type: 'checkbox' })
 
-  const screenBoxes = state.screens.map((sc) => ({ sc, box: el<HTMLInputElement>('input', { type: 'checkbox', checked: mem.screens === null || mem.screens.includes(sc.id) }) }))
+  const screenBoxes = state.screens.map((sc) => ({ sc, box: el<HTMLInputElement>('input', { type: 'checkbox', checked: only ? sc.id === only : mem.screens === null || mem.screens.includes(sc.id) }) }))
   const chosen = () => screenBoxes.filter((b) => b.box.checked).map((b) => b.sc.id)
 
   const sendBtn = el<HTMLButtonElement>('button', { className: 'danger', textContent: 'Show now' })
@@ -76,7 +78,7 @@ export function openAnnounceDialog(deps: AnnounceDeps): void {
     const screens = ids.length === state.screens.length ? null : ids
     const ok = await api.announceShow({ text: message, style: st, tone: tn, screens, autoHideSec })
     if (!ok) return
-    remember({ style: st, tone: tn, autoHideSec, screens })
+    remember({ style: st, tone: tn, autoHideSec, screens: only ? mem.screens : screens })
     if (save.checked && message === text.value.trim()) deps.setQuick(await api.announceQuickSave({ id: crypto.randomUUID(), text: message.trim(), style: st, tone: tn }))
     closeDialog()
   }
@@ -112,7 +114,7 @@ export function openAnnounceDialog(deps: AnnounceDeps): void {
           el('label', {}, el('span', { textContent: 'Style' }), style),
           el('label', {}, el('span', { textContent: 'Colour' }), tone),
           el('label', {}, el('span', { textContent: 'Stays' }), time)),
-        el('div', { className: 'annscreens' }, el('span', { className: 'dlabel', textContent: 'Show on' }), ...screenBoxes.map(({ sc, box }) => el('label', { className: 'chk' }, box, ` ${sc.name}`))),
+        el('div', { className: 'annscreens' }, el('span', { className: 'dlabel', textContent: 'Show on' }), el('div', { className: 'annlist' }, ...screenBoxes.map(({ sc, box }) => el('label', { className: 'chk' }, box, el('span', { textContent: sc.name }))))),
         el('label', { className: 'chk' }, save, ' Save as a quick message'),
       ),
       el('div', { className: 'dfoot' }, hint, el('span', { className: 'grow' }), el('button', { textContent: 'Cancel', onclick: () => close() }), sendBtn),

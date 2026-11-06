@@ -1,6 +1,9 @@
 import type { PrestreamerApi } from '../preload'
 import { appliesTo } from '../shared/announce'
+import { createAtemPanel } from './atem-panel'
+import { makeSplitter } from './splitter'
 import { bestGrid } from '../shared/layout'
+import { isBlank } from '../shared/screens'
 import type { PlaybackState, ScreenConfig, ScreenState } from '../shared/types'
 import { iconButton } from './icons'
 import { scaledPreview, type ScaledPreview } from './slideview'
@@ -28,11 +31,17 @@ const MODE_KEY = 'prestreamer.monitorMode'
 const recallMode = (): Mode => { try { return localStorage.getItem(MODE_KEY) === 'all' ? 'all' : 'one' } catch { return 'one' } }
 
 /** A preview that fills the room it is given (as large as its shape allows) with an OFF cover for closed screens. */
-interface Shown { box: HTMLElement; pv: ScaledPreview; off: HTMLElement }
+interface Shown { box: HTMLElement; pv: ScaledPreview; off: HTMLElement; clear: HTMLButtonElement; toggle: HTMLButtonElement }
 function shown(): Shown {
   const pv = scaledPreview()
   const off = el('div', { className: 'off', textContent: 'OFF' })
-  return { box: el('div', { className: 'mbig pv' }, pv.box, off), pv, off }
+  // Controls for this one screen, on its picture. They must not also select the cell they are in.
+  const clear = el<HTMLButtonElement>('button', { className: 'mtool' })
+  const toggle = el<HTMLButtonElement>('button', { className: 'mtool' })
+  const tools = el('div', { className: 'mtools' }, clear, toggle)
+  tools.onclick = (e) => e.stopPropagation()
+  tools.ondblclick = (e) => e.stopPropagation()
+  return { box: el('div', { className: 'mbig pv' }, pv.box, off, tools), pv, off, clear, toggle }
 }
 
 /**
@@ -54,7 +63,7 @@ export function createMonitorView(root: HTMLElement, deps: MonitorDeps) {
     b.onclick = () => setMode(m)
     return b
   })
-  const head = el('div', { className: 'mhead' }, title, el('span', { className: 'grow' }), el('div', { className: 'seg' }, ...modeButtons))
+  const modeSwitch = el('div', { className: 'seg' }, ...modeButtons)
   const focusArea = el('div', { className: 'mfit' })
   const grid = el('div', { className: 'mgrid' })
   const content = el('div', { className: 'mcontent' })
@@ -62,26 +71,51 @@ export function createMonitorView(root: HTMLElement, deps: MonitorDeps) {
   const next = el('div', { className: 'mnext' })
   const bar = el('div', { className: 'mbar' })
   const strip = el('div', { className: 'mstrip' })
-  root.replaceChildren(el('div', { className: 'mmain' }, head, content, bar, now, next), strip)
+  // The controls and the mode switch share one row above both columns, so they stay where they are in either mode.
+  // The switcher sits under the picture, so a camera change never needs another tab.
+  const atemBody = el('div')
+  const atem = el('div', { className: 'matem', hidden: true }, el('div', { className: 'head2' }, 'ATEM'), atemBody) // only while a switcher is connected
+  createAtemPanel(atemBody, api, atem)
+  // One screen: the big picture on the left (a panel of its own) and, on the right, a resizable panel with the screens, what is on
+  // air and the switcher. All screens: one column; what is on air and the switcher then go under the grid.
+  const extra = el('div', { className: 'mextra' }, now, next, atem)
+  const main = el('div', { className: 'mmain' }, content, title)
+  const side = el('div', { className: 'mside' }, strip, extra)
+  const splitter = el('div')
+  root.replaceChildren(bar, main, splitter, side)
+  makeSplitter(splitter, { host: root, variable: '--side', side: 'right', min: 220, max: 640, initial: 340, key: 'prestreamer.monitor.side', panel: () => side })
 
-  const previous = iconButton('up', 'Previous slide (←)', () => deps.step(-1), { label: 'Previous' })
-  const forward = iconButton('down', 'Next slide (→ or Space)', () => deps.step(1), { label: 'Next', className: 'primary' })
-  const clear = iconButton('x', 'Take the slide off every screen (Esc)', () => void api.showSlide(null), { label: 'Clear' })
+  const previous = iconButton('up', 'Previous slide (←)', () => deps.step(-1), { label: 'Previous', className: 'step' })
+  const forward = iconButton('down', 'Next slide (→ or Space)', () => deps.step(1), { label: 'Next', className: 'primary step' })
   const playPause = iconButton('play', 'Play or pause the video (Space)', () => void api.playbackCommand({ type: deps.getPlayback().playing ? 'pause' : 'play' }))
-  const toggle = el<HTMLButtonElement>('button')
   const camera = iconButton('camera', 'Camera only: the stream shows just the live camera', () => void api.setCameraOnly(!deps.getState().cameraOnly), { label: 'Camera only' })
   const announce = iconButton('bell', 'Live announcement (A)', () => deps.openAnnounce(), { label: 'Announce' })
-  bar.append(previous, forward, clear, playPause, el('span', { className: 'grow' }), camera, announce, toggle)
+  // One row: the slide controls and Announce together on the left, the stream's Camera only alone on the right.
+  bar.append(previous, forward, playPause, announce, el('span', { className: 'grow' }), camera, modeSwitch)
 
   const look = (sc: ScreenConfig, state: ScreenState) => (sc.mirrorOf && state.screens.find((x) => x.id === sc.mirrorOf)) || sc
   function paint(pv: ScaledPreview, sc: ScreenConfig, state: ScreenState): void {
     const shownOn = look(sc, state)
     const [w, h] = deps.screenSize(sc)
-    pv.update(shownOn.look, state.slide, w, h, true, state.cameraOnly && shownOn.kind === 'virtual')
+    pv.update(shownOn.look, isBlank(state.screens, state.blank, sc.id) ? null : state.slide, w, h, true, state.cameraOnly && shownOn.kind === 'virtual')
     pv.setNext(state.next)
     pv.setPlayback(deps.getPlayback())
     pv.setAnnouncement(appliesTo(state.announcement, shownOn.id) ? state.announcement : null)
   }
+  /** The Clear and Open/Close buttons on a screen's own picture. */
+  function tools(s: Shown, sc: ScreenConfig, state: ScreenState): void {
+    const live = state.live.includes(sc.id)
+    const blank = isBlank(state.screens, state.blank, sc.id)
+    s.clear.textContent = blank ? 'Show' : 'Clear'
+    s.clear.title = blank ? `Bring the slide back on ${sc.name}` : `Take the slide off ${sc.name} only; the other screens keep theirs`
+    s.clear.disabled = !live || (!blank && !state.slide)
+    s.clear.onclick = () => void api.clearScreen(sc.id, !blank)
+    s.toggle.textContent = live ? 'Close' : 'Open'
+    s.toggle.title = `${live ? 'Close' : 'Open'} ${sc.name}`
+    s.toggle.classList.toggle('danger', live)
+    s.toggle.onclick = () => deps.toggleScreen(sc.id)
+  }
+
   /** A picture is sized by its shape: --ar lets the stylesheet fit it into whatever room its box has. */
   const setShape = (box: HTMLElement, sc: ScreenConfig) => { const [w, h] = deps.screenSize(sc); box.style.setProperty('--ar', String(w / h)) }
 
@@ -111,6 +145,7 @@ export function createMonitorView(root: HTMLElement, deps: MonitorDeps) {
     setShape(big.box, selected)
     paint(big.pv, selected, state)
     big.off.style.display = live ? 'none' : 'flex'
+    tools(big, selected, state)
     title.textContent = `${selected.name} · ${w}×${h}${live ? '' : ' · closed'}`
 
     // The strip: every screen, the selected one marked.
@@ -159,6 +194,7 @@ export function createMonitorView(root: HTMLElement, deps: MonitorDeps) {
       setShape(c.shown.box, sc)
       paint(c.shown.pv, sc, state)
       c.shown.off.style.display = live ? 'none' : 'flex'
+      tools(c.shown, sc, state)
       c.name.textContent = `${sc.name} · ${w}×${h}${live ? '' : ' · closed'}`
       c.root.classList.toggle('sel', sc.id === selected.id)
       c.root.dataset.id = sc.id
@@ -176,11 +212,12 @@ export function createMonitorView(root: HTMLElement, deps: MonitorDeps) {
     root.classList.toggle('multi', mode === 'all')
     modeButtons.forEach((b, i) => { const on = (i === 0) === (mode === 'one'); b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)) })
     if (!selected) return
+    const home = mode === 'one' ? side : main
+    if (extra.parentElement !== home) home.append(extra)
     if (mode === 'one') renderOne(state, selected)
     else renderAll(state, selected)
 
     const slide = state.slide
-    const live = state.live.includes(selected.id)
     now.textContent = slide ? `On air: ${slide.video ? `video ${slide.video.title}` : slide.picture ? slide.label : `${slide.label} — ${slide.text.split('\n')[0]}`}` : 'Nothing on air'
     next.textContent = state.next ? `Next: ${state.next.label}${state.next.text ? ` — ${state.next.text.split('\n')[0]}` : ''}` : ''
 
@@ -190,10 +227,6 @@ export function createMonitorView(root: HTMLElement, deps: MonitorDeps) {
     camera.hidden = selected.kind !== 'virtual'
     camera.classList.toggle('primary', state.cameraOnly)
     camera.setAttribute('aria-pressed', String(state.cameraOnly))
-    toggle.textContent = live ? `Close ${mode === 'all' ? selected.name : 'screen'}` : `Open ${mode === 'all' ? selected.name : 'screen'}`
-    toggle.className = live ? 'danger' : 'primary'
-    toggle.onclick = () => deps.toggleScreen(selected.id)
-    clear.disabled = !slide
   }
 
   function disposePreviews(): void {
@@ -214,5 +247,11 @@ export function createMonitorView(root: HTMLElement, deps: MonitorDeps) {
     show(): void { open = true; render() },
     hide(): void { open = false; disposePreviews() },
     render,
+    /** The screen being watched large, while the Monitor tab shows one screen (null in the multiview or another tab). */
+    single(): string | null {
+      if (!open || mode !== 'one') return null
+      const st = deps.getState()
+      return (st.screens.find((s) => s.id === deps.getSelected()) ?? st.screens[0])?.id ?? null
+    },
   }
 }

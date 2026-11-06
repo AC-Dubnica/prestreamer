@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, protocol, session } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, protocol, session } from 'electron'
 import { homedir } from 'node:os'
 import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -22,7 +22,7 @@ import { runDevHooks } from './devhooks'
 import { defaultSession, fitBounds, safeToRestore, sanitizeSession, type Session } from '../shared/session'
 import { defaultAppearance, forgetAppearanceMedia, sanitizeAppearance, type Appearance } from '../shared/appearance'
 import { AtemController, realAtemClient } from './atem'
-import { defaultAtemSettings, sanitizeAtemSettings, type AtemCommand } from '../shared/atem'
+import { defaultAtemSettings, sanitizeAtemButtons, sanitizeAtemSettings, type AtemCommand } from '../shared/atem'
 import { Streamer, fileTarget, youtubeTarget } from './streamer'
 
 app.setName('PreStreamer')
@@ -45,6 +45,15 @@ const serviceStore = new ListStore<Service>('services.json', SEED_SERVICES, user
 const screenStore = new ListStore<ScreenConfig>('screens.json', defaultScreens(), userData)
 const quickStore = new ListStore<QuickMessage>('announcements.json', SEED_QUICK_MESSAGES, userData)
 const bibleStore = new BibleStore(() => join(userData(), 'bibles'))
+
+// Linux. Output windows must land on a particular display, which a Wayland client may not ask for, so under a Wayland session
+// the app runs through XWayland (set PRESTREAMER_NATIVE_WAYLAND=1 to opt out). An AppImage cannot carry a root-owned
+// chrome-sandbox, and Ubuntu 24.04 blocks the unprivileged-namespace fallback, so it starts without the Chromium sandbox
+// (it only ever loads its own pages and local media); the .deb keeps the sandbox.
+if (process.platform === 'linux') {
+  if (process.env.XDG_SESSION_TYPE === 'wayland' && process.env.DISPLAY && !process.env.PRESTREAMER_NATIVE_WAYLAND) app.commandLine.appendSwitch('ozone-platform', 'x11')
+  if (process.env.APPIMAGE) app.commandLine.appendSwitch('no-sandbox')
+}
 
 // Created in whenReady: Electron's `screen` module is unusable before then.
 let screens: ScreenManager
@@ -164,13 +173,13 @@ async function startStream(req: StreamStartRequest): Promise<void> {
     const typed = req.streamKey?.trim()
     if (typed) streamKey.save(typed)
     key = typed || streamKey.load() || ''
-    if (!key) throw new Error('YouTube stream key is required (enter it once; it is then remembered)')
+    if (!key) throw new Error('No stream key yet: add it in Settings → Stream, under Destination')
   }
   const target = testServer
     ? { url: testServer, format: 'flv' as const, label: 'Local RTMP server (test)' }
     : req.mode === 'youtube'
       ? youtubeTarget(key)
-      : fileTarget(req.filePath || join(app.getPath('videos'), 'PreStreamer-test.mkv'))
+      : fileTarget(req.filePath || join(app.getPath('videos'), `PreStreamer ${new Date().toISOString().slice(0, 16).replace('T', ' ').replace(':', '-')}.mkv`))
   // Always the mixer's port: it carries silence while the mixer is off, so the mixer can be started at any time.
   const settings = streamSettings // fixed for the whole stream, whatever is edited meanwhile
   screens.setVirtualFrameRate(settings.fps)
@@ -187,6 +196,7 @@ ipcMain.handle(IPC.reorderScreen, (_e, id: string, target: string, after: boolea
 ipcMain.handle(IPC.moveScreen, (_e, id: string, delta: number) => screens.move(id, delta < 0 ? -1 : 1))
 ipcMain.handle(IPC.setLive, (_e, id: string, live: boolean) => screens.setLive(id, live))
 ipcMain.handle(IPC.showSlide, (_e, slide: Slide | null) => presentSlide(slide))
+ipcMain.handle(IPC.clearScreen, (_e, id: string, blank: boolean) => screens.setBlank(id, blank === true))
 ipcMain.handle(IPC.playbackCommand, (_e, cmd: PlaybackCommand) => playback.command(cmd))
 ipcMain.handle(IPC.playbackGet, () => playback.get())
 ipcMain.on(IPC.playbackReport, (_e, id: string, pos: number) => screens.report(id, pos))
@@ -255,8 +265,10 @@ ipcMain.handle(IPC.appearanceSet, (_e, raw: unknown) => setAppearance(sanitizeAp
 ipcMain.handle(IPC.atemGet, () => atem.getStatus())
 ipcMain.handle(IPC.atemSetAddress, (_e, address: unknown) => atem.setAddress(address))
 ipcMain.handle(IPC.atemSend, (_e, cmd: AtemCommand) => atem.send(cmd))
+ipcMain.handle(IPC.atemSetButtons, (_e, patch: unknown) => atem.setButtons(sanitizeAtemButtons({ ...atem.getSettings().buttons, ...(patch && typeof patch === 'object' ? patch : {}) })))
 ipcMain.handle(IPC.streamKeyState, () => streamKey.has())
 ipcMain.handle(IPC.streamKeyForget, () => streamKey.forget())
+ipcMain.handle(IPC.streamKeySet, (_e, key: unknown) => { const k = typeof key === 'string' ? key.trim() : ''; if (k) streamKey.save(k) })
 ipcMain.handle(AUDIO_IPC.configure, (_e, cfg: AudioConfig) => audio.configure(cfg))
 ipcMain.handle(AUDIO_IPC.getStatus, () => audio.getStatus())
 ipcMain.handle(AUDIO_IPC.mixerGet, () => audio.getMixer())
@@ -264,6 +276,10 @@ ipcMain.handle(AUDIO_IPC.mixerSet, (_e, m: unknown) => audio.setMixer(m))
 
 app.whenReady().then(() => {
   setBundledToolsEnabled(app.isPackaged)
+  // Running from source under a plain Electron bundle: at least the Dock picture is ours (the Dock's name comes from the bundle; `npm start` renames it).
+  if (process.platform === 'darwin' && !app.isPackaged && existsSync(APP_ICON)) app.dock?.setIcon(APP_ICON)
+  // Windows and Linux would show Electron's default menu bar (with Reload) in the operator window; macOS keeps its own menu.
+  if (app.isPackaged && process.platform !== 'darwin') Menu.setApplicationMenu(null)
   protocol.handle(MEDIA_SCHEME, (req) => serveMedia(req))
   songStore.load()
   // Test and dev runs use their own data folder and must not pick up the real user's Quelea files.

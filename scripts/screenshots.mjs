@@ -104,7 +104,7 @@ const shots = {
     userData: (dir) => writeFileSync(join(dir, 'mixer.json'), JSON.stringify(band)),
     scenario: `${prelude}
       tab('Mixer').click(); await w(3000)
-      q('#view-mixer .strip:not(.master)').click(); await w(1500)`,
+      q('#view-mixer .strip:not(.master):not(.monitor):not(.audience)').click(); await w(1500)`,
   },
   // Settings shows the Visuals category: the Screens category lists the machine's own display names, which do not belong in a README.
   settings: {
