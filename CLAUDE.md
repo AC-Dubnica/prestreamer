@@ -17,7 +17,7 @@ npm run test:coverage
 node scripts/e2e-stage.mjs     # one end-to-end script (needs a display, ffmpeg on PATH); `npm run e2e` runs all after a build
 npm run screenshots            # retake docs/screenshots (launches the app once per picture; windows open briefly)
 npm run package:dir            # unpacked installer for a quick check; `npm run package` for installers
-npm version patch && git push --follow-tags   # release: the pushed vX.Y.Z tag runs .github/workflows/release.yml (mac arm64 + Intel, Windows, Linux x64 + arm64: .deb and .AppImage)
+npm version patch && git push --follow-tags   # release: the pushed vX.Y.Z tag runs .github/workflows/release.yml (mac arm64 + Intel, Windows, Linux x64: .deb and .AppImage)
 ```
 
 Node 22+. Development needs `ffmpeg`/`ffprobe` on PATH (`FFMPEG_PATH`/`FFPROBE_PATH` override; installers bundle their own, see `src/main/tools.ts`). macOS has no `timeout` command.

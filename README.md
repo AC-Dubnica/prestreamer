@@ -4,7 +4,7 @@ Presentation software for church services with a built-in live streamer: **prese
 
 Run a Sunday service from one window: a run sheet of songs, Bible passages, videos, presentations and pictures; lyrics over picture or video backgrounds on any number of physical and virtual screens; a stage monitor; live announcements; a mixing console for the stream audio; ATEM switcher control; and one-click streaming to YouTube. Built with Electron for macOS, Windows and Linux.
 
-**Download:** installers for macOS (Apple silicon and Intel), Windows and Linux (`.deb` and `.AppImage`, Intel/AMD and ARM) are on the [Releases page](https://github.com/AC-Dubnica/prestreamer/releases). They are not code-signed yet, so the first start needs one extra step (see *Build, CI and releases*).
+**Download:** installers for macOS (Apple silicon and Intel), Windows and Linux (`.deb` and `.AppImage`, Intel/AMD) are on the [Releases page](https://github.com/AC-Dubnica/prestreamer/releases). They are not code-signed yet, so the first start needs one extra step (see *Build, CI and releases*).
 
 | Present | Monitor (all screens) |
 |---|---|
@@ -188,7 +188,7 @@ Each script launches the real app against a scratch data folder (`PRESTREAMER_US
 
 | | macOS | Windows | Linux |
 |---|---|---|---|
-| Installer | `.dmg`, `.zip` (arm64, Intel) | `.exe` (NSIS), portable `.zip` | `.deb` (Ubuntu, Debian and relatives), `.AppImage` (any distribution), x64 and arm64 |
+| Installer | `.dmg`, `.zip` (arm64, Intel) | `.exe` (NSIS), portable `.zip` | `.deb` (Ubuntu, Debian and relatives), `.AppImage` (any distribution), x64 only |
 | Hardware encoder (*Auto* tries it, then falls back to software x264) | VideoToolbox | NVENC, Quick Sync, AMF | NVENC (VAAPI is not used) |
 | Presentations other than `.pptx` and PDF | Keynote, PowerPoint, LibreOffice | PowerPoint, LibreOffice | LibreOffice |
 | Quelea Bible auto-import | `/Applications/Quelea.app` and the home folder | Program Files and the home folder | `/opt/quelea`, `/usr/share/quelea` and the home folder |
@@ -209,7 +209,7 @@ Linux notes. The `.AppImage` needs FUSE 2 (`libfuse2t64` on Ubuntu 22.04 and lat
 | Behringer Wing capture (48 ch) | mixer verified on synthetic channels | **no hardware** |
 | Hardware encoding | | VideoToolbox verified on macOS; NVENC / Quick Sync / AMF untested |
 | **Windows and Linux** | unit tests in CI, installer builds (Linux packaging was checked on a Mac; the Linux and Windows end-to-end jobs have never been seen passing) | **running the app**: everything else |
-| Installers | built in CI for macOS (arm64, Intel), Windows and Linux (x64, arm64); the Apple silicon build was run | the Intel, Windows and Linux builds, signed/notarised builds |
+| Installers | built in CI for macOS (arm64, Intel), Windows and Linux (x64); the Apple silicon build was run | the Intel, Windows and Linux builds, signed/notarised builds |
 | Stream-key encryption | | needs a real OS keychain prompt |
 
 Known measured behaviour: audio lags the picture by roughly 150 ms and drifts by a few milliseconds per 20 s (audio clock versus system clock) in the synthetic flash-and-beep test; a video-delay control and drift correction are not built yet.
@@ -229,7 +229,7 @@ npm run package:dir    # unpacked app, faster, for checking
   git push --follow-tags     # the pushed tag starts the workflow
   ```
 
-  It builds macOS for Apple silicon (`*-mac-arm64`) and for Intel (`*-mac-x64`), Windows x64 (`*-win-x64` installer and portable zip) and Linux x64 and arm64 (`*-linux-x64` / `*-linux-arm64`, a `.deb` and an `.AppImage` each), each on a runner of its own kind because ffmpeg is bundled per architecture. It stops if the tag does not match the version in `package.json`. A tag with a dash (`v0.3.0-beta.1`) is marked as a pre-release. **Run workflow** in the Actions tab does a trial build with the installers as downloadable artifacts and publishes nothing.
+  It builds macOS for Apple silicon (`*-mac-arm64`) and for Intel (`*-mac-x64`), Windows x64 (`*-win-x64` installer and portable zip) and Linux x64 (`*-linux-x64`, a `.deb` and an `.AppImage`; ARM is not built because the bundled ffprobe has no Linux ARM binary), each on a runner of its own kind because ffmpeg is bundled per architecture. It stops if the tag does not match the version in `package.json`. A tag with a dash (`v0.3.0-beta.1`) is marked as a pre-release. **Run workflow** in the Actions tab does a trial build with the installers as downloadable artifacts and publishes nothing.
 - Installers bundle `ffmpeg` and `ffprobe` (`ffmpeg-static`, `ffprobe-static`), pruned to the target platform. **Licensing:** the bundled ffmpeg includes GPL components (libx264); if you distribute installers, check the licence files of those packages and your obligations. The `.pptx` renderer (`pptx-preview`) is a closed-source freely licensed package; check its terms before redistributing.
 - **Builds are unsigned.** On macOS open the `.dmg`, drag PreStreamer to Applications, then right-click the app and choose **Open** once (or run `xattr -cr /Applications/PreStreamer.app`). On Windows SmartScreen shows a warning: choose **More info**, then **Run anyway**. Signing needs an Apple Developer ID and a Windows certificate, configured in `package.json` → `build`. On a managed machine the warning may block the app entirely.
 
