@@ -11,11 +11,25 @@ declare const pptxBridge: Bridge
 
 const settle = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-/** Waits for every picture in the slide to load, then a moment for fonts and layout. */
+const frame = () => new Promise((r) => requestAnimationFrame(() => r(null)))
+
+/**
+ * Waits for every picture in the slide to load and be decoded (pictures can be added a moment after the slide is laid out, and
+ * a slow machine takes longer), then for fonts, layout and a couple of painted frames, so the capture shows the finished slide.
+ */
 async function whenDrawn(root: HTMLElement): Promise<void> {
-  const imgs = [...root.querySelectorAll('img')]
-  await Promise.all(imgs.map((i) => (i.complete ? null : new Promise((r) => { i.onload = i.onerror = () => r(null) }))))
+  let seen = -1
+  for (let round = 0; round < 20; round++) {
+    const imgs = [...root.querySelectorAll('img')]
+    await Promise.all(imgs.map((i) => (i.complete ? null : new Promise((r) => { i.onload = i.onerror = () => r(null) }))))
+    await Promise.all(imgs.map((i) => i.decode().catch(() => undefined)))
+    if (imgs.length === seen) break // nothing new appeared during the last wait
+    seen = imgs.length
+    await settle(150)
+  }
   await document.fonts.ready
+  await frame()
+  await frame()
   await settle(120)
 }
 
