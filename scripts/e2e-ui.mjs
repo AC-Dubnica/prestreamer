@@ -82,14 +82,13 @@ const scenario = `(async () => {
   r.screenDialogTitle = q('.sdtitle')?.textContent
   const layout = qa('select', modal()).find((s) => [...s.options].some((o) => o.value === 'lower-third'))
   layout.value = 'lower-third'; layout.dispatchEvent(new Event('change', { bubbles: true })); await w(400)
-  let st = (await screens()).find((s) => s.id === 'stream')
-  r.streamLayout = [st.look.layout, st.look.textBoxOpacity]
   const size = qa('input[type=number]', modal())[0]
   size.value = '52'; size.dispatchEvent(new Event('change', { bubbles: true })); await w(400)
-  st = (await screens()).find((s) => s.id === 'stream')
-  r.fontWaitsForApply = st.look.fontSize !== 52
+  let st = (await screens()).find((s) => s.id === 'stream')
+  r.fontWaitsForApply = st.look.fontSize !== 52 && st.look.layout !== 'lower-third'
   button('Apply', modal()).click(); await w(400)
   st = (await screens()).find((s) => s.id === 'stream')
+  r.streamLayout = [st.look.layout, st.look.textBoxOpacity]
   r.streamAfterFont = [st.look.layout, st.look.fontSize]
   r.audienceUntouched = (await screens()).find((s) => s.id === 'audience').look.layout === before2.find((s) => s.id === 'audience').look.layout
   r.doneClosesDialog = !modal()
@@ -97,10 +96,10 @@ const scenario = `(async () => {
   q('button[title^="Settings for Audience"]', card('Audience')).click(); await w(300)
   const swatch = qa('.sw button', modal()).find((b) => !b.classList.contains('picked') && b.title.startsWith('linear'))
   swatch.click(); await w(400)
+  button('Apply', modal()).click(); await w(400)
   const now = await screens()
   r.audienceBackgroundChanged = now.find((s) => s.id === 'audience').look.background !== before2.find((s) => s.id === 'audience').look.background
   r.streamBackgroundUntouched = now.find((s) => s.id === 'stream').look.background === before2.find((s) => s.id === 'stream').look.background
-  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await w(150)
 
   q('.pv', card('Audience')).click(); await w(200)
   r.cardClickSelects = card('Audience').classList.contains('sel') && !card('Stream').classList.contains('sel')
@@ -166,8 +165,8 @@ const checks = [
   ['Changes wait for Apply', r.fontWaitsForApply === true, ''],
   ['Apply closes the popup', r.doneClosesDialog === true, ''],
   ['clicking anywhere on a screen card selects it', r.cardClickSelects === true && r.cardClickMovesSelection === true, ''],
-  ['the header buttons say what they do', JSON.stringify(r.headerLabels) === JSON.stringify(['Announce', 'Clear slide', 'Open all screens', 'Close all screens']), JSON.stringify(r.headerLabels)],
-  ['the header buttons have space between them', r.headerGaps?.length === 3 && r.headerGaps.every((g) => g >= 8), JSON.stringify(r.headerGaps)],
+  ['the header buttons say what they do', JSON.stringify(r.headerLabels) === JSON.stringify(['Announce', 'Logo', 'Clear slide', 'Open all screens', 'Close all screens']), JSON.stringify(r.headerLabels)],
+  ['the header buttons have space between them', r.headerGaps?.length === 4 && r.headerGaps.every((g) => g >= 8), JSON.stringify(r.headerGaps)],
   ['each screen has an Open / Close button (not "Go live")', r.cardButtons?.length === 2 && r.cardButtons.every((t) => t === 'Close'), JSON.stringify(r.cardButtons)],
   ['with everything open: Close all is enabled, Open all is greyed out', r.start?.live === r.start?.total && r.start?.closeEnabled === true && r.start?.openDisabled === true, JSON.stringify(r.start)],
   ['Close all screens asks first', r.closeAllTitle === 'Close all screens?', r.closeAllTitle],

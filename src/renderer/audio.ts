@@ -27,7 +27,7 @@ interface StripNodes {
  * A chain of effects between two fixed nodes (a strip's trim and fader, or the master's sum and master fader). The effects
  * are rewired only when the chain's makeup changes (one added, removed or moved); settings changes never touch the wiring.
  */
-interface Rig { head: AudioNode; tail: AudioNode; fx: Fx[]; shape: string }
+interface Rig { head: AudioNode; tail: AudioNode; fx: Fx[]; shape: string; /** One channel (a strip) or two (the master). */ mono: boolean }
 
 const shapeOf = (chain: Effect[]): string => chain.map((e) => `${e.id}:${e.type}`).join(',')
 
@@ -39,7 +39,7 @@ function syncChain(ctx: AudioContext, rig: Rig, chain: Effect[]): void {
     const next = chain.map((e) => {
       const kept = old.get(e.id)
       if (kept && kept.type === e.type) { old.delete(e.id); return kept }
-      return createFx(ctx, e)
+      return createFx(ctx, e, rig.mono)
     })
     for (const f of old.values()) f.dispose()
     rig.head.disconnect()
@@ -132,7 +132,7 @@ function createStrip(g: Graph, strip: Strip): StripNodes {
     channel: strip.channel,
     from: null,
     trim,
-    rig: { head: trim, tail: fader, fx: [], shape: '\u0000' }, // a shape no chain has, so the first sync wires it
+    rig: { head: trim, tail: fader, fx: [], shape: '\u0000', mono: true }, // a shape no chain has, so the first sync wires it
     fader,
     pan: ctx.createStereoPanner(),
     meter: ctx.createAnalyser(),
@@ -461,7 +461,7 @@ async function apply(cfg: AudioConfig, initialMixer: MixerConfig): Promise<void>
     const masterMeters = [c.createAnalyser(), c.createAnalyser()] as [AnalyserNode, AnalyserNode]
     masterMeters.forEach((a, i) => { a.fftSize = 1024; masterSplit.connect(a, i); a.connect(mute) })
 
-    const g: Graph = { ctx: c, sum, masterRig: { head: sum, tail: masterGain, fx: [], shape: '\u0000' }, masterGain, monitor, videoMeter: null, masterMeters, mute, strips: new Map(), sources: new Map(), opening: new Map(), defaultKey: def.key, defaultLabel: def.label, timers: [] }
+    const g: Graph = { ctx: c, sum, masterRig: { head: sum, tail: masterGain, fx: [], shape: '\u0000', mono: false }, masterGain, monitor, videoMeter: null, masterMeters, mute, strips: new Map(), sources: new Map(), opening: new Map(), defaultKey: def.key, defaultLabel: def.label, timers: [] }
     graph = g
     applyMixer(initialMixer)
     await Promise.allSettled([...g.opening.values()]) // wait for the first devices so the status already says what each delivered

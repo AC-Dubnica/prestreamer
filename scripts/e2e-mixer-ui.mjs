@@ -22,6 +22,7 @@ const scenario = `(async () => {
   const strips = () => qa('#view-mixer .strip:not(.master):not(.monitor):not(.audience)')
   const order = () => strips().map((s) => s.dataset.key)
   const saved = async () => (await prestreamer.audioMixerGet())
+  const st = async () => await prestreamer.getState()
   const savedOrder = async () => (await saved()).strips.map((s) => s.source.deviceId + '#' + s.channel)
   const card = (title) => qa('#view-mixer .fxcard').find((c) => q('.ctitle', c)?.textContent === title)
   const cardTitles = () => qa('#view-mixer .fxcard .ctitle').map((t) => t.textContent)
@@ -166,8 +167,9 @@ const scenario = `(async () => {
   // --- undo and redo: Cmd/Ctrl+Z steps back through the changes made above, Cmd/Ctrl+Shift+Z forward again
   await w(700)
   const press = async (k, shiftKey = false, extra = {}) => { document.body.dispatchEvent(new KeyboardEvent('keydown', { key: k, metaKey: true, shiftKey, bubbles: true, cancelable: true, ...extra })); await w(500) }
-  const undoBtn = () => q('#view-mixer button[aria-label^="Undo"]'), redoBtn = () => q('#view-mixer button[aria-label^="Redo"]')
-  r.historyButtons = { undoEnabled: !undoBtn().disabled, redoDisabled: redoBtn().disabled, inAddRow: !!undoBtn().closest('.mxadd'), nextToReset: redoBtn().nextElementSibling?.textContent.trim() === 'Reset', noTitle: !q('#view-mixer h2') && !/Stream mix/.test(q('#view-mixer').textContent) }
+  const byLabel = (re) => qa('#view-mixer button').find((b) => re.test(b.getAttribute('aria-label') ?? '')) // the label says "Nothing to undo yet" while disabled
+  const undoBtn = () => byLabel(/undo/i), redoBtn = () => byLabel(/redo/i)
+  r.historyButtons = { undoEnabled: !undoBtn().disabled, redoDisabled: redoBtn().disabled, inAddRow: !!undoBtn().closest('.mxadd'), nextToReset: redoBtn().nextElementSibling?.textContent.trim() === 'Reset', noTitle: !q('#view-mixer h2') && !qa('#view-mixer *').some((e) => e.children.length === 0 && e.textContent.trim() === 'Stream mix' && !e.closest('.strip.master')) }
   const masterComp = async () => (await saved()).masterChain.find((e) => e.type === 'comp')
   await press('z'); r.undo1 = (await masterComp())?.on
   await press('z'); r.undo2 = types((await saved()).masterChain)
@@ -182,9 +184,9 @@ const scenario = `(async () => {
   undoBtn().click(); await w(500)
   r.buttonUndo = (await masterComp())?.on
   const nameBox = q('#view-mixer .strip input[type=text]')
-  const ev = new KeyboardEvent('keydown', { key: 'z', metaKey: true, bubbles: true, cancelable: true })
-  nameBox.dispatchEvent(ev)
-  r.textBoxKeepsOwnUndo = ev.defaultPrevented === false
+  const undoKey = new KeyboardEvent('keydown', { key: 'z', metaKey: true, bubbles: true, cancelable: true })
+  nameBox.dispatchEvent(undoKey)
+  r.textBoxKeepsOwnUndo = undoKey.defaultPrevented === false
   // Ctrl+Y redoes too
   await press('y', false, { metaKey: false, ctrlKey: true })
   r.ctrlY = (await masterComp())?.on

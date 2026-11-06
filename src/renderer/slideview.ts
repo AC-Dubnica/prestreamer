@@ -369,13 +369,16 @@ export class SlideView {
       Object.assign(video.style, fill)
       this.backdrop.append(video)
     } else {
-      // A thumbnail shows one still frame of the video: metadata only, paused, never playing (a playing video per thumbnail is too heavy).
-      const still = document.createElement('video')
-      still.src = `${mediaUrl(bg.file)}#t=0.5`
-      still.muted = true
-      still.preload = 'metadata'
-      still.playsInline = true
+      // A thumbnail shows one still frame of the video, taken once per file and kept as a picture: the lists of slides are redrawn
+      // on every slide change, and a video element per thumbnail would reload (and flash) each time.
+      const still = document.createElement('img')
       Object.assign(still.style, fill, { pointerEvents: 'none' })
+      const have = posters.get(bg.file)
+      if (have) still.src = have
+      else {
+        this.backdrop.style.background = '#111827'
+        void posterOf(bg.file).then((url) => { if (url && this.backdropKey === key) { still.src = url; this.backdrop.style.background = '' } })
+      }
       this.backdrop.append(still)
     }
   }
@@ -391,6 +394,39 @@ export class SlideView {
     if (source.type === 'testpattern') this.stopSource = mountTestPattern(this.media, live)
     else if (source.type === 'camera') this.stopSource = mountCamera(this.media, source, live)
   }
+}
+
+/** One still frame (a small JPEG) per video file, for thumbnails. */
+const posters = new Map<string, string>()
+const posterJobs = new Map<string, Promise<string | null>>()
+function posterOf(file: string): Promise<string | null> {
+  let job = posterJobs.get(file)
+  if (!job) {
+    job = new Promise<string | null>((resolve) => {
+      const v = document.createElement('video')
+      v.crossOrigin = 'anonymous' // the media protocol allows it, which keeps the canvas readable
+      v.muted = true
+      v.preload = 'auto'
+      const done = (url: string | null) => { clearTimeout(timer); v.removeAttribute('src'); v.load(); if (url) posters.set(file, url); resolve(url) }
+      const timer = setTimeout(() => done(null), 10_000)
+      v.onerror = () => done(null)
+      v.onloadeddata = () => { v.currentTime = Math.min(0.5, (v.duration || 1) / 2) }
+      v.onseeked = () => {
+        try {
+          const c = document.createElement('canvas')
+          c.width = 320
+          c.height = Math.max(1, Math.round(320 * (v.videoHeight / (v.videoWidth || 1))))
+          c.getContext('2d')!.drawImage(v, 0, 0, c.width, c.height)
+          done(c.toDataURL('image/jpeg', 0.7))
+        } catch {
+          done(null)
+        }
+      }
+      v.src = mediaUrl(file)
+    })
+    posterJobs.set(file, job)
+  }
+  return job
 }
 
 const fill = { position: 'absolute', inset: '0', width: '100%', height: '100%', objectFit: 'cover' } as const

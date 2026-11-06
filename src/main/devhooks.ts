@@ -257,6 +257,11 @@ const MIXER_SEGMENTS: { name: string; channels: (number | { channel: number; sou
   { name: 'order-comp-eq', channels: [1], apply: (m) => { m.strips[0].chain.push(makeEffect('comp', { thresholdDb: -30, ratio: 20, kneeDb: 0, attackMs: 1, releaseMs: 100 }), makeEffect('eq', { midFreq: 440, midGainDb: 12, midQ: 1 })) } },
   { name: 'order-eq-comp', channels: [1], apply: (m) => { m.strips[0].chain.push(makeEffect('eq', { midFreq: 440, midGainDb: 12, midQ: 1 }), makeEffect('comp', { thresholdDb: -30, ratio: 20, kneeDb: 0, attackMs: 1, releaseMs: 100 })) } },
   // An effect that is switched off leaves the signal alone, however it is set.
+  { name: 'bypassed-comp', channels: [1], apply: (m) => { m.strips[0].chain.push(makeEffect('comp', { on: false, thresholdDb: -60, ratio: 20 })) } },
+  { name: 'bypassed-eq', channels: [1], apply: (m) => { m.strips[0].chain.push(makeEffect('eq', { on: false, midFreq: 440, midGainDb: 12 })) } },
+  { name: 'bypassed-gate', channels: [1], apply: (m) => { m.strips[0].chain.push(makeEffect('gate', { on: false, thresholdDb: 0, rangeDb: 80 })) } },
+  { name: 'bypassed-delay', channels: [1], apply: (m) => { m.strips[0].chain.push(makeEffect('delay', { on: false, mix: 1 })) } },
+  { name: 'bypassed-reverb', channels: [1], apply: (m) => { m.strips[0].chain.push(makeEffect('reverb', { on: false, mix: 1 })) } },
   { name: 'bypassed', channels: [1], apply: (m) => { m.strips[0].chain.push(makeEffect('comp', { on: false, thresholdDb: -60, ratio: 20 }), makeEffect('eq', { on: false, midFreq: 440, midGainDb: 12 }), makeEffect('gate', { on: false, thresholdDb: 0, rangeDb: 80 }), makeEffect('delay', { on: false, mix: 1 }), makeEffect('reverb', { on: false, mix: 1 })) } },
   { name: 'ch3-baseline', channels: [3], apply: () => {} },
   { name: 'deesser', channels: [3], apply: (m) => { m.strips[0].chain.push(makeEffect('deesser', { freq: 2000, thresholdDb: -40, reductionDb: 12 })) } },

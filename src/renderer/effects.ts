@@ -41,7 +41,11 @@ function setLimiter(ctx: BaseAudioContext, node: AudioWorkletNode, on: boolean, 
   param(wp(node, 'makeup'), 0, ctx)
 }
 
-export function createFx(ctx: AudioContext, e: Effect): Fx {
+/**
+ * `mono`: the chain carries one channel (a strip, before its pan). An effect must then hand on one channel too: a stereo output
+ * would turn the strip stereo, and the pan stage after it would pass it 3 dB louder than the same signal as mono.
+ */
+export function createFx(ctx: AudioContext, e: Effect, mono = false): Fx {
   const base = { id: e.id, type: e.type }
   switch (e.type) {
     case 'hpf': {
@@ -116,7 +120,13 @@ export function createFx(ctx: AudioContext, e: Effect): Fx {
       const pre = ctx.createDelay(0.25)
       const conv = ctx.createConvolver()
       input.connect(output) // dry
-      input.connect(pre).connect(conv).connect(wet).connect(output)
+      // The room is stereo; on a mono strip its tail is folded down to one channel so the strip stays mono.
+      const tail: AudioNode = conv
+      const wetOut = mono ? Object.assign(ctx.createGain(), { channelCount: 1, channelCountMode: 'explicit' as ChannelCountMode }) : null
+      input.connect(pre).connect(conv)
+      if (wetOut) tail.connect(wetOut).connect(wet)
+      else tail.connect(wet)
+      wet.connect(output)
       wet.gain.value = 0
       // Making the impulse response takes a moment, so it is only remade when the room itself (decay, damping) changes.
       let shape = ''
@@ -130,7 +140,7 @@ export function createFx(ctx: AudioContext, e: Effect): Fx {
       }
       return {
         ...base, input, output, reduction: () => 0,
-        dispose: () => { if (timer) clearTimeout(timer); for (const x of [input, output, wet, pre, conv]) x.disconnect() },
+        dispose: () => { if (timer) clearTimeout(timer); for (const x of [input, output, wet, pre, conv, ...(wetOut ? [wetOut] : [])]) x.disconnect() },
         apply(x) {
           if (x.type !== 'reverb') return
           param(pre.delayTime, x.preDelayMs / 1000, ctx)
