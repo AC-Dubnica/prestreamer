@@ -1,6 +1,6 @@
 {
   "name": "prestreamer",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "PreStreamer: presenter + streamer for church services",
   "main": "dist/main/index.js",
   "private": true,
