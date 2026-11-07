@@ -5,7 +5,8 @@ declare module 'pdfjs-dist/build/pdf.min.mjs' {
     getViewport(o: { scale: number }): Viewport
     render(o: { canvasContext: CanvasRenderingContext2D; viewport: Viewport; background?: string }): { promise: Promise<void> }
     cleanup(): void
+    getTextContent(): Promise<{ items: unknown[] }>
   }
-  export function getDocument(o: { data: Uint8Array; isEvalSupported?: boolean; useSystemFonts?: boolean }): { promise: Promise<{ numPages: number; getPage(n: number): Promise<Page> }> }
+  export function getDocument(o: { data: Uint8Array; isEvalSupported?: boolean; useSystemFonts?: boolean }): { promise: Promise<{ numPages: number; getPage(n: number): Promise<Page>; destroy(): Promise<void> }> }
 }
 declare module 'pdfjs-dist/build/pdf.worker.min.mjs'

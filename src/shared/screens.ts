@@ -5,6 +5,12 @@ export const SCREEN_LIMITS = { width: [320, 7680], height: [240, 4320], fontSize
 /** The look a stage monitor starts with: current slide, next slide and clock on black, no slide media. */
 export const STAGE_LOOK: Partial<Look> = { layout: 'stage', background: '#000', showMedia: false, showLabel: true, fontSize: 80 }
 
+/** Screens drawn offscreen at a fixed size (the rest are windows on a display). */
+export const isOffscreen = (kind: ScreenConfig['kind']): boolean => kind !== 'display'
+
+/** Screens that can take a role of their own (own slides, stage monitor, mirror): displays and NDI screens, not the stream's screen. */
+export const hasRoles = (kind: ScreenConfig['kind']): boolean => kind !== 'virtual'
+
 /** What a display screen shows: slides in its own look, the stage view, or whatever another screen shows. */
 export type ScreenRole = { kind: 'own' } | { kind: 'stage' } | { kind: 'mirror'; of: string }
 
@@ -116,7 +122,7 @@ export function sanitizeScreens(raw: unknown): ScreenConfig[] {
   for (const item of raw) {
     const r = obj(item)
     if (typeof r.id !== 'string' || !r.id || seen.has(r.id)) continue
-    if (r.kind !== 'display' && r.kind !== 'virtual') continue
+    if (r.kind !== 'display' && r.kind !== 'virtual' && r.kind !== 'ndi') continue
     seen.add(r.id)
     const name = typeof r.name === 'string' && r.name.trim() ? r.name.trim().slice(0, 40) : 'Screen'
     const displayId = r.kind === 'display' && typeof r.displayId === 'number' && Number.isInteger(r.displayId) ? r.displayId : null
@@ -129,7 +135,8 @@ export function sanitizeScreens(raw: unknown): ScreenConfig[] {
       height: int(r.height, 1080, SCREEN_LIMITS.height),
       look: sanitizeLook(r.look),
     }
-    if (r.kind === 'display' && typeof r.mirrorOf === 'string' && r.mirrorOf) screen.mirrorOf = r.mirrorOf.slice(0, 80)
+    if ((r.kind === 'display' || r.kind === 'ndi') && typeof r.mirrorOf === 'string' && r.mirrorOf) screen.mirrorOf = r.mirrorOf.slice(0, 80)
+    if (r.kind === 'ndi') screen.ndiSound = r.ndiSound === 'none' || r.ndiSound === 'video' || r.ndiSound === 'stream' ? r.ndiSound : r.ndiSound === false ? 'none' : 'stream' // an early version stored true/false
     if (displayId !== null && typeof r.displayLabel === 'string' && r.displayLabel) screen.displayLabel = r.displayLabel.slice(0, 120)
     out.push(screen)
   }
@@ -137,7 +144,7 @@ export function sanitizeScreens(raw: unknown): ScreenConfig[] {
   const byId = new Map(out.map((s) => [s.id, s]))
   for (const s of out) {
     const target = s.mirrorOf ? byId.get(s.mirrorOf) : undefined
-    if (s.mirrorOf && (s.kind !== 'display' || !target || target.id === s.id || target.mirrorOf)) delete s.mirrorOf
+    if (s.mirrorOf && (!hasRoles(s.kind) || !target || target.id === s.id || target.mirrorOf)) delete s.mirrorOf
   }
   return out.length ? out : defaultScreens()
 }

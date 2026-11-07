@@ -1,11 +1,15 @@
 import * as pdfjs from 'pdfjs-dist/build/pdf.min.mjs'
 import * as worker from 'pdfjs-dist/build/pdf.worker.min.mjs'
 
+import { groupLines, type PdfLine } from '../shared/song-import'
+
+type Job = { data: Uint8Array; width: number; maxPages: number } | { texts: Uint8Array[] }
+
 interface Bridge {
-  onJob(cb: (job: { data: Uint8Array; width: number; maxPages: number }) => void): void
+  onJob(cb: (job: Job) => void): void
   page(index: number, png: Uint8Array): Promise<void>
   progress(done: number, total: number): void
-  done(result: { pages: number } | { error: string }): void
+  done(result: { pages: number } | { texts: PdfLine[][] } | { error: string }): void
   ready(): void
 }
 declare const pdfBridge: Bridge
@@ -14,7 +18,9 @@ declare const pdfBridge: Bridge
 // hidden renderer window has nothing else to keep responsive.
 ;(globalThis as unknown as { pdfjsWorker: unknown }).pdfjsWorker = worker
 
-pdfBridge.onJob(async ({ data, width, maxPages }) => {
+pdfBridge.onJob(async (job) => {
+  if ('texts' in job) return readTexts(job.texts)
+  const { data, width, maxPages } = job
   try {
     const doc = await pdfjs.getDocument({ data, isEvalSupported: false, useSystemFonts: true }).promise
     const total = Math.min(doc.numPages, maxPages)
@@ -38,3 +44,19 @@ pdfBridge.onJob(async ({ data, width, maxPages }) => {
   }
 })
 pdfBridge.ready()
+
+/** The text lines of the first page of each PDF (a PDF that cannot be read gives an empty list). */
+async function readTexts(files: Uint8Array[]): Promise<void> {
+  const texts: PdfLine[][] = []
+  for (const data of files) {
+    try {
+      const doc = await pdfjs.getDocument({ data, isEvalSupported: false, useSystemFonts: true }).promise
+      const content = await (await doc.getPage(1)).getTextContent()
+      texts.push(groupLines((content.items as { str?: string; transform: number[]; height: number }[]).map((i) => ({ str: i.str ?? '', x: i.transform[4], y: i.transform[5], height: i.height }))))
+      await doc.destroy()
+    } catch {
+      texts.push([])
+    }
+  }
+  pdfBridge.done({ texts })
+}

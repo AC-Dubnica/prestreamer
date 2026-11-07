@@ -16,6 +16,15 @@ const api = {
   report: (s: AudioStatus) => ipcRenderer.send(AUDIO_IPC.report, s),
   meters: (m: Meters) => ipcRenderer.send(AUDIO_IPC.metersIn, m),
   pcm: (buf: ArrayBuffer) => ipcRenderer.send(AUDIO_IPC.pcm, buf),
+  videoPcm: (buf: ArrayBuffer) => ipcRenderer.send(AUDIO_IPC.videoPcm, buf),
+  nativeStart: (name: string): Promise<{ channels: number; id: number } | { error: string }> => ipcRenderer.invoke(AUDIO_IPC.nativeStart, name),
+  nativeStop: (name: string, id: number) => ipcRenderer.send(AUDIO_IPC.nativeStop, name, id),
+  onNativeData: (cb: (name: string, frames: ArrayBuffer) => void) => {
+    ipcRenderer.on(AUDIO_IPC.nativeData, (_e, name: string, frames: ArrayBuffer) => cb(name, frames))
+  },
+  onNativeEnded: (cb: (name: string, message: string) => void) => {
+    ipcRenderer.on(AUDIO_IPC.nativeEnded, (_e, name: string, message: string) => cb(name, message))
+  },
 }
 
 export type AudioApi = typeof api

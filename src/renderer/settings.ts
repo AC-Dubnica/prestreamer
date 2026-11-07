@@ -63,8 +63,9 @@ export function createSettingsView(root: HTMLElement, api: PrestreamerApi, toggl
     const live = state.live.includes(sc.id)
     const bound = state.displays.find((d) => d.id === sc.displayId)
     // A summary: what the screen is for, and where it is (or how big). Everything is changed in the Edit dialog.
-    const where = sc.kind === 'virtual'
-      ? `${sc.width}×${sc.height}`
+    const ndi = sc.kind === 'ndi' ? state.ndi[sc.id] : undefined
+    const where = sc.kind !== 'display'
+      ? `${sc.width}×${sc.height}${sc.kind === 'ndi' ? ' · NDI' : ''}`
       : sc.displayId === null ? 'Opens in a window (no display chosen)' : bound ? `Display ${state.displays.indexOf(bound) + 1} · ${bound.label} · ${bound.width}×${bound.height}${bound.primary ? ' · main display' : ''}` : `${sc.displayLabel ?? 'Display'} (not connected)`
     const warn = sc.kind === 'display' && bound?.primary ? el('div', { className: 'warn', textContent: state.displays.length > 1 ? 'This is your main display, where this window is. While live, the screen covers it.' : 'This is your only display, so a live screen covers this window.' }) : null
 
@@ -82,7 +83,7 @@ export function createSettingsView(root: HTMLElement, api: PrestreamerApi, toggl
       el('div', { className: 'sethead' },
         el('span', { className: `dot ${live ? 'on' : ''}` }),
         el('strong', { className: 'scname', textContent: sc.name }),
-        el('span', { className: 'badge', textContent: sc.kind === 'display' ? 'Display screen' : 'Virtual screen' }),
+        el('span', { className: 'badge', textContent: sc.kind === 'display' ? 'Display screen' : sc.kind === 'ndi' ? 'NDI screen' : 'Virtual screen' }),
         el('span', { className: 'grow' }),
         el('button', { className: live ? 'danger' : 'primary', textContent: live ? 'Close' : 'Open', title: live ? `Close ${sc.name}` : `Open ${sc.name}`, onclick: () => toggleScreen(sc.id) }),
         iconButton('gear', 'Look: colours, fonts, background, text layout, video source', () => deps.configure(sc.id), { size: 15, label: 'Look…' }),
@@ -94,6 +95,7 @@ export function createSettingsView(root: HTMLElement, api: PrestreamerApi, toggl
       el('div', { className: 'scrole', textContent: describeRole(sc, state) }),
       el('div', { className: 'dim', textContent: where }),
       ...(warn ? [warn] : []),
+      ...(ndi ? [el('div', { className: ndi.state === 'error' ? 'warn' : 'dim', textContent: ndi.message })] : []),
     )
   }
 

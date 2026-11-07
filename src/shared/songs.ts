@@ -38,6 +38,20 @@ export function parseSong(song: Song): Slide[] {
   return slides
 }
 
+/** Text reduced for searching: lower case and without accents, so "jezis" finds "Ježiš" and "Cervena" finds "červená". */
+export const fold = (text: string): string => text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+
+const noZeros = (n: string): string => n.replace(/^0+(?=\d)/, '')
+
+/** Whether what was typed in a search box finds a song: part of its title, or the start of its number (053 is found by 53 too). Empty matches everything. */
+export const songMatches = (song: { title: string; number?: string }, query: string): boolean => {
+  const q = fold(query.trim())
+  if (!q) return true
+  if (fold(song.title).includes(q)) return true
+  const n = fold((song.number ?? '').trim())
+  return n !== '' && (n.startsWith(q) || noZeros(n).startsWith(noZeros(q)))
+}
+
 export const SEED_SONGS: Song[] = [
   {
     id: 'amazing-grace',
@@ -98,6 +112,7 @@ export function readingSlides(slides: { label: string; text: string }[], all: Ba
 
 /** The extra details a song can carry (the same ones Quelea has), in the order the editor lists them. */
 export const SONG_DETAIL_FIELDS = [
+  { key: 'number', label: 'Song number' },
   { key: 'author', label: 'Author' },
   { key: 'copyright', label: 'Copyright' },
   { key: 'ccli', label: 'CCLI number' },

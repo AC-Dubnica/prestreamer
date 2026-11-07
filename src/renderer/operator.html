@@ -97,7 +97,8 @@
       .srow button.ib { width: 30px; flex: none; justify-content: center; padding: 3px 0 } /* same size and spacing as the icons in the panel's header, so they line up in columns */
       .srow .t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
       .srow .n { color: var(--dim); width: 24px; flex: none; text-align: center; font-variant-numeric: tabular-nums } .srow .kind { flex: none; display: inline-flex; align-items: center } .srow button, .item button { padding: 0 6px; font-size: 11px }
-      .item { display: flex; align-items: center; gap: 6px } .item .t { flex: 1 }
+      .item { display: flex; align-items: center; gap: 6px } .item .t { flex: 1 } .item .num { flex: none; min-width: 3ch; color: var(--dim); font-size: 12px; font-variant-numeric: tabular-nums } .item .inservice { color: var(--ok, #4ade80); font-size: 12px; font-weight: 600; flex: none }
+      #toast { position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 12px); background: var(--panel2); color: var(--text); border: 1px solid var(--accent); padding: 9px 16px; border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,.45); opacity: 0; pointer-events: none; transition: opacity .15s, transform .15s; z-index: 50; max-width: 80vw } #toast.show { opacity: 1; transform: translate(-50%, 0) } #toast.error { border-color: var(--danger, #ef4444) }
       .vpanel { max-width: 560px } .vcard { margin-bottom: 14px }
       .vt { display: flex; gap: 8px; align-items: center; flex-wrap: wrap } .vt input[type=range] { flex: 1; min-width: 160px; padding: 0 }
       .vt .time { font-variant-numeric: tabular-nums; color: var(--dim); min-width: 110px; text-align: right }
@@ -299,6 +300,7 @@
         <aside id="songsleft">
           <div class="head">Songs <span class="tools" id="songtools"></span></div>
           <div class="svc"><input id="songfilter" type="text" placeholder="Search songs…" /></div>
+          <div id="songimport" class="status" role="status" hidden></div>
           <div id="library"></div>
         </aside>
         <div id="split-sl"></div>

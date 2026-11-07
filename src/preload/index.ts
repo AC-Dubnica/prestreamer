@@ -3,6 +3,7 @@ import type { Announcement, AnnounceRequest, QuickMessage } from '../shared/anno
 import type { Appearance } from '../shared/appearance'
 import type { AtemButtons, AtemCommand, AtemStatus } from '../shared/atem'
 import type { MixerConfig } from '../shared/mixer'
+import type { NativeInput } from '../shared/native-audio'
 import type { StreamSettings } from '../shared/stream-settings'
 import type { BibleImportResult, BibleSummary, BibleVerse } from '../shared/bible'
 import {
@@ -21,6 +22,8 @@ import {
   type Service,
   type Slide,
   type Song,
+  type SongExportResult,
+  type SongImportResult,
   type StreamStartRequest,
   type StreamStatus,
 } from '../shared/types'
@@ -32,6 +35,7 @@ const api = {
   },
   addVirtual: (name: string, w: number, h: number) => ipcRenderer.invoke(IPC.addVirtual, name, w, h),
   addDisplayScreen: (name: string, opts: { stage?: boolean; mirrorOf?: string } = {}) => ipcRenderer.invoke(IPC.addDisplayScreen, name, opts),
+  addNdiScreen: (name: string, opts: { width?: number; height?: number; stage?: boolean; mirrorOf?: string } = {}) => ipcRenderer.invoke(IPC.addNdiScreen, name, opts),
   updateScreen: (id: string, patch: Partial<ScreenConfig>) => ipcRenderer.invoke(IPC.updateScreen, id, patch),
   moveScreen: (id: string, delta: -1 | 1): Promise<void> => ipcRenderer.invoke(IPC.moveScreen, id, delta),
   reorderScreen: (id: string, target: string, after: boolean): Promise<void> => ipcRenderer.invoke(IPC.reorderScreen, id, target, after),
@@ -52,6 +56,9 @@ const api = {
   songsList: (): Promise<Song[]> => ipcRenderer.invoke(IPC.songsList),
   songsSave: (song: Song): Promise<Song[]> => ipcRenderer.invoke(IPC.songsSave, song),
   songsDelete: (id: string): Promise<Song[]> => ipcRenderer.invoke(IPC.songsDelete, id),
+  songsExport: (): Promise<SongExportResult | null> => ipcRenderer.invoke(IPC.songsExport),
+  songsClear: (): Promise<Song[]> => ipcRenderer.invoke(IPC.songsClear),
+  songsImport: (): Promise<{ songs: Song[]; result: SongImportResult } | null> => ipcRenderer.invoke(IPC.songsImport),
   servicesList: (): Promise<Service[]> => ipcRenderer.invoke(IPC.servicesList),
   servicesSave: (svc: Service): Promise<Service[]> => ipcRenderer.invoke(IPC.servicesSave, svc),
   servicesDelete: (id: string): Promise<Service[]> => ipcRenderer.invoke(IPC.servicesDelete, id),
@@ -92,6 +99,7 @@ const api = {
   streamKeySet: (key: string): Promise<void> => ipcRenderer.invoke(IPC.streamKeySet, key),
   audioConfigure: (cfg: AudioConfig): Promise<AudioStatus> => ipcRenderer.invoke(AUDIO_IPC.configure, cfg),
   audioGetStatus: (): Promise<AudioStatus> => ipcRenderer.invoke(AUDIO_IPC.getStatus),
+  audioNativeInputs: (): Promise<NativeInput[]> => ipcRenderer.invoke(AUDIO_IPC.nativeInputs),
   audioMixerGet: (): Promise<MixerConfig> => ipcRenderer.invoke(AUDIO_IPC.mixerGet),
   audioMixerSet: (m: MixerConfig): Promise<MixerConfig> => ipcRenderer.invoke(AUDIO_IPC.mixerSet, m),
   onMeters: (cb: (m: Meters) => void) => {

@@ -5,6 +5,8 @@ const PATHS = {
   presentation: '<rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M12 16v4M8 20h8"/>',
   film: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 4v16M17 4v16M3 9h4M3 15h4M17 9h4M17 15h4"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  export: '<path d="M12 15V4M7 9l5-5 5 5"/><path d="M4 19h16"/>',
+  import: '<path d="M12 4v11M7 10l5 5 5-5"/><path d="M4 19h16"/>',
   trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
   up: '<path d="M12 19V5M5 12l7-7 7 7"/>',
   down: '<path d="M12 5v14M5 12l7 7 7-7"/>',

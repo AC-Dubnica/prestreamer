@@ -46,7 +46,7 @@ const scenario = `(async () => {
   // song details are kept
   const details = q('#songeditor details')
   details.open = true
-  const author = qa('input', details)[0]
+  const author = qa('label', details).find((l) => l.textContent === 'Author').nextElementSibling // by its label: the song number comes first
   author.value = 'Anna Author'; author.dispatchEvent(new Event('input', { bubbles: true })); await w(200)
   r.detailDirty = q('#songeditor .dirty').textContent
   saveBtn().click(); await w(700)

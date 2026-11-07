@@ -1,4 +1,5 @@
 import type { Effect, EffectType } from '../shared/mixer'
+import type { FxLive } from '../shared/types'
 import { reverbImpulse } from '../shared/reverb'
 
 /** Parameter changes glide over ~10 ms, so moving a knob does not click. */
@@ -18,7 +19,56 @@ export interface Fx {
   apply(e: Effect): void
   /** Gain reduction in dB (≤ 0) right now; 0 for effects that do not reduce gain. */
   reduction(): number
+  /** What goes through the effect right now, for its graph (gate, compressor and EQ only). */
+  live?(): FxLive
   dispose(): void
+}
+
+/** Number of bands of the spectra the EQ graph draws (log-spaced, 20 Hz to 20 kHz). */
+export const SPECTRUM_BANDS = 64
+const FLOOR_DB = -100
+
+/** A tap that reports the peak level of what reaches `from`, in dBFS, over the last ~20 ms (the same window the effects' detectors look at). */
+function levelTap(ctx: BaseAudioContext, from: AudioNode): { read(): number; dispose(): void } {
+  const a = Object.assign(ctx.createAnalyser(), { fftSize: 1024, smoothingTimeConstant: 0 })
+  const buf = new Float32Array(a.fftSize)
+  from.connect(a)
+  return {
+    read() {
+      a.getFloatTimeDomainData(buf)
+      let peak = 0
+      for (let i = 0; i < buf.length; i++) { const v = Math.abs(buf[i]); if (v > peak) peak = v }
+      return peak > 1e-5 ? 20 * Math.log10(peak) : FLOOR_DB
+    },
+    dispose: () => a.disconnect(),
+  }
+}
+
+/** A tap that reports the spectrum of what reaches `from` as SPECTRUM_BANDS levels in dBFS (a little smoothed, so the picture moves but does not jitter). */
+function spectrumTap(ctx: BaseAudioContext, from: AudioNode): { read(): number[]; dispose(): void } {
+  const a = Object.assign(ctx.createAnalyser(), { fftSize: 4096, smoothingTimeConstant: 0.6 })
+  const bins = new Float32Array(a.frequencyBinCount)
+  const hz = ctx.sampleRate / a.fftSize
+  from.connect(a)
+  return {
+    read() {
+      a.getFloatFrequencyData(bins)
+      const out: number[] = []
+      for (let b = 0; b < SPECTRUM_BANDS; b++) {
+        const lo = 20 * 1000 ** (b / SPECTRUM_BANDS), hi = 20 * 1000 ** ((b + 1) / SPECTRUM_BANDS)
+        const i0 = Math.floor(lo / hz), i1 = Math.max(i0, Math.floor(hi / hz) - 1)
+        let v = FLOOR_DB
+        if (i1 > i0) for (let i = i0; i <= i1 && i < bins.length; i++) v = Math.max(v, bins[i])
+        else { // a band narrower than one bin (the lows): read between the two bins around its middle
+          const x = Math.sqrt(lo * hi) / hz, i = Math.min(bins.length - 2, Math.floor(x))
+          v = Math.max(FLOOR_DB, bins[i] + (bins[i + 1] - bins[i]) * (x - i))
+        }
+        out.push(Number.isFinite(v) ? Math.round(Math.max(FLOOR_DB, v)) : FLOOR_DB)
+      }
+      return out
+    },
+    dispose: () => a.disconnect(),
+  }
 }
 
 /** The processor of a worklet node reports its gain reduction on the node's port. */
@@ -59,9 +109,17 @@ export function createFx(ctx: AudioContext, e: Effect, mono = false): Fx {
     case 'eq': {
       const make = (type: BiquadFilterType) => Object.assign(ctx.createBiquadFilter(), { type })
       const low = make('lowshelf'), mid = make('peaking'), high = make('highshelf')
+      const input = ctx.createGain() // the chain connects here, so the sound can be tapped before the filters
+      input.connect(low)
       low.connect(mid).connect(high)
+      // The chain disconnects an effect's `output` whenever it rewires, which would also cut a tap hung on it: the tap sits on `high`.
+      const output = ctx.createGain()
+      high.connect(output)
+      const before = spectrumTap(ctx, input), after = spectrumTap(ctx, high)
       return {
-        ...base, input: low, output: high, reduction: () => 0, dispose: () => { low.disconnect(); mid.disconnect(); high.disconnect() },
+        ...base, input, output, reduction: () => 0,
+        live: () => ({ pre: before.read(), post: after.read() }),
+        dispose: () => { before.dispose(); after.dispose(); input.disconnect(); low.disconnect(); mid.disconnect(); high.disconnect(); output.disconnect() },
         apply(x) {
           if (x.type !== 'eq') return
           param(low.frequency, x.lowFreq, ctx); param(low.gain, x.on ? x.lowGainDb : 0, ctx)
@@ -73,8 +131,11 @@ export function createFx(ctx: AudioContext, e: Effect, mono = false): Fx {
     case 'gate': {
       let gr = 0
       const n = worklet(ctx, 'gate', (db) => { gr = db })
+      const input = ctx.createGain()
+      input.connect(n)
+      const tap = levelTap(ctx, input)
       return {
-        ...base, input: n, output: n, reduction: () => gr, dispose: () => n.disconnect(),
+        ...base, input, output: n, reduction: () => gr, live: () => ({ inDb: tap.read() }), dispose: () => { tap.dispose(); input.disconnect(); n.disconnect() },
         apply(x) {
           if (x.type !== 'gate') return
           param(wp(n, 'enabled'), x.on ? 1 : 0, ctx); param(wp(n, 'threshold'), x.thresholdDb, ctx); param(wp(n, 'range'), x.rangeDb, ctx)
@@ -85,8 +146,11 @@ export function createFx(ctx: AudioContext, e: Effect, mono = false): Fx {
     case 'comp': {
       let gr = 0
       const n = worklet(ctx, 'compressor', (db) => { gr = db })
+      const input = ctx.createGain()
+      input.connect(n)
+      const tap = levelTap(ctx, input)
       return {
-        ...base, input: n, output: n, reduction: () => gr, dispose: () => n.disconnect(),
+        ...base, input, output: n, reduction: () => gr, live: () => ({ inDb: tap.read() }), dispose: () => { tap.dispose(); input.disconnect(); n.disconnect() },
         apply(x) {
           if (x.type !== 'comp') return
           param(wp(n, 'enabled'), x.on ? 1 : 0, ctx); param(wp(n, 'threshold'), x.thresholdDb, ctx); param(wp(n, 'ratio'), x.ratio, ctx)

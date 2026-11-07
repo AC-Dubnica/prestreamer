@@ -1,6 +1,6 @@
 import type { PrestreamerApi } from '../preload'
-import { SCREEN_LIMITS, SIZE_PRESETS, clampSize, roleOf, rolePatch, type ScreenRole } from '../shared/screens'
-import type { DisplayInfo, Look, ScreenConfig, ScreenState } from '../shared/types'
+import { SCREEN_LIMITS, SIZE_PRESETS, clampSize, hasRoles, roleOf, rolePatch, type ScreenRole } from '../shared/screens'
+import type { DisplayInfo, Look, NdiSound, ScreenConfig, ScreenState } from '../shared/types'
 import { showModal } from './dialogs'
 
 function el<T extends HTMLElement = HTMLElement>(tag: string, props: Partial<T> = {}, ...kids: (Node | string)[]): T {
@@ -9,15 +9,21 @@ function el<T extends HTMLElement = HTMLElement>(tag: string, props: Partial<T> 
   return e
 }
 
-type Kind = 'display' | 'virtual'
+type Kind = ScreenConfig['kind']
+
+const KIND_NAME: Record<Kind, string> = { display: 'Display screen', virtual: 'Virtual screen', ndi: 'NDI screen' }
+const KIND_HINT: Record<Kind, string> = {
+  display: 'Shown full-screen on a monitor or projector connected to this computer: the audience, a stage monitor, or a copy of the stream.',
+  virtual: 'Drawn inside PreStreamer, not on a monitor. This is what the stream picks up.',
+  ndi: 'Sent over the network as an NDI source, for a display somewhere else that is fed through an NDI decoder. It can be the audience, a stage monitor, or a copy of the stream with the sound of the stream, the audience sound of the videos, or none.',
+}
 
 /** What a screen is for, in words: shown on the card and in the dialog. */
 export function describeRole(sc: ScreenConfig, state: ScreenState): string {
   if (sc.kind === 'virtual') return 'For the stream'
   const role = roleOf(sc)
-  if (role.kind === 'stage') return 'Stage monitor: current slide, next slide and clock'
-  if (role.kind === 'mirror') return `Mirror of ${state.screens.find((s) => s.id === role.of)?.name ?? 'another screen'}`
-  return 'Slides in its own look'
+  const text = role.kind === 'stage' ? 'Stage monitor: current slide, next slide and clock' : role.kind === 'mirror' ? `Mirror of ${state.screens.find((s) => s.id === role.of)?.name ?? 'another screen'}` : 'Slides in its own look'
+  return sc.kind === 'ndi' ? `NDI · ${text}` : text
 }
 
 /**
@@ -38,6 +44,8 @@ export function openScreenForm(api: PrestreamerApi, getState: () => ScreenState,
   const count = (pred: (s: ScreenConfig) => boolean) => state0.screens.filter(pred).length + 1
   const suggestion = (): string => {
     if (kind === 'virtual') return `Virtual screen ${count((s) => s.kind === 'virtual')}`
+    if (kind === 'ndi' && role.kind === 'own') return `NDI screen ${count((s) => s.kind === 'ndi' && !s.mirrorOf && roleOf(s).kind === 'own')}`
+    if (kind === 'ndi' && role.kind === 'stage') return `NDI stage monitor ${count((s) => s.kind === 'ndi' && roleOf(s).kind === 'stage')}`
     if (role.kind === 'stage') return `Stage monitor ${count((s) => roleOf(s).kind === 'stage')}`
     if (role.kind === 'mirror') { const of = role.of; return `${state0.screens.find((s) => s.id === of)?.name ?? 'Screen'} mirror ${count((s) => !!s.mirrorOf)}` }
     return `Display screen ${count((s) => s.kind === 'display' && !s.mirrorOf && roleOf(s).kind === 'own')}`
@@ -47,15 +55,15 @@ export function openScreenForm(api: PrestreamerApi, getState: () => ScreenState,
   name.oninput = () => { nameTouched = true; sync() }
 
   // Type (adding only)
-  const kinds = (['display', 'virtual'] as const).map((k) => {
+  const kinds = (['display', 'ndi', 'virtual'] as const).map((k) => {
     const b = el<HTMLButtonElement>('button', { className: 'kindcard' },
-      el('strong', { textContent: k === 'display' ? 'Display screen' : 'Virtual screen' }),
-      el('span', { className: 'dim', textContent: k === 'display' ? 'Shown full-screen on a monitor or projector: the audience, a stage monitor, or a copy of the stream.' : 'Drawn inside PreStreamer, not on a monitor. This is what the stream picks up.' }),
+      el('strong', { textContent: KIND_NAME[k] }),
+      el('span', { className: 'dim', textContent: KIND_HINT[k] }),
     )
     b.onclick = () => { kind = k; if (!nameTouched) name.value = ''; sync() }
     return { k, b }
   })
-  const kindFixed = el('div', { className: 'dim', textContent: existing ? `${existing.kind === 'display' ? 'Display screen' : 'Virtual screen'}: the type is fixed once added` : '' })
+  const kindFixed = el('div', { className: 'dim', textContent: existing ? `${KIND_NAME[existing.kind]}: the type is fixed once added` : '' })
 
   // Display screens
   const shows = el<HTMLSelectElement>('select', { title: 'What this screen shows' })
@@ -85,7 +93,15 @@ export function openScreenForm(api: PrestreamerApi, getState: () => ScreenState,
   display.onchange = () => { displayId = display.value ? Number(display.value) : null; sync() }
   const displayWarn = el('div', { className: 'warn' })
 
+  const soundRow = () => row('Video sound', sound, el('span', { className: 'dim', textContent: 'play the sound of video cues from this screen' }))
   const sound = el<HTMLInputElement>('input', { type: 'checkbox', checked: existing?.look.videoAudio ?? false })
+  const ndiSound = el<HTMLSelectElement>('select', { title: 'The sound that goes out with the picture' })
+  ndiSound.append(
+    el<HTMLOptionElement>('option', { value: 'stream', textContent: 'Stream' }),
+    el<HTMLOptionElement>('option', { value: 'video', textContent: 'Audience' }),
+    el<HTMLOptionElement>('option', { value: 'none', textContent: 'None' }),
+  )
+  ndiSound.value = existing?.ndiSound ?? 'stream'
 
   // Virtual screens
   const w = el<HTMLInputElement>('input', { type: 'number', value: String(existing?.width ?? SIZE_PRESETS[0].width), min: String(SCREEN_LIMITS.width[0]), max: String(SCREEN_LIMITS.width[1]) })
@@ -104,8 +120,12 @@ export function openScreenForm(api: PrestreamerApi, getState: () => ScreenState,
 
   const row = (label: string, ...controls: HTMLElement[]) => el('label', { className: 'sdrow' }, el('span', { textContent: label }), el('span', { className: 'inl' }, ...controls))
   const typeRow = el('div', { className: 'sdgroup' }, el('h4', { textContent: 'Type' }), existing ? kindFixed : el('div', { className: 'kindrow' }, ...kinds.map((k) => k.b)))
-  const displayGroup = el('div', { className: 'sdgroup' }, el('h4', { textContent: 'Display screen' }), row('Shows', shows), showsHint, row('Display', display), displayWarn, row('Video sound', sound, el('span', { className: 'dim', textContent: 'play the sound of video cues from this screen' })))
-  const virtualGroup = el('div', { className: 'sdgroup' }, el('h4', { textContent: 'Size' }), row('Resolution', preset), row('Width × height', w, el('span', { textContent: '×' }), h), sizeHint)
+  const rolesGroup = el('div', { className: 'sdgroup' }, el('h4', { textContent: 'What it shows' }), row('Shows', shows), showsHint)
+  const displayGroup = el('div', { className: 'sdgroup' }, el('h4', { textContent: 'Display' }), row('Display', display), displayWarn)
+  const soundGroup = el('div', { className: 'sdgroup' }, el('h4', { textContent: 'Sound' }), soundRow())
+  const ndiNote = el('div', { className: 'dim sfhint', textContent: "The source appears on the network under this screen's name. The stream's sound follows the mixer (silent while it is off); neither sound is delayed to match the picture." })
+  const ndiSoundRow = row('Sound', ndiSound)
+  const virtualGroup = el('div', { className: 'sdgroup' }, el('h4', { textContent: 'Size' }), row('Resolution', preset), row('Width × height', w, el('span', { textContent: '×' }), h), sizeHint, ndiSoundRow, ndiNote)
 
   const apply = el<HTMLButtonElement>('button', { className: 'primary', textContent: existing ? 'Apply' : 'Add screen' })
   const title = el('h3', { className: 'sdtitle', textContent: existing ? `${existing.name} · edit screen` : 'Add a screen' })
@@ -113,8 +133,11 @@ export function openScreenForm(api: PrestreamerApi, getState: () => ScreenState,
   function sync(): void {
     kinds.forEach(({ k, b }) => { b.classList.toggle('on', k === kind); b.setAttribute('aria-pressed', String(k === kind)) })
     name.placeholder = suggestion()
+    rolesGroup.hidden = !hasRoles(kind)
     displayGroup.hidden = kind !== 'display'
-    virtualGroup.hidden = kind !== 'virtual'
+    soundGroup.hidden = kind !== 'display'
+    virtualGroup.hidden = kind === 'display'
+    ndiNote.hidden = ndiSoundRow.hidden = kind !== 'ndi'
     sound.disabled = role.kind !== 'own'
     showsHint.textContent = role.kind === 'stage' ? 'Never shown on the stream. The Present tab previews and the Monitor tab show it like any screen.' : role.kind === 'mirror' ? 'Looks exactly like that screen (picture, text, announcements). Its own look is not used.' : ''
     const bound = state0.displays.find((d) => d.id === displayId)
@@ -132,6 +155,11 @@ export function openScreenForm(api: PrestreamerApi, getState: () => ScreenState,
       const size = clampSize(Number(w.value), Number(h.value))
       if (existing) await api.updateScreen(existing.id, { name: finalName, ...(sizeLocked ? {} : size) })
       else await api.addVirtual(finalName, size.width, size.height)
+    } else if (kind === 'ndi') {
+      const size = clampSize(Number(w.value), Number(h.value))
+      const cur: ScreenConfig = existing ?? (await api.addNdiScreen(finalName, size) as ScreenConfig)
+      const patch = rolePatch(role, cur)
+      await api.updateScreen(cur.id, { name: finalName, ...size, ndiSound: ndiSound.value as NdiSound, mirrorOf: patch.mirrorOf, ...(patch.look ? { look: patch.look } : {}) })
     } else {
       const cur: ScreenConfig = existing ?? (await api.addDisplayScreen(finalName, {}) as ScreenConfig)
       const patch = rolePatch(role, cur)
@@ -148,7 +176,7 @@ export function openScreenForm(api: PrestreamerApi, getState: () => ScreenState,
       el('div', { className: 'sdhead' }, title, el('span', { className: 'grow' }), el('button', { textContent: 'Cancel', onclick: () => close() }), apply),
       el('div', { className: 'sdbody' },
         el('div', { className: 'sdgroup' }, el('h4', { textContent: 'Name' }), name),
-        typeRow, displayGroup, virtualGroup,
+        typeRow, rolesGroup, displayGroup, soundGroup, virtualGroup,
       ),
     )
   })

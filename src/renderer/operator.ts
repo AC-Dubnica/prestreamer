@@ -2,8 +2,9 @@ import type { PrestreamerApi } from '../preload'
 import { appliesTo, type QuickMessage } from '../shared/announce'
 import { mediaThumb, pickBackground } from './background-picker'
 import { applyDefaultBackground, defaultAppearance, isLogoSlide, logoSlide, type Appearance } from '../shared/appearance'
+import type { NativeInput } from '../shared/native-audio'
 import { presentationSlides } from '../shared/presentation'
-import { SONG_DETAIL_FIELDS, parseSong, readingSlides, trimSlideBackgrounds, withSlideBackground } from '../shared/songs'
+import { SONG_DETAIL_FIELDS, parseSong, songMatches, readingSlides, trimSlideBackgrounds, withSlideBackground } from '../shared/songs'
 import { defaultAudio, defaultLook, idleAudio, idlePlayback, idleStream, type PlaybackState, type AudioConfig, type Service, type ServiceItem, type AudioSource, type AudioStatus, type Background, type ScreenConfig, type ScreenState, type Slide, type Song, type StreamStatus, type VideoSource } from '../shared/types'
 import { iconButton, iconSvg, type IconName } from './icons'
 import { openAnnounceDialog } from './announce-dialog'
@@ -42,7 +43,7 @@ const BACKGROUNDS = [
 const SECTION_COLORS: Record<string, string> = { verse: '#2563eb', chorus: '#dc2626', bridge: '#7c3aed' }
 const sectionColor = (label: string) => SECTION_COLORS[label.split(' ')[0].toLowerCase()] ?? '#475569'
 
-let state: ScreenState = { screens: [], displays: [], live: [], slide: null, blank: [], announcement: null, cameraOnly: false, next: null }
+let state: ScreenState = { screens: [], ndi: {}, displays: [], live: [], slide: null, blank: [], announcement: null, cameraOnly: false, next: null }
 let quickMessages: QuickMessage[] = []
 let streamSettings: StreamSettings = defaultStreamSettings
 let songs: Song[] = []
@@ -60,6 +61,7 @@ let selectedItemId: string | null = null
 let editing: { song: Song; isNew: boolean } | null = null
 let keySaved = false
 let audioDevices: { deviceId: string; label: string }[] = []
+let audioNative: NativeInput[] = []
 let audioStatus: AudioStatus = idleAudio
 let audioCfg: AudioConfig = structuredClone(defaultAudio)
 // What the operator left selected last time (the tab, the service, the screen whose look the thumbnails use).
@@ -159,20 +161,38 @@ function renderSchedule(): void {
 }
 
 function renderLibrary(): void {
-  const q = songFilter.trim().toLowerCase()
-  const shown = songs.filter((x) => !q || x.title.toLowerCase().includes(q))
+  const shown = songs.filter((x) => songMatches(x, songFilter))
   const editingId = editing?.song.id
   $('library').replaceChildren(
-    ...(shown.length ? shown.map((x) =>
-      el('div', { className: `item ${x.id === editingId ? 'sel' : ''}`, onclick: () => startEdit(x) },
+    ...(shown.length ? shown.map((x) => {
+      const uses = currentService()?.items.filter((it) => it.kind === 'song' && it.songId === x.id).length ?? 0
+      return el('div', { className: `item ${x.id === editingId ? 'sel' : ''}`, onclick: () => startEdit(x) },
+        ...(x.number ? [el('span', { className: 'num', textContent: x.number })] : []),
         el('span', { className: 't', textContent: x.title }),
-        iconButton('plus', 'Add to the current service', (e) => { e.stopPropagation(); addSongToService(x.id) }, { size: 14, badge: false }),
-      )) : [el('div', { className: 'row', textContent: songs.length ? 'No match.' : 'No songs yet.' })]),
+        ...(uses ? [el('span', { className: 'inservice', title: `In the current service${uses > 1 ? ` ${uses} times` : ''}`, textContent: uses > 1 ? `✓ ×${uses}` : '✓' })] : []),
+        iconButton('plus', 'Add to the current service', (e) => { e.stopPropagation(); void addSongToService(x.id) }, { size: 14, badge: false }),
+      )
+    }) : [el('div', { className: 'row', textContent: songs.length ? 'No match.' : 'No songs yet.' })]),
   )
 }
 
-function addSongToService(id: string): void {
-  void mutateService((svc) => { svc.items.push({ id: crypto.randomUUID(), kind: 'song', songId: id }) })
+/** A short message at the bottom of the window, for changes that happen out of sight (a song added to a run sheet from the Songs tab). */
+let toastTimer: ReturnType<typeof setTimeout> | undefined
+function toast(text: string, error = false): void {
+  let t = document.getElementById('toast')
+  if (!t) { t = el('div', { id: 'toast', role: 'status' }); document.body.append(t) }
+  t.textContent = text
+  t.className = error ? 'show error' : 'show'
+  clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => { t!.className = '' }, 2600)
+}
+
+async function addSongToService(id: string): Promise<void> {
+  const svc = currentService()
+  const song = songById(id)
+  if (!svc) { toast('Create a service first: there is nowhere to add the song', true); return }
+  await mutateService((d) => { d.items.push({ id: crypto.randomUUID(), kind: 'song', songId: id }) })
+  toast(`Added "${song?.title ?? 'song'}" to ${svc.name} (item ${svc.items.length + 1})`)
 }
 
 /** Opens a song in the editor of the Songs view (always a copy: nothing changes until Save). */
@@ -190,9 +210,8 @@ function openSongPicker(): void {
   const list = el('div', { className: 'list' })
   const close = () => { modal.hidden = true; modal.replaceChildren() }
   const fill = () => {
-    const q = input.value.trim().toLowerCase()
-    const shown = songs.filter((x) => !q || x.title.toLowerCase().includes(q))
-    list.replaceChildren(...(shown.length ? shown.map((x) => el('div', { className: 'item', textContent: x.title, onclick: () => { addSongToService(x.id); close() } })) : [el('div', { className: 'row', textContent: 'No match.' })]))
+    const shown = songs.filter((x) => songMatches(x, input.value))
+    list.replaceChildren(...(shown.length ? shown.map((x) => el('div', { className: 'item', onclick: () => { void addSongToService(x.id); close() } }, ...(x.number ? [el('span', { className: 'num', textContent: x.number })] : []), el('span', { className: 't', textContent: x.title }))) : [el('div', { className: 'row', textContent: 'No match.' })]))
   }
   input.oninput = fill
   input.onkeydown = (e) => { if (e.key === 'Escape') close(); else if (e.key === 'Enter') (list.firstElementChild as HTMLElement | null)?.click() }
@@ -561,15 +580,23 @@ function renderEditor(root: HTMLElement, ref: ScreenConfig | undefined): void {
     if (bg !== undefined) { setBackground(bg); void prestreamer.mediaList().then((list) => { mediaNames = new Map(list.map((m) => [m.file, m.name])); renderBgLabel() }) }
   }, { badge: true, label: 'Picture or video…' })
 
-  const del = iconButton('trash', 'Delete song (click twice)', async () => {
-    if (!armed) { armed = true; del.className = 'ib danger'; setTimeout(() => { armed = false; del.className = 'ib' }, 3000); return }
+  const del = iconButton('trash', 'Delete song', async () => {
+    // A song that was never saved is only a draft: nothing to confirm.
+    if (!editing?.isNew) {
+      const ok = await confirmDialog({
+        title: `Delete "${draft.title}"?`,
+        message: 'The song and its slides are removed from the library. A run sheet that uses it will show "(deleted song)" in its place.',
+        confirm: 'Delete song',
+        danger: true,
+      })
+      if (!ok) return
+    }
     songs = await prestreamer.songsDelete(draft.id)
     songId = songs[0]?.id ?? ''
     editing = songs[0] ? { song: structuredClone(songs[0]), isNew: false } : null
     renderAll()
     showEditor()
   }, { label: 'Delete' })
-  let armed = false
   const save = iconButton('save', 'Save song', async () => {
     draft.body = body.value
     draft.title = title.value.trim() || 'Untitled'
@@ -586,10 +613,10 @@ function renderEditor(root: HTMLElement, ref: ScreenConfig | undefined): void {
     renderAll()
     showEditor()
   }, { label: 'Revert' })
-  const addToService = iconButton('music', 'Add this song to the current service', () => addSongToService(draft.id), { badge: true, label: 'Add to service', className: 'primary', disabled: editing!.isNew })
+  const addToService = iconButton('music', 'Add this song to the current service', () => void addSongToService(draft.id), { badge: true, label: 'Add to service', className: 'primary', disabled: editing!.isNew })
 
   // The same details Quelea keeps with a song (author, copyright, CCLI, ...), so nothing is lost when songs come over from Quelea.
-  const details = el<HTMLDetailsElement>('details', { className: 'sdetails' }, el('summary', { textContent: 'Song details: author, copyright, CCLI, key, capo, notes' }),
+  const details = el<HTMLDetailsElement>('details', { className: 'sdetails' }, el('summary', { textContent: 'Song details: number, author, copyright, CCLI, key, capo, notes' }),
     el('div', { className: 'sdgrid' }, ...SONG_DETAIL_FIELDS.flatMap((f) => {
       const input = el<HTMLInputElement>('input', { type: 'text', value: draft[f.key] ?? '', maxLength: 200 })
       input.oninput = () => { if (input.value) draft[f.key] = input.value; else delete draft[f.key]; markDirty() }
@@ -735,7 +762,8 @@ function renderScreens(): void {
       if (selectedScreenId !== sc.id) { selectedScreenId = sc.id; renderAll() }
     }
 
-    const target = shown !== sc ? `mirrors ${shown.name}` : sc.kind === 'virtual' ? `virtual ${w}×${h}` : sc.displayId === null ? 'window' : (state.displays.find((d) => d.id === sc.displayId)?.label ?? sc.displayLabel ?? 'display')
+    const ndi = sc.kind === 'ndi' ? state.ndi[sc.id] : undefined
+    const target = ndi?.state === 'error' ? `NDI: ${ndi.message}` : shown !== sc ? `mirrors ${shown.name}` : sc.kind === 'virtual' ? `virtual ${w}×${h}` : sc.kind === 'ndi' ? `NDI ${w}×${h}` : sc.displayId === null ? 'window' : (state.displays.find((d) => d.id === sc.displayId)?.label ?? sc.displayLabel ?? 'display')
     c.grip.title = `Drag to change the order of the screens (or press ↑ ↓ on this handle). The order is the same in Settings.`
     c.grip.setAttribute('aria-label', `Move ${sc.name}`)
     c.bar.replaceChildren(
@@ -743,7 +771,7 @@ function renderScreens(): void {
       iconButton(folded ? 'chevronDown' : 'chevronUp', folded ? `Show the preview of ${sc.name}` : `Fold the preview of ${sc.name} away`, () => toggleFolded(sc.id), { size: 15, className: 'fold' }),
       el('span', { className: `dot ${live ? 'on' : ''}` }),
       el('span', { className: 'name', textContent: sc.name }),
-      el('span', { className: 'meta', textContent: target, title: `${w}×${h}` }),
+      el('span', { className: 'meta', textContent: target, title: ndi ? ndi.message : `${w}×${h}` }),
       iconButton('gear', shown !== sc ? `${sc.name} mirrors ${shown.name}: opens the settings of ${shown.name}` : `Settings for ${sc.name}: background, text, video, sound`, () => configureScreen(shown.id), { size: 15 }),
       el('button', { className: live ? 'danger' : 'primary', textContent: live ? 'Close' : 'Open', title: live ? `Close ${sc.name}` : `Open ${sc.name} on its display (or in a window)`, onclick: () => void toggleScreen(sc.id) }),
     )
@@ -1010,6 +1038,7 @@ async function refreshAudioDevices(requestPermission: boolean): Promise<void> {
   const usable = (kind: MediaDeviceKind) => devices.filter((d) => d.kind === kind && d.deviceId !== 'default' && d.deviceId !== 'communications').map((d) => ({ deviceId: d.deviceId, label: d.label || d.deviceId }))
   audioOutputs = usable('audiooutput')
   audioDevices = usable('audioinput') // every input, not only USB ones
+  audioNative = await prestreamer.audioNativeInputs().catch(() => [])
   renderAudio()
 }
 // Plug something in (or out) and the lists follow by themselves. On the Mixer tab the first unnamed device also asks for the
@@ -1092,6 +1121,27 @@ window.addEventListener('keydown', (e) => {
   jumpToItem(item.id)
 })
 
+// Songs tab: ↑/↓ walk through the song list (what is shown after the search); Alt+↑/↓ scroll the pane under the pointer instead.
+window.addEventListener('keydown', (e) => {
+  if (view !== 'songs' || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') || e.metaKey || e.ctrlKey || e.shiftKey) return
+  if ((e.target as HTMLElement).matches('input, select, textarea, button, [contenteditable]') || !$('modal').hidden) return
+  e.preventDefault()
+  const dir = e.key === 'ArrowDown' ? 1 : -1
+  if (e.altKey) {
+    const pane = $('songeditor').matches(':hover') ? $('songeditor') : $('songsleft')
+    pane.scrollBy({ top: dir * 120 })
+    return
+  }
+  const shown = songs.filter((x) => songMatches(x, songFilter))
+  if (!shown.length) return
+  const i = shown.findIndex((x) => x.id === editing?.song.id)
+  const next = shown[i < 0 ? (dir > 0 ? 0 : shown.length - 1) : Math.min(shown.length - 1, Math.max(0, i + dir))]
+  if (next.id === editing?.song.id) return
+  songId = next.id
+  startEdit(next)
+  $('library').querySelector('.item.sel')?.scrollIntoView({ block: 'nearest' })
+})
+
 window.addEventListener('keydown', (e) => {
   if ((e.target as HTMLElement).matches('input, select, textarea')) return
   if (!$('modal').hidden) return
@@ -1107,6 +1157,7 @@ window.addEventListener('keydown', (e) => {
 
 const mixerDeps: MixerDeps = {
   getDevices: () => audioDevices,
+  getNativeInputs: () => audioNative,
   getOutputs: () => audioOutputs,
   getScreens: () => state.screens,
   probeChannels,
@@ -1238,7 +1289,62 @@ const serviceButtons = {
   $('svctools').append(iconButton('plus', 'New service', () => void newService()), rename, duplicate, remove)
 }
 $('addtools').append(iconButton('music', 'Add a song to the run sheet', openSongPicker, { badge: true }), iconButton('film', 'Add a video to the run sheet', () => void addVideoToService(), { badge: true }), iconButton('presentation', 'Add a presentation (PowerPoint, Keynote or PDF) to the run sheet', () => void addPresentationToService(), { badge: true }), iconButton('image', 'Add pictures to the run sheet: each is shown whole, as a slide', () => void addPicturesToService(), { badge: true }))
-$('songtools').append(iconButton('plus', 'New song', () => startEdit({ id: crypto.randomUUID(), title: 'New song', body: '[Verse 1]\n\n', background: { kind: 'css', css: BACKGROUNDS[0] } }, true)))
+/** Brings in the songs of a Quelea export (a ZIP of song PDFs); songs the library already has are skipped. */
+async function importSongs(): Promise<void> {
+  const out = $('songimport')
+  out.hidden = false
+  out.className = 'status'
+  out.textContent = 'Reading the songs…'
+  try {
+    const done = await prestreamer.songsImport()
+    if (!done) { out.hidden = true; return }
+    songs = done.songs
+    if (!songs.some((s) => s.id === songId)) songId = songs[0]?.id ?? ''
+    renderAll()
+    const { added, skipped, unreadable } = done.result
+    out.textContent = `Added ${added} song${added === 1 ? '' : 's'}, skipped ${skipped} already in the library or repeated in the file${unreadable.length ? `, ${unreadable.length} without lyrics (${unreadable.slice(0, 3).join(', ')}${unreadable.length > 3 ? '…' : ''})` : ''}.`
+  } catch (err) {
+    out.className = 'status error'
+    out.textContent = `Import failed: ${(err as Error).message.replace(/^Error invoking remote method '[^']*': (Error: )?/, '')}`
+  }
+}
+/** Writes the whole library as a Quelea song pack (.qsp). */
+async function exportSongs(): Promise<void> {
+  const out = $('songimport')
+  out.hidden = false
+  out.className = 'status'
+  if (!songs.length) { out.textContent = 'There are no songs to export.'; return }
+  try {
+    const done = await prestreamer.songsExport()
+    if (!done) { out.hidden = true; return }
+    out.textContent = `Exported ${done.count} song${done.count === 1 ? '' : 's'} to ${done.path}`
+  } catch (err) {
+    out.className = 'status error'
+    out.textContent = `Export failed: ${(err as Error).message.replace(/^Error invoking remote method '[^']*': (Error: )?/, '')}`
+  }
+}
+
+/** Removes every song from the library (after asking). Run sheets keep their entries, which then show "(deleted song)". */
+async function clearLibrary(): Promise<void> {
+  const out = $('songimport')
+  if (!songs.length) { out.hidden = false; out.className = 'status'; out.textContent = 'The library is already empty.'; return }
+  const ok = await confirmDialog({
+    title: `Delete all ${songs.length} songs?`,
+    message: 'The whole song library is emptied. This cannot be undone, so export it first if you may want it back. Run sheets that use these songs will show "(deleted song)" in their place.',
+    confirm: 'Delete all songs',
+    danger: true,
+  })
+  if (!ok) return
+  songs = await prestreamer.songsClear()
+  songId = ''
+  editing = null
+  renderAll()
+  showEditor()
+  out.hidden = false
+  out.className = 'status'
+  out.textContent = 'The library is empty.'
+}
+$('songtools').append(iconButton('import', 'Import songs from Quelea (a song pack .qsp, or a ZIP of song PDFs); songs already in the library are skipped', () => void importSongs()), iconButton('export', 'Export all songs as a Quelea song pack (.qsp)', () => void exportSongs()), iconButton('trash', 'Delete all songs from the library', () => void clearLibrary()), iconButton('plus', 'New song', () => startEdit({ id: crypto.randomUUID(), title: 'New song', body: '[Verse 1]\n\n', background: { kind: 'css', css: BACKGROUNDS[0] } }, true)))
 /** Opens the live announcement popup. */
 function openAnnounce(): void {
   openAnnounceDialog({ api: prestreamer, getState: () => state, getQuick: () => quickMessages, setQuick: (list) => { quickMessages = list }, only: monitorView.single() })

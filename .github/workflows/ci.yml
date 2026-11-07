@@ -11,14 +11,20 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The macOS (Apple silicon) jobs run on our self-hosted runner (labels: self-hosted, macOS, ARM64); Windows and Linux use
+  # GitHub's hosted runners. `os` only names the job and its artifacts, `runner` is what `runs-on` gets.
+
   # Fast, deterministic checks: types, unit tests with coverage, and the production build.
   test:
     name: Unit tests (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
+        include:
+          - { os: macos-latest, runner: [self-hosted, macOS, ARM64] }
+          - { os: windows-latest, runner: windows-latest }
+          - { os: ubuntu-latest, runner: ubuntu-latest }
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -45,8 +51,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
+        include:
+          - { os: macos-latest, runner: [self-hosted, macOS, ARM64] }
+          - { os: windows-latest, runner: windows-latest }
+          - { os: ubuntu-latest, runner: ubuntu-latest }
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -56,9 +65,9 @@ jobs:
       - name: Install ffmpeg and a virtual display (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y ffmpeg xvfb libasound2t64 libgbm1 libnss3 libgtk-3-0t64
-      - name: Install ffmpeg (macOS)
+      - name: Install ffmpeg (macOS; the self-hosted runner usually has it already)
         if: runner.os == 'macOS'
-        run: brew install ffmpeg
+        run: command -v ffmpeg >/dev/null || brew install ffmpeg
       - name: Install ffmpeg (Windows)
         if: runner.os == 'Windows'
         run: choco install ffmpeg -y --no-progress
@@ -83,8 +92,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
+        include:
+          - { os: macos-latest, runner: [self-hosted, macOS, ARM64] }
+          - { os: windows-latest, runner: windows-latest }
+          - { os: ubuntu-latest, runner: ubuntu-latest }
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

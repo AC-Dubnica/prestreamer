@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { SEED_SONGS, SONG_DETAIL_FIELDS, parseSong, readingSlides, trimSlideBackgrounds, withSlideBackground } from '../src/shared/songs'
+import { SEED_SONGS, SONG_DETAIL_FIELDS, parseSong, songMatches, readingSlides, trimSlideBackgrounds, withSlideBackground } from '../src/shared/songs'
 import type { Song } from '../src/shared/types'
 
 const song = (body: string, background: Song['background'] = null): Song => ({ id: 's', title: 't', body, background })
@@ -84,6 +84,22 @@ describe('trimSlideBackgrounds', () => {
 
 describe('song details', () => {
   it('lists the details Quelea keeps with a song', () => {
-    expect(SONG_DETAIL_FIELDS.map((f) => f.key)).toEqual(['author', 'copyright', 'ccli', 'year', 'publisher', 'key', 'capo', 'notes'])
+    expect(SONG_DETAIL_FIELDS.map((f) => f.key)).toEqual(['number', 'author', 'copyright', 'ccli', 'year', 'publisher', 'key', 'capo', 'notes'])
+  })
+})
+
+describe('songMatches', () => {
+  it('ignores case and accents in both the title and the search', () => {
+    expect(songMatches({ title: 'Ježiš, si svätý' }, 'jezis')).toBe(true)
+    expect(songMatches({ title: 'Jezis si svaty' }, 'JEŽIŠ SI')).toBe(true)
+    expect(songMatches({ title: 'Chcem oslavovať' }, 'oslavovat')).toBe(true)
+    expect(songMatches({ title: 'Hosanna' }, 'jezis')).toBe(false)
+    expect(songMatches({ title: 'Anything' }, '  ')).toBe(true)
+  })
+  it('finds a song by the start of its number, with or without leading zeros', () => {
+    const s = { title: 'Hosanna', number: '053' }
+    for (const q of ['053', '53', '05', '5', ' 53 ']) expect(songMatches(s, q), q).toBe(true)
+    for (const q of ['3', '153', '54']) expect(songMatches(s, q), q).toBe(false)
+    expect(songMatches({ title: 'No number' }, '53')).toBe(false)
   })
 })

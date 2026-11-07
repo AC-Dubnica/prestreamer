@@ -42,7 +42,7 @@ export function fitBounds(b: Rect | null, workAreas: Rect[]): Rect | null {
  * the controls (the operator window lives there), so those are left for the operator to open on purpose.
  */
 export function safeToRestore(cfg: ScreenConfig, displays: DisplayInfo[]): boolean {
-  if (cfg.kind === 'virtual') return true
+  if (cfg.kind !== 'display') return true // drawn offscreen: nothing covers the controls
   if (cfg.displayId === null) return true // a plain window
   const bound = displays.find((d) => d.id === cfg.displayId)
   if (!bound) return true // not connected: it opens as a window

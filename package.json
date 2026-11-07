@@ -11,6 +11,8 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "e2e:mixer": "node scripts/e2e-mixer.mjs",
+    "e2e:native": "node scripts/e2e-native.mjs",
+    "e2e:ndi": "node scripts/e2e-ndi.mjs",
     "e2e:stream": "node scripts/e2e-stream.mjs",
     "e2e:video": "node scripts/e2e-video.mjs",
     "e2e:mixer-ui": "node scripts/e2e-mixer-ui.mjs",
@@ -66,7 +68,8 @@
     ],
     "asarUnpack": [
       "**/node_modules/ffmpeg-static/**",
-      "**/node_modules/ffprobe-static/**"
+      "**/node_modules/ffprobe-static/**",
+      "dist/native/**"
     ],
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "mac": {
@@ -108,6 +111,17 @@
       "icon": "build/icon.png",
       "executableName": "prestreamer"
     },
-    "npmRebuild": false
+    "npmRebuild": false,
+    "extraResources": [
+      {
+        "from": "vendor/ndi/${os}-${arch}",
+        "to": "ndi",
+        "filter": [
+          "*.dylib",
+          "*.so*",
+          "*.dll"
+        ]
+      }
+    ]
   }
 }

@@ -10,6 +10,7 @@ import { SEED_QUICK_MESSAGES, sanitizeAnnounceRequest, sanitizeQuickMessage, typ
 import { defaultScreens } from '../shared/screens'
 import { SEED_SERVICES, SEED_SONGS } from '../shared/songs'
 import { ScreenManager } from './screens'
+import { NdiOutputs } from './ndi'
 import { AudioBridge } from './audio'
 import { defaultStreamSettings, sanitizeStreamSettings, type StreamSettings } from '../shared/stream-settings'
 import { BibleStore, autoImportFromQuelea, findBibleFiles, queleaBibleFolders } from './bibles'
@@ -19,6 +20,7 @@ import { setBundledToolsEnabled } from './tools'
 import { pickVideo } from './video'
 import { pickPresentation } from './presentations'
 import { runDevHooks } from './devhooks'
+import { exportSongs, pickSongsZip, songsFromZip } from './song-import'
 import { defaultSession, fitBounds, safeToRestore, sanitizeSession, type Session } from '../shared/session'
 import { defaultAppearance, forgetAppearanceMedia, sanitizeAppearance, type Appearance } from '../shared/appearance'
 import { AtemController, realAtemClient } from './atem'
@@ -57,6 +59,7 @@ if (process.platform === 'linux') {
 
 // Created in whenReady: Electron's `screen` module is unusable before then.
 let screens: ScreenManager
+let ndiOutputs: NdiOutputs | undefined
 let streamer: Streamer
 let audio: AudioBridge
 let playback: Playback
@@ -188,6 +191,7 @@ async function startStream(req: StreamStartRequest): Promise<void> {
 
 ipcMain.handle(IPC.getState, () => screens.getState())
 ipcMain.handle(IPC.addVirtual, (_e, name: string, w: number, h: number) => screens.addVirtual(name, w, h))
+ipcMain.handle(IPC.addNdiScreen, (_e, name: string, opts?: { width?: number; height?: number; stage?: boolean; mirrorOf?: string }) => screens.addNdiScreen(String(name), { width: Number(opts?.width) || undefined, height: Number(opts?.height) || undefined, stage: opts?.stage === true, mirrorOf: typeof opts?.mirrorOf === 'string' ? opts.mirrorOf : undefined }))
 ipcMain.handle(IPC.addDisplayScreen, (_e, name: string, opts?: { stage?: boolean; mirrorOf?: string }) => screens.addDisplayScreen(name, null, { stage: opts?.stage === true, mirrorOf: typeof opts?.mirrorOf === 'string' ? opts.mirrorOf : undefined }))
 ipcMain.handle(IPC.updateScreen, (_e, id: string, patch: Partial<ScreenConfig>) => screens.update(id, patch))
 ipcMain.handle(IPC.removeScreen, (_e, id: string) => screens.remove(id))
@@ -215,6 +219,15 @@ ipcMain.handle(IPC.streamSettingsSet, (_e, raw: unknown) => {
 ipcMain.handle(IPC.songsList, () => songStore.list())
 ipcMain.handle(IPC.songsSave, (_e, song: Song) => songStore.save(song))
 ipcMain.handle(IPC.songsDelete, (_e, id: string) => songStore.remove(id))
+ipcMain.handle(IPC.songsExport, () => exportSongs(operator, songStore.list(), app.getPath('documents')))
+ipcMain.handle(IPC.songsClear, () => { songStore.replaceAll([]); return songStore.list() })
+ipcMain.handle(IPC.songsImport, async () => {
+  const path = await pickSongsZip(operator, app.getPath('downloads'))
+  if (!path) return null
+  const { songs, result } = await songsFromZip(path, songStore.list())
+  if (songs.length) songStore.replaceAll([...songStore.list(), ...songs])
+  return { songs: songStore.list(), result }
+})
 ipcMain.handle(IPC.servicesList, () => serviceStore.list())
 ipcMain.handle(IPC.servicesSave, (_e, svc: Service) => serviceStore.save(svc))
 ipcMain.handle(IPC.servicesDelete, (_e, id: string) => serviceStore.remove(id))
@@ -298,10 +311,12 @@ app.whenReady().then(() => {
       sessionState.liveScreens = state.live
       saveSessionSoon()
     },
-    // Frames are pulled by the streamer via lastFrame(); NDI sinks can subscribe here later.
+    // Frames are pulled by the streamer and the NDI senders via lastFrame().
     () => {},
     screenStore,
   )
+  ndiOutputs = new NdiOutputs((id, status) => screens.setNdiStatus(id, status))
+  screens.setNdiOutputs(ndiOutputs)
   playback = new Playback((state) => {
     screens.setPlayback(state)
     audio.sendPlayback(state)
@@ -315,6 +330,8 @@ app.whenReady().then(() => {
     (status) => operator?.webContents.send(AUDIO_IPC.status, status),
     (meters) => operator?.webContents.send(AUDIO_IPC.metersOut, meters),
   )
+  audio.onPcm((pcm) => ndiOutputs?.audio('stream', pcm)) // NDI screens with the stream's sound
+  audio.onVideoPcm((pcm) => ndiOutputs?.audio('video', pcm)) // ... or with the sound of the videos only
   void audio.init()
   const atemPath = join(userData(), 'atem.json')
   let atemSettings = defaultAtemSettings

@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { AUDIO_IPC, defaultAudio, idleAudio, idlePlayback, type AudioConfig, type AudioStatus, type Meters, type PlaybackState } from '../shared/types'
 import { defaultMixer, sanitizeMixer, type MixerConfig } from '../shared/mixer'
 import { writeJsonAtomic } from './store'
+import { NativeAudio } from './native-audio'
 
 const MAX_BACKLOG_BYTES = 1 << 20
 
@@ -30,6 +31,10 @@ export class AudioBridge {
   private filledUntil = 0
   private silenceTimer: NodeJS.Timeout | null = null
 
+  private readonly native = new NativeAudio()
+  private pcmListeners: ((pcm: Buffer) => void)[] = []
+  private videoPcmListeners: ((pcm: Buffer) => void)[] = []
+
   private mixer: MixerConfig = defaultMixer()
   private saveTimer: NodeJS.Timeout | null = null
 
@@ -47,18 +52,31 @@ export class AudioBridge {
       this.mixer = defaultMixer()
     }
     ipcMain.on(AUDIO_IPC.metersIn, (_e, m: Meters) => this.onMeters(m))
+    ipcMain.handle(AUDIO_IPC.nativeInputs, () => this.native.inputs())
+    ipcMain.handle(AUDIO_IPC.nativeStart, async (_e, name: string) => {
+      const send = (channel: string, ...args: unknown[]) => { if (this.win && !this.win.isDestroyed()) this.win.webContents.send(channel, ...args) }
+      try {
+        return await this.native.start(String(name), (frames) => send(AUDIO_IPC.nativeData, name, frames), (message) => send(AUDIO_IPC.nativeEnded, name, message))
+      } catch (err) {
+        return { error: (err as Error).message }
+      }
+    })
+    ipcMain.on(AUDIO_IPC.nativeStop, (_e, name: string, id: number) => this.native.stop(String(name), id))
     ipcMain.on(AUDIO_IPC.report, (_e, s: AudioStatus) => {
       this.status = s
       this.onStatus(s)
       this.waiter?.(s)
       this.waiter = null
     })
+    ipcMain.on(AUDIO_IPC.videoPcm, (_e, buf: ArrayBuffer) => { const pcm = Buffer.from(buf); for (const listen of this.videoPcmListeners) listen(pcm) })
     ipcMain.on(AUDIO_IPC.pcm, (_e, buf: ArrayBuffer) => {
-      this.pcmTap?.(Buffer.from(buf))
+      const pcm = Buffer.from(buf)
+      this.pcmTap?.(pcm)
+      for (const listen of this.pcmListeners) listen(pcm)
       this.lastPcmAt = this.filledUntil = Date.now()
       const sock = this.socket
       if (!sock || sock.destroyed || sock.writableLength > MAX_BACKLOG_BYTES) return
-      sock.write(Buffer.from(buf))
+      sock.write(pcm)
     })
     this.server = createServer((sock) => {
       this.socket?.destroy()
@@ -127,6 +145,16 @@ export class AudioBridge {
     return this.mixer
   }
 
+  /** Gets every block of the stream mix (interleaved stereo f32, 48 kHz) as it comes from the mixer, whether or not a stream is running. */
+  onPcm(listener: (pcm: Buffer) => void): void {
+    this.pcmListeners.push(listener)
+  }
+
+  /** Gets every block of the video cues' own sound (stereo f32, 48 kHz, before the mixer's strips): silence while no video plays. */
+  onVideoPcm(listener: (pcm: Buffer) => void): void {
+    this.videoPcmListeners.push(listener)
+  }
+
   /** Validates, applies live to the audio window, and persists (debounced: faders send many updates). */
   setMixer(raw: unknown): MixerConfig {
     this.mixer = sanitizeMixer(raw)
@@ -153,6 +181,7 @@ export class AudioBridge {
       clearTimeout(this.saveTimer)
       writeJsonAtomic(this.mixerPath(), this.mixer) // flush a pending change
     }
+    this.native.stopAll()
     this.socket?.destroy()
     this.server?.close()
     if (this.win && !this.win.isDestroyed()) this.win.destroy()
@@ -172,6 +201,7 @@ export class AudioBridge {
     })
     await win.loadFile(join(__dirname, '../renderer/audio.html'))
     this.win = win
+    win.on('closed', () => this.native.stopAll())
     win.webContents.send(AUDIO_IPC.playback, this.playback)
     return win
   }

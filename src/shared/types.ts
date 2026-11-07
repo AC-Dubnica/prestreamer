@@ -1,8 +1,12 @@
 import type { Announcement } from './announce'
 import type { StreamStats } from './stream-stats'
 
-/** A logical output, like a ProPresenter "screen". Independent of any physical display. */
-export type ScreenKind = 'display' | 'virtual'
+/**
+ * A logical output, like a ProPresenter "screen". Independent of any physical display.
+ * 'display' is a window on a monitor; 'virtual' is drawn offscreen and feeds the stream; 'ndi' is drawn offscreen and sent
+ * over the network as an NDI source (a display somewhere else, fed through an NDI decoder), and takes the same roles as a display.
+ */
+export type ScreenKind = 'display' | 'virtual' | 'ndi'
 
 /**
  * Live video drawn behind the text. An ATEM Mini attached over USB shows up as an
@@ -13,6 +17,9 @@ export type VideoSource =
   | { type: 'testpattern' }
   | { type: 'camera'; deviceId: string; label: string }
 
+/** The sound of an NDI screen: none, the mixer's stream mix, or only the sound of the service's video cues (before the mixer's strips and master). */
+export type NdiSound = 'none' | 'stream' | 'video'
+
 export interface ScreenConfig {
   id: string
   name: string
@@ -21,13 +28,15 @@ export interface ScreenConfig {
   displayId: number | null
   /** Name of the bound display, so the binding survives a display id change (re-plugging, reboot). */
   displayLabel?: string
-  /** For kind 'virtual': render size. Physical screens use the display's own size. */
+  /** For kind 'virtual' and 'ndi': render size. Physical screens use the display's own size. */
   width: number
   height: number
   /** Per-screen look so each output can render the same slide differently. */
   look: Look
   /** A display screen that shows exactly what another screen shows (e.g. the stream's picture, on a monitor for the stage). */
   mirrorOf?: string
+  /** For kind 'ndi': which sound goes out with the picture (the stream mix by default). */
+  ndiSound?: NdiSound
 }
 
 export interface Look {
@@ -106,6 +115,19 @@ export interface ImportedVideo {
   durationSec: number
 }
 
+/** What an import of songs did: how many were added, how many skipped because the library had them, which files had no lyrics. */
+export interface SongImportResult {
+  added: number
+  skipped: number
+  unreadable: string[]
+}
+
+/** Where an export of the library went and how many songs it holds. */
+export interface SongExportResult {
+  count: number
+  path: string
+}
+
 /**
  * A song as edited by the user. `body` is plain text: a `[Label]` line starts a section and a
  * blank line starts a new slide (see parseSong).
@@ -123,6 +145,8 @@ export interface Song {
    * a Quelea section (title + lines, optionally its own theme) is one slide here (`[Title]` + lines), its theme's picture or
    * video is that slide's entry in `slideBackgrounds`, and the song's theme is `background`.
    */
+  /** The number in a songbook ("053"); searchable, and written in front of the title when songs are exported to Quelea. */
+  number?: string
   author?: string
   copyright?: string
   ccli?: string
@@ -165,8 +189,17 @@ export interface DisplayInfo {
   primary: boolean
 }
 
+/** How the NDI output of a live 'ndi' screen is doing. */
+export interface NdiStatus {
+  state: 'starting' | 'sending' | 'error'
+  /** What the operator should read: the NDI source's name while sending, or why it is not. */
+  message: string
+}
+
 export interface ScreenState {
   screens: ScreenConfig[]
+  /** The NDI output of each live 'ndi' screen, by screen id. */
+  ndi: Record<string, NdiStatus>
   displays: DisplayInfo[]
   /** Screen ids currently live (window open). */
   live: string[]
@@ -232,6 +265,7 @@ export const IPC = {
   stateChanged: 'state:changed',
   addVirtual: 'screen:add-virtual',
   addDisplayScreen: 'screen:add-display',
+  addNdiScreen: 'screen:add-ndi',
   updateScreen: 'screen:update',
   removeScreen: 'screen:remove',
   setLive: 'screen:set-live',
@@ -246,6 +280,9 @@ export const IPC = {
   songsList: 'songs:list',
   songsSave: 'songs:save',
   songsDelete: 'songs:delete',
+  songsImport: 'songs:import',
+  songsExport: 'songs:export',
+  songsClear: 'songs:clear',
   servicesList: 'services:list',
   servicesSave: 'services:save',
   servicesDelete: 'services:delete',
@@ -340,12 +377,18 @@ export const AUDIO_IPC = {
   apply: 'audio:apply',
   report: 'audio:report',
   pcm: 'audio:pcm',
+  videoPcm: 'audio:video-pcm',
   playback: 'audio:playback',
   mixerGet: 'audio:mixer-get',
   mixerSet: 'audio:mixer-set',
   mixerPush: 'audio:mixer-push',
   metersIn: 'audio:meters-in',
   metersOut: 'audio:meters-out',
+  nativeInputs: 'audio:native-inputs',
+  nativeStart: 'audio:native-start',
+  nativeStop: 'audio:native-stop',
+  nativeData: 'audio:native-data',
+  nativeEnded: 'audio:native-ended',
 } as const
 
 /** Level readings sent ~20×/s from the audio window to the console UI. */
@@ -357,4 +400,13 @@ export interface Meters {
   audience: { peakDb: number; rmsDb: number } | null
   /** Gain reduction in dB (≤ 0) of every effect that reduces gain (gate, compressor, limiter, de-esser), by effect id. */
   reductions: Record<string, number>
+  /** What goes through an effect right now, by effect id, for its graph: the level at its input (gate, compressor) or the spectrum before and after it (EQ). */
+  live?: Record<string, FxLive>
+}
+
+/** Live data of one effect for its graph: `inDb` is the peak level at its input (dBFS); `pre` and `post` are spectra in dBFS over log-spaced bands from 20 Hz to 20 kHz. */
+export interface FxLive {
+  inDb?: number
+  pre?: number[]
+  post?: number[]
 }

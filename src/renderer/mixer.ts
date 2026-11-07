@@ -1,7 +1,8 @@
 import type { PrestreamerApi } from '../preload'
 import { EFFECT_INFO, EFFECT_TYPES, MASTER_PRESETS, MAX_CHANNELS, MAX_EFFECTS, RANGES, STRIP_PRESETS, TEST_SOURCES, VIDEO_SOURCE, videoStrips, defaultEffect, defaultMixer, defaultStrip, shortDeviceName, stripKey, type ChainPreset, type Effect, type EffectType, type MixerConfig, type Strip, type StripSource } from '../shared/mixer'
-import type { AudioStatus, Look, Meters, ScreenConfig } from '../shared/types'
+import type { AudioStatus, FxLive, Look, Meters, ScreenConfig } from '../shared/types'
 import { moveBefore } from '../shared/curves'
+import { nativeKey, type NativeInput } from '../shared/native-audio'
 import { History } from '../shared/history'
 import { confirmDialog, showModal } from './dialogs'
 import { iconButton, iconSvg } from './icons'
@@ -39,6 +40,8 @@ interface MeterEls { fill: HTMLElement; peak: HTMLElement; gr: HTMLElement }
 export interface MixerDeps {
   /** Every audio input on the machine (kept current by the operator). */
   getDevices(): { deviceId: string; label: string }[]
+  /** Interfaces with more channels than the browser can open, read natively (see shared/native-audio.ts). */
+  getNativeInputs(): NativeInput[]
   /** How many channels a device offers, found by opening it briefly. */
   probeChannels(deviceId: string): Promise<number>
   /** Every audio output on the machine (for the monitor and the audience). */
@@ -59,6 +62,8 @@ export function createMixerView(root: HTMLElement, api: PrestreamerApi, deps: Mi
   const meters = new Map<string, MeterEls>()
   /** Gain-reduction bars of the effect cards that are on screen, by effect id (filled from the meter updates). */
   const grBars = new Map<string, HTMLElement>()
+  /** Graphs that show the sound going through their effect, by effect id; they are fed by every meter update. */
+  const liveGraphs = new Map<string, (live: FxLive | undefined, reductionDb: number) => void>()
   let masterMeters: MeterEls[] = []
   let commitTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -242,6 +247,7 @@ export function createMixerView(root: HTMLElement, api: PrestreamerApi, deps: Mi
           knobsEq.highFreq.set(e.highFreq); knobsEq.highGain.set(e.highGainDb)
           commit()
         })
+        liveGraphs.set(e.id, (l) => graph.setLive(l?.post ? { pre: l.pre, post: l.post } : null))
         const re = () => graph.redraw()
         knobsEq.lowGain = k('Low', e.lowGainDb, RANGES.eqGainDb, 0.5, ' dB', 0, (v) => { e.lowGainDb = v }, re)
         knobsEq.lowFreq = k('Freq', e.lowFreq, RANGES.eqFreq, 1, ' Hz', 100, (v) => { e.lowFreq = v }, re, true)
@@ -254,6 +260,7 @@ export function createMixerView(root: HTMLElement, api: PrestreamerApi, deps: Mi
       }
       case 'gate': {
         const g = gateCurve(e)
+        liveGraphs.set(e.id, (l, gr) => g.setLive(l?.inDb ?? null, gr))
         const gr = () => g.redraw()
         return { graph: g.el, knobs: [
           k('Threshold', e.thresholdDb, RANGES.gateThresholdDb, 1, ' dB', -50, (v) => { e.thresholdDb = v }, gr).el,
@@ -265,6 +272,7 @@ export function createMixerView(root: HTMLElement, api: PrestreamerApi, deps: Mi
       }
       case 'comp': {
         const g = compCurve(e)
+        liveGraphs.set(e.id, (l, gr) => g.setLive(l?.inDb ?? null, gr))
         const cr = () => g.redraw()
         return { graph: g.el, knobs: [
           k('Threshold', e.thresholdDb, RANGES.compThresholdDb, 1, ' dB', -24, (v) => { e.thresholdDb = v }, cr).el,
@@ -555,17 +563,19 @@ export function createMixerView(root: HTMLElement, api: PrestreamerApi, deps: Mi
 
   /** Every input the user can add a channel from: the machine's devices, then the test sources. */
   function sourceChoices(): { value: string; text: string; channels: number | null }[] {
+    const native = deps.getNativeInputs()
     return [
       { value: VIDEO_SOURCE.deviceId, text: VIDEO_SOURCE.label, channels: 2 },
-      ...deps.getDevices().map((d) => ({ value: d.deviceId, text: d.label, channels: null })),
+      ...native.map((n) => ({ value: nativeKey(n.name), text: `${n.name} (all ${n.channels} channels)`, channels: n.channels })),
+      ...deps.getDevices().filter((d) => !native.some((n) => d.label.startsWith(n.name))).map((d) => ({ value: d.deviceId, text: d.label, channels: null })), // the browser's two-channel view of a natively read interface would only confuse
       ...TEST_SOURCES.map((t) => ({ value: t.deviceId, text: t.label, channels: t.channels })),
     ]
   }
 
   /** How many channels the chosen source offers: known for test sources and open devices, otherwise found by probing. */
   function channelsOf(deviceId: string): number | 'failed' | 'checking' {
-    const test = TEST_SOURCES.find((t) => t.deviceId === deviceId)
-    if (test) return test.channels
+    const fixed = sourceChoices().find((c) => c.value === deviceId)?.channels
+    if (fixed != null) return fixed
     const open = status.devices?.find((d) => d.id === deviceId && !d.error)
     if (open) return open.channels
     const known = probed.get(deviceId)
@@ -578,6 +588,7 @@ export function createMixerView(root: HTMLElement, api: PrestreamerApi, deps: Mi
   function render(): void {
     meters.clear()
     grBars.clear()
+    liveGraphs.clear()
     detailOut = null
     const choices = sourceChoices()
     if (!choices.some((c) => c.value === addSource)) addSource = choices[0]?.value ?? ''
@@ -665,6 +676,7 @@ export function createMixerView(root: HTMLElement, api: PrestreamerApi, deps: Mi
       audienceView.meter.fill.className = `fill ${levelClass(pk)}`
       audienceView.meter.peak.style.bottom = `${meterPct(pk)}%`
     }
+    for (const [id, feed] of liveGraphs) feed(m.live?.[id], m.reductions?.[id] ?? 0)
     for (const [id, bar] of grBars) bar.style.width = `${Math.min(100, (-(m.reductions?.[id] ?? 0) / 20) * 100)}%` // each effect's gain reduction, up to 20 dB
     m.masterPeakDb.forEach((db, i) => {
       const e = masterMeters[i]

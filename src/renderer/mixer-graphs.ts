@@ -30,7 +30,21 @@ function grid(g: CanvasRenderingContext2D, vLines: number[], hLines: number[]): 
   g.stroke()
 }
 
-export interface EqGraph { el: HTMLElement; redraw(): void }
+export interface EqGraph {
+  el: HTMLElement
+  redraw(): void
+  /** The spectrum of the sound going into (`pre`) and coming out of (`post`) the EQ right now; null when nothing is playing. */
+  setLive(live: { pre?: number[]; post?: number[] } | null): void
+}
+
+const SPECTRUM_DB = [-90, -10] as const
+/** A spectrum (levels in dBFS per log-spaced band) as a path across the graph, level 0 at the bottom. */
+function spectrumPath(g: CanvasRenderingContext2D, bands: number[], close: boolean): void {
+  const yOf = (db: number) => H - (Math.max(0, Math.min(1, (db - SPECTRUM_DB[0]) / (SPECTRUM_DB[1] - SPECTRUM_DB[0])))) * H
+  g.beginPath()
+  bands.forEach((db, i) => { const x = ((i + 0.5) / bands.length) * W; i === 0 ? g.moveTo(x, yOf(db)) : g.lineTo(x, yOf(db)) })
+  if (close) { g.lineTo(W, H); g.lineTo(0, H); g.closePath() }
+}
 
 /**
  * Frequency-response plot of the 3-band EQ. Each band has a handle: drag sideways for frequency, up/down for gain,
@@ -46,9 +60,25 @@ export function eqGraph(eq: EqConfig, onEdit: () => void): EqGraph {
     { name: 'high', freq: 'highFreq', gain: 'highGainDb' },
   ] as const
 
+  let live: { pre?: number[]; post?: number[] } | null = null
   const redraw = () => {
     g.clearRect(0, 0, W, H)
     grid(g, [100, 1000, 10000].map(xOf), [yOf(-12), yOf(-6), yOf(0), yOf(6), yOf(12)])
+    if (live?.post?.length) { // what comes out, filled; what went in, as a thin line: the difference is what the EQ does to this sound
+      g.fillStyle = css('--accent', '#4da3ff')
+      g.globalAlpha = 0.28
+      spectrumPath(g, live.post, true)
+      g.fill()
+      if (live.pre?.length) {
+        g.globalAlpha = 0.7
+        g.strokeStyle = css('--dim', '#8b93a7')
+        g.lineWidth = 1
+        spectrumPath(g, live.pre, false)
+        g.stroke()
+      }
+      g.globalAlpha = 1
+    }
+    g.lineWidth = 2
     g.strokeStyle = css('--accent', '#4da3ff')
     g.lineWidth = 2
     g.globalAlpha = eq.on ? 1 : 0.35
@@ -104,20 +134,26 @@ export function eqGraph(eq: EqConfig, onEdit: () => void): EqGraph {
     redraw()
     onEdit()
   }
-  c.title = 'Drag a dot to change its frequency and gain. Scroll over the middle dot to change its width (Q).'
+  c.title = 'Drag a dot to change its frequency and gain. Scroll over the middle dot to change its width (Q). While sound plays: the shaded area is the sound coming out, the thin line the sound going in.'
   redraw()
-  return { el: c, redraw }
+  return { el: c, redraw, setLive(l) { live = l; redraw() } }
 }
 
-export interface CurveGraph { el: HTMLElement; redraw(): void }
+export interface CurveGraph {
+  el: HTMLElement
+  redraw(): void
+  /** The level going in (dBFS, null when silent) and the gain change the effect applies to it right now (dB, ≤ 0). */
+  setLive(inDb: number | null, gainDb?: number): void
+}
 
 const DB_MIN = -60
 
 /** Input-vs-output plot for the compressor or gate (or any level curve), with the unity diagonal for reference. */
-export function transferGraph(fn: () => (inDb: number) => number, thresholdDb: () => number): CurveGraph {
+export function transferGraph(fn: () => (inDb: number) => number, thresholdDb: () => number, extraDb: () => number = () => 0): CurveGraph {
   const { c, g } = canvas()
   const xOf = (db: number) => ((db - DB_MIN) / -DB_MIN) * W
   const yOf = (db: number) => H - ((Math.max(DB_MIN, Math.min(0, db)) - DB_MIN) / -DB_MIN) * H
+  let live: { inDb: number; outDb: number } | null = null
   const redraw = () => {
     g.clearRect(0, 0, W, H)
     grid(g, [-48, -36, -24, -12].map(xOf), [-48, -36, -24, -12].map(yOf))
@@ -137,11 +173,29 @@ export function transferGraph(fn: () => (inDb: number) => number, thresholdDb: (
       x === 0 ? g.moveTo(x, y) : g.lineTo(x, y)
     }
     g.stroke()
+    if (live) { // the sound right now: a line up from the input level to the dot, and across to the output level
+      const lx = xOf(live.inDb), ly = yOf(live.outDb)
+      g.strokeStyle = css('--live', '#ef4444')
+      g.fillStyle = css('--live', '#ef4444')
+      g.lineWidth = 1
+      g.globalAlpha = 0.5
+      g.beginPath(); g.moveTo(lx + 0.5, H); g.lineTo(lx + 0.5, ly); g.lineTo(0, ly); g.stroke()
+      g.globalAlpha = 1
+      g.beginPath(); g.arc(lx, ly, 4.5, 0, Math.PI * 2); g.fill()
+    }
   }
-  c.title = 'Horizontal: level going in. Vertical: level coming out. The dashed line is "no change".'
+  c.title = 'Horizontal: level going in. Vertical: level coming out. The dashed line is "no change". While sound plays, the red dot is the sound right now: how far it sits below the dashed line is how much is taken off.'
   redraw()
-  return { el: c, redraw }
+  return {
+    el: c, redraw,
+    setLive(inDb, gainDb = 0) {
+      const next = inDb === null || inDb < DB_MIN ? null : { inDb, outDb: inDb + gainDb + extraDb() }
+      if (!next && !live) return
+      live = next
+      redraw()
+    },
+  }
 }
 
-export const compCurve = (comp: CompConfig) => transferGraph(() => (db) => compOutDb(comp, db), () => comp.thresholdDb)
+export const compCurve = (comp: CompConfig) => transferGraph(() => (db) => compOutDb(comp, db), () => comp.thresholdDb, () => (comp.on ? comp.makeupDb : 0))
 export const gateCurve = (gate: GateConfig) => transferGraph(() => (db) => gateOutDb(gate, db), () => gate.thresholdDb)

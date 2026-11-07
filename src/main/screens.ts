@@ -4,7 +4,9 @@ import { randomUUID } from 'node:crypto'
 import { randomUUID as uuid } from 'node:crypto'
 import type { Announcement, AnnounceRequest } from '../shared/announce'
 import { moveBefore } from '../shared/curves'
-import { STAGE_LOOK, clampSize, isBlank, moveById, sanitizeScreens } from '../shared/screens'
+import { NDI_FPS } from '../shared/ndi'
+import { STAGE_LOOK, clampSize, hasRoles, isBlank, isOffscreen, moveById, sanitizeScreens } from '../shared/screens'
+import type { NdiOutputs } from './ndi'
 import type { ListStore } from './store'
 import {
   IPC,
@@ -12,6 +14,7 @@ import {
   idlePlayback,
   type PlaybackState,
   type DisplayInfo,
+  type NdiStatus,
   type OutputPayload,
   type ScreenConfig,
   type ScreenState,
@@ -23,7 +26,9 @@ import {
  *
  * - 'display' screens render into a borderless fullscreen window on a physical display.
  * - 'virtual' screens render offscreen at a fixed size; frames are emitted via `onFrame`
- *   so they can later feed the streamer (ffmpeg) or NDI, and are also a preview source.
+ *   and pulled by the streamer (ffmpeg) through `lastFrame`.
+ * - 'ndi' screens render offscreen like virtual ones, take the same roles as a display (own slides, stage monitor, mirror),
+ *   and their frames are sent over the network by `NdiOutputs` while the screen is live.
  */
 export class ScreenManager {
   private screens = new Map<string, ScreenConfig>()
@@ -44,6 +49,9 @@ export class ScreenManager {
   private reconcileTimer: NodeJS.Timeout | null = null
   /** The display each open display-screen window was placed on (null: the windowed stand-in). */
   private placedOn = new Map<string, number | null>()
+  /** The NDI output of each live 'ndi' screen: whether it is sending, or why not. */
+  private ndiStatus = new Map<string, NdiStatus>()
+  private ndi: NdiOutputs | null = null
 
   constructor(
     private readonly onChange: (state: ScreenState) => void,
@@ -65,6 +73,7 @@ export class ScreenManager {
   getState(): ScreenState {
     return {
       screens: [...this.screens.values()],
+      ndi: Object.fromEntries(this.ndiStatus),
       displays: electronScreen.getAllDisplays().map(toDisplayInfo),
       live: [...this.windows.keys()],
       slide: this.slide,
@@ -88,6 +97,37 @@ export class ScreenManager {
     this.persist()
     this.emit()
     return cfg
+  }
+
+  /** A screen sent over the network as an NDI source, with the role of a display screen. */
+  addNdiScreen(name: string, opts: { width?: number; height?: number; stage?: boolean; mirrorOf?: string } = {}): ScreenConfig {
+    const mirror = opts.mirrorOf && this.canMirror(opts.mirrorOf) ? opts.mirrorOf : undefined
+    const cfg: ScreenConfig = {
+      id: randomUUID(),
+      name,
+      kind: 'ndi',
+      displayId: null,
+      ndiSound: 'stream',
+      ...clampSize(opts.width ?? 1920, opts.height ?? 1080),
+      ...(mirror ? { mirrorOf: mirror } : {}),
+      look: opts.stage ? { ...defaultLook, ...STAGE_LOOK } : { ...defaultLook },
+    }
+    this.screens.set(cfg.id, cfg)
+    this.persist()
+    this.emit()
+    return cfg
+  }
+
+  /** Gives the screens the NDI sender they use while live. */
+  setNdiOutputs(ndi: NdiOutputs): void {
+    this.ndi = ndi
+  }
+
+  /** The sender reports how an output is doing (null: it ended on purpose). */
+  setNdiStatus(id: string, status: NdiStatus | null): void {
+    if (status) this.ndiStatus.set(id, status)
+    else this.ndiStatus.delete(id)
+    this.emit()
   }
 
   addDisplayScreen(name: string, displayId: number | null, opts: { stage?: boolean; mirrorOf?: string } = {}): ScreenConfig {
@@ -133,11 +173,11 @@ export class ScreenManager {
     const next: ScreenConfig = { ...cur, ...patch, look: { ...cur.look, ...patch.look } }
     if ('width' in patch || 'height' in patch) Object.assign(next, clampSize(next.width, next.height))
     if ('mirrorOf' in patch) {
-      // '' or undefined stops mirroring. Only a display screen can mirror, and only a screen that is not a mirror itself,
+      // '' or undefined stops mirroring. Only a display or NDI screen can mirror, and only a screen that is not a mirror itself,
       // and a screen that others mirror cannot become a mirror.
       const wanted = patch.mirrorOf
       const followed = [...this.screens.values()].some((s) => s.mirrorOf === id)
-      if (wanted && cur.kind === 'display' && !followed && this.canMirror(wanted, id)) next.mirrorOf = wanted
+      if (wanted && hasRoles(cur.kind) && !followed && this.canMirror(wanted, id)) next.mirrorOf = wanted
       else delete next.mirrorOf
     }
     if (next.kind === 'display' && next.displayId !== cur.displayId) {
@@ -150,7 +190,7 @@ export class ScreenManager {
     if (this.windows.has(id)) {
       // Geometry or binding changed: reopen. Look-only changes just re-render.
       const geometryChanged =
-        next.displayId !== cur.displayId || next.width !== cur.width || next.height !== cur.height
+        next.displayId !== cur.displayId || next.width !== cur.width || next.height !== cur.height || (next.kind === 'ndi' && (next.name !== cur.name || next.ndiSound !== cur.ndiSound))
       if (geometryChanged) {
         this.close(id)
         this.open(id)
@@ -290,7 +330,7 @@ export class ScreenManager {
     }
 
     let win: BrowserWindow
-    if (cfg.kind === 'virtual') {
+    if (isOffscreen(cfg.kind)) {
       win = new BrowserWindow({
         width: cfg.width,
         height: cfg.height,
@@ -298,7 +338,7 @@ export class ScreenManager {
         frame: false,
         webPreferences: { ...webPreferences, offscreen: true },
       })
-      win.webContents.setFrameRate(this.virtualFps)
+      win.webContents.setFrameRate(cfg.kind === 'ndi' ? NDI_FPS : this.virtualFps)
       win.webContents.on('paint', (_e, _dirty, image) => {
         this.lastFrames.set(id, image)
         this.onFrame(id, image)
@@ -313,6 +353,8 @@ export class ScreenManager {
           ? { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height, fullscreen: false, frame: false, enableLargerThanScreen: true }
           : { width: 960, height: 540, frame: true, title: `${cfg.name} (no display bound)` }),
         backgroundColor: '#000000',
+        // A frameless window on macOS has rounded corners and a shadow, which show as dark notches on a full-screen output.
+        ...(display ? { roundedCorners: false, hasShadow: false } : {}),
         webPreferences,
       })
       // 'screen-saver' is above the menu bar and Dock, so the picture covers the whole display (primary one too).
@@ -326,6 +368,7 @@ export class ScreenManager {
     })
     win.loadFile(join(__dirname, '../renderer/output.html'), { query: { screenId: id } })
     this.windows.set(id, win)
+    if (cfg.kind === 'ndi') this.ndi?.start(id, cfg.name, cfg.width, cfg.height, cfg.ndiSound ?? 'stream', () => this.lastFrames.get(id) ?? null)
   }
 
   private close(id: string): void {
@@ -333,6 +376,8 @@ export class ScreenManager {
     this.windows.delete(id)
     this.placedOn.delete(id)
     this.lastFrames.delete(id)
+    this.ndi?.stop(id)
+    this.ndiStatus.delete(id)
     if (win && !win.isDestroyed()) win.destroy()
   }
 

@@ -1,6 +1,7 @@
 import { BrowserWindow } from 'electron'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import type { PdfLine } from '../shared/song-import'
 
 export const MAX_PAGES = 300
 const RENDER_WIDTH = 1920
@@ -42,6 +43,31 @@ export function renderPdfPages(data: Buffer, outDir: string, nameFor: (index: nu
     })
     ipc.on('pdf:ready', () => win.webContents.send('pdf:job', { data: new Uint8Array(data), width: RENDER_WIDTH, maxPages: MAX_PAGES }))
     win.webContents.on('render-process-gone', () => finish(new Error('The PDF renderer crashed')))
+    void win.loadFile(join(__dirname, '../renderer/pdf-render.html')).catch((err) => finish(err as Error))
+  })
+}
+
+/** The text lines of the first page of each PDF, read in a hidden window with pdf.js. */
+export function readPdfTexts(files: Buffer[]): Promise<PdfLine[][]> {
+  return new Promise((resolve, reject) => {
+    const win = new BrowserWindow({ show: false, width: 800, height: 600, webPreferences: { preload: join(__dirname, '../preload/pdf.js'), contextIsolation: true, sandbox: true } })
+    const ipc = win.webContents.ipc
+    let settled = false
+    const finish = (err: Error | null, texts: PdfLine[][] = []) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      if (!win.isDestroyed()) win.destroy()
+      if (err) reject(err)
+      else resolve(texts)
+    }
+    const timer = setTimeout(() => finish(new Error('Reading the PDFs took too long')), 5 * 60_000)
+    ipc.on('pdf:done', (_e, result: { texts: PdfLine[][] } | { error: string }) => {
+      if ('texts' in result) finish(null, result.texts)
+      else finish(new Error(`The PDFs could not be read: ${result.error}`))
+    })
+    ipc.on('pdf:ready', () => win.webContents.send('pdf:job', { texts: files.map((f) => new Uint8Array(f)) }))
+    win.webContents.on('render-process-gone', () => finish(new Error('The PDF reader crashed')))
     void win.loadFile(join(__dirname, '../renderer/pdf-render.html')).catch((err) => finish(err as Error))
   })
 }

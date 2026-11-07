@@ -114,6 +114,17 @@ const shots = {
       tab('Settings').click(); await w(600)
       qa('#view-settings .setnav button').find((b) => b.textContent.trim() === 'Stream').click(); await w(900)`,
   },
+  // The dialog for adding a screen, on the NDI type (it shows no display names, unlike the list of screens behind it).
+  'ndi-screen': {
+    media: songBg,
+    scenario: `${prelude}
+      await backgrounds()
+      tab('Settings').click(); await w(600)
+      qa('#view-settings .setnav button').find((b) => b.textContent.trim() === 'Screens').click(); await w(700)
+      qa('#view-settings button').find((b) => b.textContent.includes('Add screen')).click(); await w(600)
+      qa('.kindcard').find((b) => b.textContent.includes('NDI screen')).click(); await w(500)
+      const n = q('.sd input[type=text]'); n.value = 'Hall display'; n.dispatchEvent(new Event('input', { bubbles: true })); await w(400)`,
+  },
   'announce-live': {
     media: songBg,
     scenario: `${prelude}

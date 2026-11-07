@@ -1,13 +1,16 @@
 import type { AudioApi } from '../preload/audio'
 import { dbToGain, effectiveGains, gainToDb, stripKey, type Effect, type MixerConfig, type MonitorConfig, type Strip } from '../shared/mixer'
 import { createFx, param, type Fx } from './effects'
-import { mediaUrl, type AudioConfig, type Meters, type PlaybackState } from '../shared/types'
+import { nativeName } from '../shared/native-audio'
+import { mediaUrl, type AudioConfig, type FxLive, type Meters, type PlaybackState } from '../shared/types'
 
 declare const audioBridge: AudioApi
 
 const SAMPLE_RATE = 48000
 const BATCH_FRAMES = 1024
 const METER_INTERVAL_MS = 50
+/** Cushion of a natively read interface: enough to ride out the uneven arrival of samples, small enough to stay in step with the picture. */
+const NATIVE_CUSHION_MS = 60
 
 interface StripNodes {
   key: string
@@ -103,6 +106,9 @@ let mixer: MixerConfig | null = null
 /** The shared video clock, and the element that plays the current video's soundtrack into the mixer (while that input is open). */
 let playback: PlaybackState | null = null
 let videoEl: HTMLAudioElement | null = null
+/** Where the samples of each natively read interface go (by device name), and what happens if one stops by itself. */
+const nativeSinks = new Map<string, (frames: ArrayBuffer) => void>()
+const nativeEnds = new Map<string, (message: string) => void>()
 
 function teardown(): void {
   const g = graph
@@ -273,8 +279,12 @@ function readMeters(g: Graph, m: MixerConfig): Meters {
   })
   // Every effect that takes gain off reports it, by id, so its card in the chain can show it.
   const reductions: Record<string, number> = {}
+  const live: Record<string, FxLive> = {}
   for (const rig of [...g.strips.values()].map((n) => n.rig).concat(g.masterRig)) {
-    for (const f of rig.fx) if (f.type === 'gate' || f.type === 'comp' || f.type === 'limiter' || f.type === 'deesser') reductions[f.id] = f.reduction()
+    for (const f of rig.fx) {
+      if (f.type === 'gate' || f.type === 'comp' || f.type === 'limiter' || f.type === 'deesser') reductions[f.id] = f.reduction()
+      if (f.live) live[f.id] = f.live()
+    }
   }
   const master = g.masterMeters.map((a) => {
     const buf = new Float32Array(a.fftSize)
@@ -289,7 +299,7 @@ function readMeters(g: Graph, m: MixerConfig): Meters {
     for (let i = 0; i < buf.length; i++) sumSq += buf[i] * buf[i]
     audience = { peakDb: gainToDb(peakOf(buf)), rmsDb: gainToDb(Math.sqrt(sumSq / buf.length)) }
   }
-  return { strips, masterPeakDb: master, reductions, audience }
+  return { strips, masterPeakDb: master, reductions, live, audience }
 }
 
 /** 1 kHz beep at the start of every wall-clock second, for the A/V sync check. Returns a stop function. */
@@ -329,6 +339,24 @@ function startMultiTones(c: AudioContext, merger: ChannelMergerNode): () => void
     return osc
   })
   return () => oscs.forEach((o) => o.stop())
+}
+
+/** Gathers the blocks a pcm-tap posts (128 frames each) into blocks of BATCH_FRAMES before they cross to the main process. */
+function batchPcm(send: (buf: ArrayBuffer) => void): (e: MessageEvent<ArrayBuffer>) => void {
+  let batch: Float32Array[] = []
+  let frames = 0
+  return (e) => {
+    const chunk = new Float32Array(e.data)
+    batch.push(chunk)
+    frames += chunk.length / 2
+    if (frames < BATCH_FRAMES) return
+    const out = new Float32Array(frames * 2)
+    let offset = 0
+    for (const b of batch) { out.set(b, offset); offset += b.length }
+    batch = []
+    frames = 0
+    send(out.buffer)
+  }
 }
 
 /** Opens one input. A device that cannot be opened (permission, unplugged, busy) comes back with an error instead of throwing. */
@@ -376,7 +404,14 @@ async function openSource(g: Graph, key: string, label: string): Promise<Source>
     upmix.connect(meter)
     meter.connect(g.mute) // pulled by the graph like the other analysers
     g.videoMeter = { node: meter, buf: new Float32Array(1024) }
+    // The sound of the videos on its own, for NDI screens that carry only that (blocks of BATCH_FRAMES, like the stream mix).
+    const tap = new AudioWorkletNode(ctx, 'pcm-tap', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCount: 2, channelCountMode: 'explicit' })
+    upmix.connect(tap)
+    tap.connect(g.mute)
+    tap.port.onmessage = batchPcm((buf) => audioBridge.videoPcm(buf))
     return finish(upmix, 2, () => {
+      tap.port.onmessage = null
+      tap.disconnect()
       meter.disconnect()
       if (g.videoMeter?.node === meter) g.videoMeter = null
       clearInterval(timer)
@@ -396,6 +431,29 @@ async function openSource(g: Graph, key: string, label: string): Promise<Source>
   if (key === 'test:tones') {
     const merger = ctx.createChannelMerger(4)
     return finish(merger, 4, startMultiTones(ctx, merger))
+  }
+  const native = nativeName(key)
+  if (native !== null) {
+    const started = await audioBridge.nativeStart(native)
+    const failed = (error: string): Source => ({ key, label, channelCount: 0, splitter: null, stream: null, error, stop: () => {} })
+    if ('error' in started) return failed(started.error)
+    if (graph?.ctx !== ctx) { audioBridge.nativeStop(native, started.id); return failed('The mixer was restarted while this input was opening') }
+    const node = new AudioWorkletNode(ctx, 'native-in', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [started.channels], processorOptions: { channels: started.channels, targetMs: NATIVE_CUSHION_MS } })
+    const sink = (frames: ArrayBuffer) => node.port.postMessage(new Float32Array(frames), [frames])
+    const onEnd = (message: string) => {
+      src.error = message
+      src.channelCount = 0 // its channels are gone: strips on it fall silent and the interface says why
+      if (graph?.sources.get(key) === src) reportStatus(graph)
+    }
+    nativeSinks.set(native, sink)
+    nativeEnds.set(native, onEnd)
+    const src = finish(node, started.channels, () => {
+      if (nativeSinks.get(native) === sink) nativeSinks.delete(native) // a newer capture of the same device keeps its own
+      if (nativeEnds.get(native) === onEnd) nativeEnds.delete(native)
+      node.disconnect()
+      audioBridge.nativeStop(native, started.id)
+    })
+    return src
   }
   try {
     // Processing constraints can force mono/stereo downmix, so they are all switched off.
@@ -435,6 +493,7 @@ async function apply(cfg: AudioConfig, initialMixer: MixerConfig): Promise<void>
     await ctx.audioWorklet.addModule('gate-worklet.js')
     await ctx.audioWorklet.addModule('comp-worklet.js')
     await ctx.audioWorklet.addModule('deesser-worklet.js')
+    await ctx.audioWorklet.addModule('native-in-worklet.js')
     const c = ctx
 
     const sum = c.createGain()
@@ -466,20 +525,7 @@ async function apply(cfg: AudioConfig, initialMixer: MixerConfig): Promise<void>
     applyMixer(initialMixer)
     await Promise.allSettled([...g.opening.values()]) // wait for the first devices so the status already says what each delivered
 
-    let batch: Float32Array[] = []
-    let frames = 0
-    tap.port.onmessage = (e: MessageEvent<ArrayBuffer>) => {
-      const chunk = new Float32Array(e.data)
-      batch.push(chunk)
-      frames += chunk.length / 2
-      if (frames < BATCH_FRAMES) return
-      const out = new Float32Array(frames * 2)
-      let offset = 0
-      for (const b of batch) { out.set(b, offset); offset += b.length }
-      batch = []
-      frames = 0
-      audioBridge.pcm(out.buffer)
-    }
+    tap.port.onmessage = batchPcm((buf) => audioBridge.pcm(buf))
     g.timers.push(setInterval(() => { if (mixer) audioBridge.meters(readMeters(g, mixer)) }, METER_INTERVAL_MS))
     reportStatus(g)
   } catch (err) {
@@ -489,6 +535,8 @@ async function apply(cfg: AudioConfig, initialMixer: MixerConfig): Promise<void>
   }
 }
 
+audioBridge.onNativeData((name, frames) => nativeSinks.get(name)?.(frames))
+audioBridge.onNativeEnded((name, message) => nativeEnds.get(name)?.(message))
 audioBridge.onApply(({ config, mixer: m }) => void apply(config, m))
 audioBridge.onPlayback((st) => { playback = st; applyVideoPlayback() })
 audioBridge.onMixer((m) => applyMixer(m))

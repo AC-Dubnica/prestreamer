@@ -3,7 +3,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { defaultMixer, defaultStrip, makeEffect, type MixerConfig, type StripSource } from '../shared/mixer'
 import { defaultAudio, type Slide, type StreamStartRequest } from '../shared/types'
+import { nativeKey } from '../shared/native-audio'
 import type { AudioBridge } from './audio'
+import { TEST_RIG, testRigHz } from './native-audio'
 import { importMediaFile, mediaDir } from './library'
 import type { Playback } from './playback'
 import type { ScreenManager } from './screens'
@@ -37,11 +39,13 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
  *                                  PRESTREAMER_ANNOUNCE="text" puts an announcement on air
  *   PRESTREAMER_LOOK_BG=file       with STREAMTEST: a picture (.png) or video (.mp4) behind the text of the stream screen
  *   PRESTREAMER_MEDIA_FILE=file    stands in for the picture/video file dialog
+ *   PRESTREAMER_VIDEO_FILE=file    stands in for the dialog of the run sheet's video import
  *   PRESTREAMER_MAKEPDF=file.pdf   writes a 3-page test PDF and quits; PRESTREAMER_PRESENTATION_FILE=file stands in for the import dialog;
  *                                  PRESTREAMER_PICTURE_PDF=file.pdf shows its first page as a presentation slide (with STREAMTEST/SNAPSHOT)
  *   PRESTREAMER_BGTEST=dir         image/video slide backgrounds, with test.png and test.mp4 in dir
  *   PRESTREAMER_VIDEOTEST=dir      video import plans and synchronised playback, with t.* files in dir
  *   PRESTREAMER_MIXERTEST=out.f32  steps the mixer through a scripted sequence and records its PCM (scripts/e2e-mixer.mjs)
+ *   PRESTREAMER_NATIVETEST=out.f32 reads a stand-in 32-channel interface (PRESTREAMER_NATIVE_TEST=1) through the native capture path and records the mix (scripts/e2e-native.mjs)
  * PRESTREAMER_FFMPEG_LOG=level prints ffmpeg's own log during any of them.
  */
 /** A PDF with one solid-colour page per colour, made by Chromium's own printer (so the tests need no external tools). */
@@ -233,8 +237,45 @@ export function runDevHooks(ctx: DevContext): void {
       app.quit()
     }, 1500)
   }
+  const nativeTestPath = process.env.PRESTREAMER_NATIVETEST
+  if (nativeTestPath) setTimeout(() => void nativeTest(ctx, nativeTestPath), 2000)
   const mixerTestPath = process.env.PRESTREAMER_MIXERTEST
   if (mixerTestPath) setTimeout(() => void mixerTest(ctx, mixerTestPath), 2000)
+}
+
+/** Channels of the stand-in interface heard in each segment of the native capture test (channel numbers count from 0). */
+const NATIVE_SEGMENTS: { name: string; channels: number[] }[] = [
+  { name: 'ch5', channels: [4] },
+  { name: 'ch21', channels: [20] },
+  { name: 'ch5+ch32', channels: [4, 31] },
+]
+
+/** Records the mix of strips taken from the stand-in 32-channel interface, so the analysis can check that every channel comes out as itself. */
+async function nativeTest(ctx: DevContext, outPath: string): Promise<void> {
+  const { audio } = ctx
+  // PRESTREAMER_NATIVETEST_DEVICE=WING PRESTREAMER_NATIVETEST_CHANNELS=15,16,17 records each of those (counting from 1) of a real interface, one segment per channel.
+  const realDevice = process.env.PRESTREAMER_NATIVETEST_DEVICE
+  const segmentList = realDevice ? (process.env.PRESTREAMER_NATIVETEST_CHANNELS ?? '1').split(',').map((c) => ({ name: `ch${c}`, channels: [Number(c) - 1] })) : NATIVE_SEGMENTS
+  const source: StripSource = { deviceId: nativeKey(realDevice ?? TEST_RIG.name), label: realDevice ?? TEST_RIG.name }
+  const baseFor = (channels: number[]): MixerConfig => ({ ...defaultMixer(), strips: channels.map((c) => defaultStrip(c, undefined, source)), masterChain: [] })
+  const chunks: Buffer[] = []
+  let bytes = 0
+  audio.pcmTap = (chunk) => { chunks.push(chunk); bytes += chunk.length }
+  audio.setMixer(baseFor(segmentList[0].channels))
+  console.log('AUDIO', JSON.stringify(await audio.configure({ ...defaultAudio, source: { type: 'silence' }, mixerSources: true })))
+  await sleep(4000) // ffmpeg and the mixer's window take a moment to start
+  console.log('STATUS', JSON.stringify(audio.getStatus()))
+  const segments: { name: string; startFrame: number; endFrame: number }[] = []
+  for (const seg of segmentList) {
+    audio.setMixer(baseFor(seg.channels))
+    const startFrame = bytes / 8
+    await sleep(3000)
+    segments.push({ name: seg.name, startFrame, endFrame: bytes / 8 })
+  }
+  audio.pcmTap = null
+  writeFileSync(outPath, Buffer.concat(chunks))
+  writeFileSync(`${outPath}.segments.json`, JSON.stringify({ sampleRate: 48000, segments, hz: Object.fromEntries(Array.from({ length: TEST_RIG.channels }, (_, c) => [c, testRigHz(c)])) }, null, 2))
+  app.quit()
 }
 
 /** One mixer setting per segment, applied to a fresh base mix; the analysis script checks each segment's spectrum. */

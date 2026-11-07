@@ -84,6 +84,7 @@ function transcode(path: string, out: string, maps: string[], durationSec: numbe
 const VIDEO_EXT = ['mp4', 'm4v', 'mov', 'mkv', 'webm', 'avi', 'wmv', 'mpg', 'mpeg', 'mts', 'm2ts', 'flv', 'ts']
 
 export async function pickVideo(parent: BrowserWindow | null, onProgress: (pct: number) => void): Promise<ImportedVideo | null> {
+  if (process.env.PRESTREAMER_VIDEO_FILE) return importVideoFile(process.env.PRESTREAMER_VIDEO_FILE, onProgress) // dev hook: stands in for the file dialog
   const options: Electron.OpenDialogOptions = {
     title: 'Choose a video for the service',
     properties: ['openFile'],
