@@ -75,7 +75,9 @@ describe.skipIf(!posix)('Streamer with a fake ffmpeg', () => {
   it('reads ffmpeg progress and reports bitrate, speed and health', async () => {
     const { streamer } = setup()
     await streamer.start(() => frame, fileTarget('/tmp/out.mkv'))
-    await wait(2600)
+    // Stats are sampled once a second; a loaded CI runner can be late, so wait for two samples instead of a fixed time.
+    for (let i = 0; i < 60 && (streamer.getStatus().stats?.history.length ?? 0) < 2; i++) await wait(100)
+    await wait(300)
     const stats = streamer.getStatus().stats
     expect(stats).toBeDefined()
     expect(stats!.bitrateKbps).toBeGreaterThan(800)
