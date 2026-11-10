@@ -328,6 +328,10 @@ export const IPC = {
   atemSetAddress: 'atem:set-address',
   atemSend: 'atem:send',
   atemSetButtons: 'atem:set-buttons',
+  dmxGet: 'dmx:get',
+  dmxState: 'dmx:state',
+  dmxSetSettings: 'dmx:set-settings',
+  dmxCommand: 'dmx:command',
 } as const
 
 export interface OutputPayload {

@@ -3,6 +3,8 @@ import { defaultAppearance, type Appearance } from '../shared/appearance'
 import { mediaThumb, pickBackground } from './background-picker'
 import type { DisplayInfo, ScreenConfig, ScreenState } from '../shared/types'
 import { idleAtem, type AtemStatus } from '../shared/atem'
+import { idleDmx } from '../shared/dmx'
+import { createDmxSettings } from './dmx-settings'
 import { askText, confirmDialog } from './dialogs'
 import { iconButton } from './icons'
 import { describeRole, openScreenForm } from './screen-form'
@@ -46,6 +48,7 @@ export function createSettingsView(root: HTMLElement, api: PrestreamerApi, toggl
   let lastState: ScreenState | null = null
   let atemStatus: AtemStatus = idleAtem
   let streamPage: ReturnType<typeof createStreamSettings> | null = null
+  const dmxPage = createDmxSettings(api, idleDmx)
   let appearanceNote = ''
   // The categories listed down the left side; the one open is remembered.
   const CATEGORIES = [
@@ -53,6 +56,7 @@ export function createSettingsView(root: HTMLElement, api: PrestreamerApi, toggl
     { id: 'screens', label: 'Screens', icon: 'present', hint: 'The outputs (audience displays, stage monitor, stream, mirrors) and the monitors connected to this computer' },
     { id: 'stream', label: 'Stream', icon: 'play', hint: 'Where the stream goes (YouTube or a file), the screen and key, and how it is encoded' },
     { id: 'atem', label: 'ATEM', icon: 'camera', hint: 'The video switcher: its address and which switching buttons to show' },
+    { id: 'dmx', label: 'DMX', icon: 'bulb', hint: 'Stage lighting through a USB DMX interface: the lights, the scenes and the interface' },
   ] as const
   type CategoryId = (typeof CATEGORIES)[number]['id']
   const CATEGORY_KEY = 'prestreamer.settingsCategory'
@@ -219,11 +223,13 @@ export function createSettingsView(root: HTMLElement, api: PrestreamerApi, toggl
       return b
     }))
     // The connected monitors come first: they are what the screens below are bound to.
-    root.replaceChildren(nav, el('div', { className: 'setbody', role: 'tabpanel' }, ...(category === 'visuals' ? [lookSection()] : category === 'stream' ? [streamSection()] : category === 'atem' ? [atemSection()] : [displays, screens])))
+    root.replaceChildren(nav, el('div', { className: 'setbody', role: 'tabpanel' }, ...(category === 'visuals' ? [lookSection()] : category === 'stream' ? [streamSection()] : category === 'atem' ? [atemSection()] : category === 'dmx' ? [dmxPage.root] : [displays, screens])))
   }
 
   void api.atemGet().then((s) => { atemStatus = s; if (category === 'atem' && lastState) render(lastState, true) })
   api.onAtem((s) => { atemStatus = s; if (category === 'atem' && lastState) render(lastState, true) })
+  void api.dmxGet().then((s) => dmxPage.update(s))
+  api.onDmx((s) => dmxPage.update(s))
 
   return {
     render,

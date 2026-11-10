@@ -24,6 +24,9 @@ import { exportSongs, pickSongsZip, songsFromZip } from './song-import'
 import { defaultSession, fitBounds, safeToRestore, sanitizeSession, type Session } from '../shared/session'
 import { defaultAppearance, forgetAppearanceMedia, sanitizeAppearance, type Appearance } from '../shared/appearance'
 import { AtemController, realAtemClient } from './atem'
+import { DmxController } from './dmx'
+import { realDmxDeps } from './dmx-helper'
+import { defaultDmxSettings, sanitizeDmxSettings, type DmxCommand } from '../shared/dmx'
 import { defaultAtemSettings, sanitizeAtemButtons, sanitizeAtemSettings, type AtemCommand } from '../shared/atem'
 import { Streamer, fileTarget, youtubeTarget } from './streamer'
 
@@ -64,6 +67,7 @@ let streamer: Streamer
 let audio: AudioBridge
 let playback: Playback
 let atem: AtemController
+let dmx: DmxController
 
 // App-wide look: the song and scripture backgrounds and the logo (appearance.json).
 const appearancePath = () => join(userData(), 'appearance.json')
@@ -151,6 +155,7 @@ function createOperator(): void {
     operator = null
     await streamer.stop()
     await atem.stop()
+    await dmx.stop()
     audio.close()
     screens.closeAll()
     app.quit()
@@ -279,6 +284,9 @@ ipcMain.handle(IPC.atemGet, () => atem.getStatus())
 ipcMain.handle(IPC.atemSetAddress, (_e, address: unknown) => atem.setAddress(address))
 ipcMain.handle(IPC.atemSend, (_e, cmd: AtemCommand) => atem.send(cmd))
 ipcMain.handle(IPC.atemSetButtons, (_e, patch: unknown) => atem.setButtons(sanitizeAtemButtons({ ...atem.getSettings().buttons, ...(patch && typeof patch === 'object' ? patch : {}) })))
+ipcMain.handle(IPC.dmxGet, () => dmx.command({ type: 'rescan' }))
+ipcMain.handle(IPC.dmxSetSettings, (_e, settings: unknown) => dmx.setSettings(settings))
+ipcMain.handle(IPC.dmxCommand, (_e, cmd: DmxCommand) => dmx.command(cmd))
 ipcMain.handle(IPC.streamKeyState, () => streamKey.has())
 ipcMain.handle(IPC.streamKeyForget, () => streamKey.forget())
 ipcMain.handle(IPC.streamKeySet, (_e, key: unknown) => { const k = typeof key === 'string' ? key.trim() : ''; if (k) streamKey.save(k) })
@@ -344,6 +352,19 @@ app.whenReady().then(() => {
   )
   // Tests use a scratch data folder and must not send network packets to whatever sits at the default address.
   if (!process.env.PRESTREAMER_USER_DATA || process.env.PRESTREAMER_ATEM === '1') atem.start()
+
+  const dmxPath = join(userData(), 'dmx.json')
+  let dmxSettings = defaultDmxSettings
+  try { dmxSettings = sanitizeDmxSettings(JSON.parse(readFileSync(dmxPath, 'utf8'))) } catch { /* nothing saved yet */ }
+  // Tests use a scratch data folder and must not open a real interface; PRESTREAMER_DMX_FAKE=file runs the real sender into a file instead.
+  const dmxFake = process.env.PRESTREAMER_DMX_FAKE
+  dmx = new DmxController(
+    (status) => operator?.webContents.send(IPC.dmxState, status),
+    realDmxDeps({ fakeFile: dmxFake, disabledReason: process.env.PRESTREAMER_USER_DATA && !dmxFake ? 'DMX output is off while testing' : undefined }),
+    (next) => { try { writeJsonAtomic(dmxPath, next) } catch { /* the settings are a convenience */ } },
+    dmxSettings,
+  )
+  dmx.start()
 
   createOperator()
   restoreScreens()

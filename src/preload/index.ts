@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { Announcement, AnnounceRequest, QuickMessage } from '../shared/announce'
 import type { Appearance } from '../shared/appearance'
 import type { AtemButtons, AtemCommand, AtemStatus } from '../shared/atem'
+import type { DmxCommand, DmxSettings, DmxStatus } from '../shared/dmx'
 import type { MixerConfig } from '../shared/mixer'
 import type { NativeInput } from '../shared/native-audio'
 import type { StreamSettings } from '../shared/stream-settings'
@@ -90,6 +91,12 @@ const api = {
   atemSetAddress: (address: string): Promise<AtemStatus> => ipcRenderer.invoke(IPC.atemSetAddress, address),
   atemSend: (cmd: AtemCommand): Promise<boolean> => ipcRenderer.invoke(IPC.atemSend, cmd),
   atemSetButtons: (patch: Partial<AtemButtons>): Promise<AtemStatus> => ipcRenderer.invoke(IPC.atemSetButtons, patch),
+  dmxGet: (): Promise<DmxStatus> => ipcRenderer.invoke(IPC.dmxGet),
+  onDmx: (cb: (s: DmxStatus) => void) => {
+    ipcRenderer.on(IPC.dmxState, (_e, s: DmxStatus) => cb(s))
+  },
+  dmxSetSettings: (settings: DmxSettings): Promise<DmxStatus> => ipcRenderer.invoke(IPC.dmxSetSettings, settings),
+  dmxCommand: (cmd: DmxCommand): Promise<DmxStatus> => ipcRenderer.invoke(IPC.dmxCommand, cmd),
   mediaRemove: (file: string): Promise<boolean> => ipcRenderer.invoke(IPC.mediaRemove, file),
   picturesImport: (): Promise<{ title: string; slides: string[] } | null> => ipcRenderer.invoke(IPC.picturesImport),
   mediaList: (): Promise<import('../shared/types').MediaEntry[]> => ipcRenderer.invoke(IPC.mediaList),

@@ -48,6 +48,27 @@ const band = {
   masterChain: [{ type: 'comp', thresholdDb: -22, ratio: 2, attackMs: 30, releaseMs: 300, kneeDb: 10, makeupDb: 3 }, { type: 'limiter', ceilingDb: -1 }],
 }
 
+// Four lights and four scenes for the DMX pictures, written as the settings file the app loads at start.
+const dmx = {
+  enabled: true,
+  fadeSec: 1.5,
+  fixtures: [
+    { id: 'left', name: 'Stage wash left', kind: 'rgb', address: 1 },
+    { id: 'right', name: 'Stage wash right', kind: 'rgb', address: 4 },
+    { id: 'pulpit', name: 'Pulpit spot', kind: 'dimmer', address: 7 },
+    { id: 'hall', name: 'Hall lights', kind: 'dimmer', address: 8 },
+  ],
+  scenes: [
+    { id: 'welcome', name: 'Welcome', fadeSec: 3, values: { left: [255, 200, 120], right: [255, 200, 120], pulpit: [120], hall: [255] } },
+    { id: 'worship', name: 'Worship', fadeSec: null, values: { left: [200, 20, 120], right: [60, 40, 220], pulpit: [0], hall: [40] } },
+    { id: 'sermon', name: 'Sermon', fadeSec: 2, values: { left: [255, 235, 200], right: [255, 235, 200], pulpit: [255], hall: [180] } },
+    { id: 'prayer', name: 'Prayer', fadeSec: 4, values: { left: [90, 60, 20], right: [90, 60, 20], pulpit: [0], hall: [20] } },
+  ],
+}
+const dmxSetup = (dir) => writeFileSync(join(dir, 'dmx.json'), JSON.stringify(dmx))
+// The real sender runs into a file, so the panel shows a connected interface.
+const dmxEnv = (dir) => ({ PRESTREAMER_DMX_FAKE: join(dir, 'dmx-frame.bin') })
+
 /** Shared by every scenario: wait, small helpers, the sample service, the app-wide backgrounds. */
 const prelude = `
   const w = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -60,6 +81,15 @@ const prelude = `
     await prestreamer.appearanceSet({ songBackground: bg, scriptureBackground: bg, logo: null })
     await w(400)
   }
+  // Numbered circles over parts of the window, for the guide's tour pictures: mark(element, number)
+  const mark = (el, n, dx = 4, dy = 4) => {
+    if (!el) throw new Error('nothing to mark for ' + n)
+    const r = el.getBoundingClientRect(), d = document.createElement('div')
+    d.textContent = n
+    d.style.cssText = 'position:fixed;z-index:99999;width:24px;height:24px;border-radius:50%;background:#f59e0b;color:#111;font:700 14px system-ui,sans-serif;display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 2px #111;pointer-events:none;left:' + Math.max(2, r.left + dx) + 'px;top:' + Math.max(2, r.top + dy) + 'px'
+    document.body.append(d)
+  }
+  const btnText = (t, root = document) => qa('button', root).find((b) => b.textContent.trim() === t)
   const service = async () => { const s = q('#servicesel'); s.value = 'sunday-sample'; s.dispatchEvent(new Event('change', { bubbles: true })); await w(500) }
   await w(800)
 `
@@ -114,6 +144,15 @@ const shots = {
       tab('Settings').click(); await w(600)
       qa('#view-settings .setnav button').find((b) => b.textContent.trim() === 'Stream').click(); await w(900)`,
   },
+  // Settings → Stream set to YouTube (no key is saved: the field is empty), for the streaming chapter of the guide.
+  'settings-youtube': {
+    media: songBg,
+    userData: (dir) => writeFileSync(join(dir, 'stream-settings.json'), JSON.stringify({ mode: 'youtube' })),
+    scenario: `${prelude}
+      await backgrounds()
+      tab('Settings').click(); await w(600)
+      qa('#view-settings .setnav button').find((b) => b.textContent.trim() === 'Stream').click(); await w(900)`,
+  },
   // The dialog for adding a screen, on the NDI type (it shows no display names, unlike the list of screens behind it).
   'ndi-screen': {
     media: songBg,
@@ -125,6 +164,100 @@ const shots = {
       qa('.kindcard').find((b) => b.textContent.includes('NDI screen')).click(); await w(500)
       const n = q('.sd input[type=text]'); n.value = 'Hall display'; n.dispatchEvent(new Event('input', { bubbles: true })); await w(400)`,
   },
+  // The lighting panel of the Present tab, with the faders open (the Stream and Screens sections folded away so it fits).
+  'dmx-present': {
+    media: songBg,
+    userData: dmxSetup,
+    env: dmxEnv,
+    scenario: `${prelude}
+      await backgrounds(); await service()
+      qa('#schedule .srow')[0].click(); await w(500)
+      qa('#dmx .atembtn').find((b) => b.textContent === 'Worship').click(); await w(1500)
+      q('#dmx details').open = true
+      const fold = (id) => { const h = q('#' + id).previousElementSibling; if (h && !h.classList.contains('closed')) h.click() }
+      fold('stream'); await w(300)
+      q('#dmxsec').scrollIntoView({ block: 'start' }); await w(500)`,
+  },
+  'dmx-settings': {
+    media: songBg,
+    userData: dmxSetup,
+    env: dmxEnv,
+    scenario: `${prelude}
+      await backgrounds()
+      tab('Settings').click(); await w(600)
+      qa('#view-settings .setnav button').find((b) => b.textContent.trim() === 'DMX').click(); await w(900)`,
+  },
+  // The Present tab with numbered markers, for "A tour of the window" in the guide.
+  'tour-present': {
+    media: songBg,
+    scenario: `${prelude}
+      await backgrounds(); await service()
+      qa('#schedule .srow')[0].click(); await w(500)
+      await key('ArrowRight'); await key('ArrowRight'); await w(600)
+      const markers = [
+        [q('#tabs'), 1], [q('#servicesel'), 2, q('#servicesel').getBoundingClientRect().width - 50], [q('#addtools'), 3], [q('#schedule'), 4], [q('#center section'), 5, -14, -2],
+        [q('#screens'), 6], [q('#stream').previousElementSibling, 7], [q('.announcebtn'), 8], [q('.openall'), 9], [btnText('Clear slide'), 10],
+      ]
+      for (const [el, n, dx, dy] of markers) mark(el, n, dx, dy)
+      await w(300)`,
+  },
+  // The song editor: one card per slide, the picture buttons, the details.
+  'song-editor': {
+    media: songBg,
+    scenario: `${prelude}
+      await backgrounds()
+      tab('Songs').click(); await w(900)
+      q('#songeditor details')?.querySelector('summary')?.click(); await w(500)
+      const ed = q('#songeditor')
+      for (const [el, n, dx, dy] of [[q('input[type=text]', ed), 1, -12, -12], [q('textarea', ed), 2, -12, -2], [btnText('Picture or video…', ed), 3], [q('.cardbg', ed), 4, -8, -8], [q('details summary', ed), 5, -12, -2]]) mark(el, n, dx, dy)
+      await w(300)`,
+  },
+  // The window of a screen's look (the gear on its card in the Present tab).
+  'screen-look': {
+    media: songBg,
+    scenario: `${prelude}
+      await backgrounds(); await service()
+      qa('#schedule .srow')[0].click(); await w(500)
+      await key('ArrowRight'); await w(500)
+      q('button[title^="Settings for"]').click(); await w(700)`,
+  },
+  // Settings → Visuals: the app-wide backgrounds and the logo.
+  'settings-visuals': {
+    media: songBg,
+    scenario: `${prelude}
+      await backgrounds()
+      tab('Settings').click(); await w(600)
+      btnText('Visuals', q('#view-settings .setnav')).click(); await w(900)`,
+  },
+  'settings-atem': {
+    media: songBg,
+    scenario: `${prelude}
+      await backgrounds()
+      tab('Settings').click(); await w(600)
+      btnText('ATEM', q('#view-settings .setnav')).click(); await w(900)`,
+  },
+  // A presentation (here a PDF) in the run sheet, one picture per slide.
+  presentation: {
+    media: songBg,
+    env: () => ({ PRESTREAMER_PRESENTATION_FILE: deckPdf }),
+    scenario: `${prelude}
+      await backgrounds(); await service()
+      const count = async () => (await prestreamer.servicesList()).find((s) => s.id === 'sunday-sample').items.length
+      const before = await count()
+      q('#addtools button[title^="Add a presentation"]').click()
+      for (let i = 0; i < 100 && (await count()) === before; i++) await w(300)
+      await w(800)
+      const rows = qa('#schedule .srow'); rows[rows.length - 1].click(); await w(500)
+      await key('ArrowRight'); await key('ArrowRight'); await w(900)`,
+  },
+  // The announcement window (the A key): quick messages, style, colour, which screens.
+  'announce-popup': {
+    media: songBg,
+    scenario: `${prelude}
+      await backgrounds(); await service()
+      qa('#schedule .srow')[0].click(); await w(500)
+      await key('ArrowRight'); await key('a'); await w(700)`,
+  },
   'announce-live': {
     media: songBg,
     scenario: `${prelude}
@@ -134,6 +267,11 @@ const shots = {
       await prestreamer.announceShow({ text: 'Welcome! Please silence your phones. Children\\'s church starts after the second song.', style: 'banner-bottom', tone: 'notice', screens: null, autoHideSec: null }); await w(900)`,
   },
 }
+
+// A three-page PDF for the presentation picture, made by the app itself (the same hook the end-to-end test uses).
+const deckPdf = join(outDir, 'deck.pdf')
+const wantsDeck = process.argv.slice(2).length === 0 || process.argv.includes('presentation')
+if (wantsDeck) spawnSync(electronPath, ['.'], { env: { ...process.env, PRESTREAMER_USER_DATA: join(outDir, 'userdata-makepdf'), PRESTREAMER_MAKEPDF: deckPdf }, timeout: 60_000 })
 
 const wanted = process.argv.slice(2)
 const names = wanted.length ? wanted : Object.keys(shots)
@@ -150,7 +288,7 @@ for (const name of names) {
   const png = join(outDir, `${name}.png`)
   rmSync(png, { force: true })
   const run = spawnSync(electronPath, ['.'], {
-    env: { ...process.env, PRESTREAMER_USER_DATA: userData, PRESTREAMER_SNAPSHOT: png, PRESTREAMER_EVAL: `(async () => { ${shot.scenario}\n return 'ok' })()`, ...(shot.media ? { PRESTREAMER_MEDIA_FILE: shot.media } : {}) },
+    env: { ...process.env, PRESTREAMER_USER_DATA: userData, PRESTREAMER_SNAPSHOT: png, PRESTREAMER_EVAL: `(async () => { ${shot.scenario}\n return 'ok' })()`, ...(shot.media ? { PRESTREAMER_MEDIA_FILE: shot.media } : {}), ...(shot.env ? shot.env(userData) : {}) },
     encoding: 'utf8',
     timeout: 120_000,
   })

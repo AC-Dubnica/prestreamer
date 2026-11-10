@@ -26,10 +26,10 @@ cpSync('src/renderer/deesser-worklet.js', 'dist/renderer/deesser-worklet.js')
 cpSync('src/renderer/native-in-worklet.js', 'dist/renderer/native-in-worklet.js')
 
 // The programs in src/native, built for the platform this runs on. Each is looked up by main/native-audio.ts and main/ndi.ts at run time.
-//  - macOS: avcapture (reads a multichannel interface through CoreAudio; swiftc comes with the Xcode command line tools) and ndisend
-//  - Linux: alsacapture (reads one through ALSA; libasound is loaded at run time, so no ALSA headers are needed) and ndisend
+//  - macOS: avcapture (reads a multichannel interface through CoreAudio; swiftc comes with the Xcode command line tools), ndisend and dmxsend (DMX)
+//  - Linux: alsacapture (reads one through ALSA; libasound is loaded at run time, so no ALSA headers are needed), ndisend and dmxsend
 //  - Windows: wasapicapture.exe (reads one through WASAPI) with MinGW's gcc, which GitHub's Windows runners have; without a compiler
-//    the app still runs and says the reader is missing when a multichannel interface is picked. NDI is not built on Windows yet.
+//    the app still runs and says the reader is missing when a multichannel interface is picked. NDI and DMX are not built on Windows yet.
 function compile(command, args, { optional = false } = {}) {
   try {
     execFileSync(command, args, { stdio: 'inherit' })
@@ -42,9 +42,11 @@ mkdirSync('dist/native', { recursive: true })
 if (process.platform === 'darwin') {
   compile('swiftc', ['-O', 'src/native/avcapture.swift', '-o', 'dist/native/avcapture'])
   compile('cc', ['-O2', '-Wall', 'src/native/ndisend.c', '-o', 'dist/native/ndisend'])
+  compile('cc', ['-O2', '-Wall', 'src/native/dmxsend.c', '-o', 'dist/native/dmxsend'])
 } else if (process.platform === 'linux') {
   compile('cc', ['-O2', '-Wall', 'src/native/alsacapture.c', '-o', 'dist/native/alsacapture', '-ldl'])
   compile('cc', ['-O2', '-Wall', 'src/native/ndisend.c', '-o', 'dist/native/ndisend', '-ldl', '-lpthread'])
+  compile('cc', ['-O2', '-Wall', 'src/native/dmxsend.c', '-o', 'dist/native/dmxsend'], { optional: true })
 } else if (process.platform === 'win32') {
   compile('gcc', ['-O2', '-Wall', 'src/native/wasapicapture.c', '-o', 'dist/native/wasapicapture.exe', '-lole32', '-loleaut32', '-luuid'], { optional: true })
 }

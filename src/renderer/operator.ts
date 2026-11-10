@@ -10,6 +10,7 @@ import { iconButton, iconSvg, type IconName } from './icons'
 import { openAnnounceDialog } from './announce-dialog'
 import { createBibleView } from './bible'
 import { createAtemPanel } from './atem-panel'
+import { createDmxPanel } from './dmx-panel'
 import { askText, confirmDialog } from './dialogs'
 import { createMixerView, type MixerDeps } from './mixer'
 import { createMonitorView } from './monitor'
@@ -834,10 +835,12 @@ const cameraButton = iconButton('camera', 'Camera only: stream just the live cam
 const COLLAPSE_KEY = 'prestreamer.streamCollapsed'
 const STATS_KEY = 'prestreamer.statsCollapsed'
 const ATEM_KEY = 'prestreamer.atemCollapsed'
+const DMX_KEY = 'prestreamer.dmxCollapsed'
 const recall = (key: string): boolean => { try { return localStorage.getItem(key) === '1' } catch { return false } }
 let streamCollapsed = recall(COLLAPSE_KEY)
 let statsCollapsed = recall(STATS_KEY)
 let atemCollapsed = recall(ATEM_KEY)
+let dmxCollapsed = recall(DMX_KEY)
 const remember = (key: string, on: boolean) => { try { localStorage.setItem(key, on ? '1' : '0') } catch { /* only a convenience */ } }
 /** Makes a title act as a disclosure control: click or Enter/Space toggles it; buttons inside it keep their own job. */
 function disclosure(titleEl: HTMLElement, toggle: () => void): void {
@@ -850,6 +853,7 @@ function disclosure(titleEl: HTMLElement, toggle: () => void): void {
 const toggleSection = () => { streamCollapsed = !streamCollapsed; remember(COLLAPSE_KEY, streamCollapsed); applyCollapse() }
 const toggleStats = () => { statsCollapsed = !statsCollapsed; remember(STATS_KEY, statsCollapsed); applyCollapse() }
 const toggleAtem = () => { atemCollapsed = !atemCollapsed; remember(ATEM_KEY, atemCollapsed); applyCollapse() }
+const toggleDmx = () => { dmxCollapsed = !dmxCollapsed; remember(DMX_KEY, dmxCollapsed); applyCollapse() }
 /** Stream, Stream health and ATEM are sections of the same level, each collapsing on its own. */
 function setSection(head: HTMLElement, body: HTMLElement, collapsed: boolean, name: string): void {
   body.classList.toggle('collapsed', collapsed)
@@ -862,6 +866,7 @@ function applyCollapse(): void {
   setSection(healthHead, $('healthsec'), statsCollapsed, 'Stream health')
   healthHead.title = statsCollapsed ? 'Click to show the full statistics' : 'Click to collapse the statistics'
   setSection($('atemtools').parentElement!, $('atem'), atemCollapsed, 'ATEM')
+  setSection($('dmxtools').parentElement!, $('dmx'), dmxCollapsed, 'DMX lighting')
 }
 
 // The title sits above the panel like "Stream" does; the rating (dot and word) is on its right.
@@ -1444,10 +1449,12 @@ $('streamtools').append(cameraButton)
 disclosure($('streamtools').parentElement!, toggleSection)
 disclosure(healthHead, toggleStats)
 disclosure($('atemtools').parentElement!, toggleAtem)
+disclosure($('dmxtools').parentElement!, toggleDmx)
 applyCollapse()
 void prestreamer.streamSettingsGet().then((next) => { streamSettings = next; renderStream() })
 buildStream()
 createAtemPanel($('atem'), prestreamer, $('atemsec'))
+createDmxPanel($('dmx'), prestreamer, $('dmxsec'))
 prestreamer.onAppearance((a) => { appearance = a; settingsView.setAppearance(a); renderAll() })
 prestreamer.appearanceGet().then((a) => { appearance = a; settingsView.setAppearance(a); renderAll() })
 prestreamer.onAudio((s) => { audioStatus = s; renderAudio() })
