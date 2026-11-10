@@ -53,6 +53,20 @@ Press the **⚙** on a screen's card in the Present tab (or *Look…* in Setting
 
 The preview in the window shows the result. **Apply** puts it on the screen; **Cancel** or **Esc** throws it away.
 
+## Chords on a screen
+
+Songs can carry chords (see [songs](songs.md#chords)). Which screens draw them is a setting of each screen:
+
+- **Add a screen for the band:** *Settings → Screens → Add*, choose a display or NDI screen, tick **Chords**. It then shows each slide with its chords above the lyrics, in a fixed-width font so they stay lined up.
+- **A stage monitor with chords:** open the stage monitor's settings (the pencil on its card) and tick **Chords**; untick it to hide them again. The *Next* slide follows the same choice.
+- The room screens and the stream keep it off, so the congregation and the viewers never see chords.
+
+![A stage monitor with chords, in the Monitor tab](screenshots/chords-stage.png)
+
+![Adding a screen with Chords ticked](screenshots/screen-chords.png)
+
+A song without chord lines looks the same everywhere.
+
 ## Watching the screens: the Monitor tab
 
 ![The Monitor tab, all screens](screenshots/monitor.png)

@@ -29,7 +29,7 @@ Obrazovka displeja má **rolu**, ktorú vyberiete v poli *Zobrazuje*:
 
 Otvorte **Nastavenia → Obrazovky**. Pripojené monitory sú na mape nad zoznamom (stlačením **Označiť displeje** sa na každom skutočnom monitore zobrazí číslo).
 
-![Okno Pridanie obrazovky, tu pre obrazovku NDI](../screenshots/ndi-screen.png)
+![Okno Pridanie obrazovky, tu pre obrazovku NDI](../screenshots/sk/ndi-screen.png)
 
 - **Pridať obrazovku…** sa spýta na názov, druh (po pridaní sa nedá zmeniť) a pri obrazovke displeja na to, ktorý monitor a čo zobrazuje.
 - **Upraviť…** pri obrazovke mení tie isté veci. Zmeny čakajú na *Použiť*.
@@ -43,7 +43,7 @@ Pozor na displej, na ktorom je vaše operátorské okno: ak k nemu pripojíte ob
 
 Stlačte **⚙** na karte obrazovky na karte Premietanie (alebo *Vzhľad…* v Nastaveniach).
 
-![Vzhľad obrazovky](../screenshots/screen-look.png)
+![Vzhľad obrazovky](../screenshots/sk/screen-look.png)
 
 - **Pozadie**: farba, alebo *Obrázok alebo video…*.
 - **Rozloženie**: *Celá obrazovka (na stred)* pre texty piesní, alebo **Dolná tretina** pre titulky nad kamerou, s posuvníkom **Rámček textu**, ktorý určuje, aký plný je rámček za textom.
@@ -54,9 +54,23 @@ Stlačte **⚙** na karte obrazovky na karte Premietanie (alebo *Vzhľad…* v N
 
 Náhľad v okne ukazuje výsledok. **Použiť** ho dá na obrazovku; **Zrušiť** alebo **Esc** ho zahodí.
 
+## Akordy na obrazovke
+
+Piesne môžu mať akordy (pozri [piesne](songs.md#akordy)). Ktoré obrazovky ich zobrazujú, je nastavenie každej obrazovky:
+
+- **Obrazovka pre kapelu:** *Nastavenia → Obrazovky → Pridať*, zvoľte displej alebo NDI obrazovku a zaškrtnite **Akordy**. Každá snímka sa na nej zobrazí s akordmi nad textom, písmom s pevnou šírkou, aby zostali zarovnané.
+- **Monitor pódia s akordmi:** otvorte nastavenia monitora pódia (ceruzka na jeho karte) a zaškrtnite **Akordy**; odškrtnutím ich opäť skryjete. *Ďalšia* snímka sa riadi rovnakou voľbou.
+- Sálové obrazovky a prenos ho majú vypnuté, takže zbor ani diváci akordy nikdy nevidia.
+
+![Monitor pódia s akordmi na karte Monitor](../screenshots/sk/chords-stage.png)
+
+![Pridanie obrazovky so zaškrtnutými Akordmi](../screenshots/sk/screen-chords.png)
+
+Pieseň bez riadkov akordov vyzerá všade rovnako.
+
 ## Sledovanie obrazoviek: karta Monitor
 
-![Karta Monitor, všetky obrazovky](../screenshots/monitor.png)
+![Karta Monitor, všetky obrazovky](../screenshots/sk/monitor.png)
 
 Karta **Monitor** ukazuje obrazovky väčšie, než to dokáže karta Premietanie.
 

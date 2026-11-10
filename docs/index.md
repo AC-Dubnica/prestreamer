@@ -25,6 +25,7 @@ This guide is for the people who run it on Sunday. Each chapter is one job, writ
 | [Announcements](announcements.md) | A live message over the screens |
 | [Screens](screens.md) | The room screens, the stage monitor, the stream screen, and how each one looks |
 | [Streaming and recording](streaming.md) | Going live on YouTube, recording to a file, camera only, captions over the camera |
+| [YouTube broadcasts](youtube.md) | Start, preview, go live and end a scheduled broadcast from the app |
 | [Sound for the stream](sound.md) | The mixer, effects, and the three different sounds |
 | [ATEM video switcher](atem.md) | Switching cameras from PreStreamer |
 | [NDI screens](ndi.md) | A screen fed over the network |

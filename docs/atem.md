@@ -8,7 +8,7 @@ title: ATEM video switcher
 
 PreStreamer can switch the cameras on a Blackmagic **ATEM** from the Present and Monitor tabs: one button per input for *program* (what is on air) and *preview* (what is next), and **Cut** and **Auto**.
 
-> **Not yet tried with a real switcher.** The control is tested against a simulated ATEM. Try it with the real one before a service.
+> Tested with a real ATEM on macOS, and against a simulated one in the automatic tests.
 
 ## Connect
 

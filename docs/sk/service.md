@@ -9,7 +9,7 @@ lang: sk
 
 **Bohoslužba** je poriadok jedného stretnutia. **Program** je zoznam jej položiek, vľavo na karte Premietanie.
 
-![Program vľavo, snímky celej bohoslužby v strede](../screenshots/present.png)
+![Program vľavo, snímky celej bohoslužby v strede](../screenshots/sk/present.png)
 
 ## Vytvorenie bohoslužby
 

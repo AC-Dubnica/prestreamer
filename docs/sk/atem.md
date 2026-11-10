@@ -9,7 +9,7 @@ lang: sk
 
 PreStreamer vie prepínať kamery na pulte Blackmagic **ATEM** z kariet Premietanie a Monitor: jedno tlačidlo na každý vstup pre *program* (čo ide do vysielania) a *náhľad* (čo príde ďalej) a tlačidlá **Cut** a **Auto**.
 
-> **Zatiaľ nevyskúšané so skutočným pultom.** Ovládanie je odskúšané na simulovanom ATEM. Pred bohoslužbou ho vyskúšajte so skutočným.
+> Vyskúšané so skutočným ATEM na macOS a v automatických testoch na simulovanom.
 
 ## Pripojenie
 
@@ -19,7 +19,7 @@ ATEM Mini pripojený cez **USB** vyzerá pre počítač ako webkamera: prenáša
 2. Otvorte **Nastavenia → ATEM**, stlačte **Zmeniť…** a napíšte adresu. Zapamätá sa.
 3. Uistite sa, že počítač a ATEM sú v rovnakom rozsahu siete (napríklad obaja `192.168.10.x`). Počítač na wifi v inej sieti sa k pultu nedostane.
 
-![Nastavenia → ATEM predtým, než pult odpovie](../screenshots/settings-atem.png)
+![Nastavenia → ATEM predtým, než pult odpovie](../screenshots/sk/settings-atem.png)
 
 Kým pult neodpovie, **nikde inde sa o ATEM nič nezobrazuje**; v Nastaveniach sa píše „Na adrese … sa nenašiel žiadny ATEM“ a hľadá sa ďalej každých pár sekúnd. Ak sa kábel odpojí, panely opäť zmiznú.
 

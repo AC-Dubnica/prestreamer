@@ -38,7 +38,7 @@ Zmeníte ho v **Nastavenia → Jazyk**, kde zvolíte *Automaticky*, *English* al
 
 ## Prehliadka okna
 
-![Karta Premietanie s očíslovanými časťami](../screenshots/tour-present.png)
+![Karta Premietanie s očíslovanými časťami](../screenshots/sk/tour-present.png)
 
 | | |
 | --- | --- |

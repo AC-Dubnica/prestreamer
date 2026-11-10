@@ -11,7 +11,7 @@ PreStreamer vedie bohoslužbu z jedného okna: piesne, čítania z Biblie, vide�
 
 Táto príručka je pre ľudí, ktorí ho v nedeľu obsluhujú. Každá kapitola je jedna úloha, napísaná ako kroky, ktoré môžete sledovať pri otvorenej aplikácii. Začnite kapitolou **Prvé kroky**, vytlačte si **Nedeľný zoznam úloh** a ku kapitole sa vráťte, keď ju budete potrebovať.
 
-![Karta Premietanie, kde sa odohráva väčšina bohoslužby](../screenshots/present.png)
+![Karta Premietanie, kde sa odohráva väčšina bohoslužby](../screenshots/sk/present.png)
 
 ## Kapitoly
 
@@ -26,6 +26,7 @@ Táto príručka je pre ľudí, ktorí ho v nedeľu obsluhujú. Každá kapitola
 | [Oznamy](announcements.md) | Živá správa cez obrazovky |
 | [Obrazovky](screens.md) | Obrazovky v sále, pódiový monitor, obrazovka prenosu a ako každá vyzerá |
 | [Vysielanie a nahrávanie](streaming.md) | Prenos na YouTube, nahrávanie do súboru, iba kamera, titulky cez kameru |
+| [Vysielania na YouTube](youtube.md) | Spustenie, ukážka, vysielanie naživo a ukončenie naplánovaného vysielania z aplikácie |
 | [Zvuk pre prenos](sound.md) | Mixér, efekty a tri rôzne zvuky |
 | [Video mixážny pult ATEM](atem.md) | Prepínanie kamier z PreStreameru |
 | [Obrazovky NDI](ndi.md) | Obrazovka napájaná cez sieť |

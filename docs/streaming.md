@@ -37,6 +37,8 @@ Open **Settings → Stream**.
 4. In YouTube Studio the stream should show as *Receiving data* and, with auto-start, the broadcast goes live after a short while.
 5. Press **Stop streaming** at the end and wait for it to say the stream has stopped.
 
+To start, preview and end a *scheduled* broadcast from the app without pasting a key, connect your channel: see [YouTube broadcasts](youtube.md).
+
 A stream is **never started automatically**, not even if one was running when the app closed.
 
 ## Watching the health of the stream

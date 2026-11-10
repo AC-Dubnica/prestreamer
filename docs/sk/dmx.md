@@ -23,7 +23,7 @@ Je vytvorený pre **Enttec Open DMX USB** (a mnohé kompatibilné kópie s čipo
 
 Pripojte rozhranie a potom otvorte **Nastavenia → DMX**.
 
-![Nastavenia → DMX](../screenshots/dmx-settings.png)
+![Nastavenia → DMX](../screenshots/sk/dmx-settings.png)
 
 1. Zaškrtnite **Používať DMX**. Zobrazí sa panel osvetlenia v karte Premietanie. Svetlám sa zatiaľ nič neposiela.
 2. **Rozhranie**: nechajte *Automaticky*, čo vyberie prvý nájdený sériový USB adaptér (`/dev/cu.usbserial-…` na macOS, `/dev/ttyUSB0` na Linuxe). Ak ich máte viac alebo žiadny nie je v zozname, pripojte ho, stlačte **Znova vyhľadať** a vyberte ho zo zoznamu.
@@ -49,7 +49,7 @@ Nové svetlo dostane prvú voľnú adresu. Ak dve svetlá používajú ten istý
 2. Nastavte svetlá tak, ako ich chcete.
 3. Stlačte **Uložiť ako scénu…** a zadajte názov. Zobrazí sa ako tlačidlo.
 
-![Panel osvetlenia v karte Premietanie](../screenshots/dmx-present.png)
+![Panel osvetlenia v karte Premietanie](../screenshots/sk/dmx-present.png)
 
 V **Nastavenia → DMX → Scény** môžete scénu premenovať, dať jej vlastný **prechod** (nechajte prázdne pre predvolený, `0` pre okamžitú zmenu), stlačením **Použiť aktuálne úrovne** nahradiť scénu tým, čo je nastavené teraz, a scénu odstrániť.
 

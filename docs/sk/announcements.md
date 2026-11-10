@@ -9,7 +9,7 @@ lang: sk
 
 Oznam je krátka správa zobrazená nad všetkým ostatným na obrazovkách, ktoré vyberiete, pre upozornenie, ktoré sa nedá odložiť: „Prosíme, stíšte si telefóny“, „Auto so zapnutými svetlami blokuje výjazd“. Snímky pod ním bežia ďalej.
 
-![Okno oznamu](../screenshots/announce-popup.png)
+![Okno oznamu](../screenshots/sk/announce-popup.png)
 
 ## Zobrazenie oznamu
 

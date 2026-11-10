@@ -18,7 +18,7 @@ lang: sk
 
 ## Prezentácie a obrázky
 
-![Trojsnímková prezentácia v programe](../screenshots/presentation.png)
+![Trojsnímková prezentácia v programe](../screenshots/sk/presentation.png)
 
 1. Stlačte **tlačidlo prezentácie** (obrazovka s plusom) a vyberte súbor. Tlačidlom **obrázkov** vyberiete naraz niekoľko obrázkov.
 2. Každá strana alebo snímka sa stane obrázkom, zobrazeným **celý, nikdy orezaný**, nad kamerou, ak sa používa.
@@ -55,7 +55,7 @@ Výber ukazuje knižnicu. **Importovať obrázok…** a **Importovať video…**
 
 ### Pozadia pre celú aplikáciu a logo
 
-![Nastavenia → Vzhľad](../screenshots/settings-visuals.png)
+![Nastavenia → Vzhľad](../screenshots/sk/settings-visuals.png)
 
 **Nastavenia → Vzhľad** má tri riadky:
 

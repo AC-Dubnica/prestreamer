@@ -21,7 +21,7 @@ PreStreamer odosiela **obrazovku prenosu** (to, čo vidia diváci) spolu so **st
 
 Otvorte **Nastavenia → Prenos**.
 
-![Nastavenia → Prenos, nastavené na YouTube](../screenshots/settings-youtube.png)
+![Nastavenia → Prenos, nastavené na YouTube](../screenshots/sk/settings-youtube.png)
 
 1. **Odosielať do**: *Vysielať na YouTube*, alebo *Nahrávať do súboru v tomto počítači*.
 2. **Obrazovka**: ktorá virtuálna obrazovka sa odosiela (zvyčajne *Stream*; vyberať treba, iba ak ste vytvorili niekoľko).
@@ -37,6 +37,8 @@ Otvorte **Nastavenia → Prenos**.
 3. Stlačte **Spustiť vysielanie** (alebo **Spustiť nahrávanie**). Mixér je zvuk prenosu: spúšťa sa sám spolu s aplikáciou a panel upozorní, ak je mixér vypnutý.
 4. V YouTube Studio by sa prenos mal zobraziť ako *Prijímajú sa dáta* a pri automatickom štarte vysielanie po krátkej chvíli začne naživo.
 5. Na konci stlačte **Zastaviť vysielanie** a počkajte, kým sa zobrazí, že prenos sa zastavil.
+
+Naplánované vysielanie môžete spúšťať, kontrolovať a ukončovať priamo z aplikácie bez vkladania kľúča, ak pripojíte svoj kanál: pozrite [Vysielania na YouTube](youtube.md).
 
 Prenos sa **nikdy nespúšťa automaticky**, ani keď bežal pri zatvorení aplikácie.
 

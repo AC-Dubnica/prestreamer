@@ -9,7 +9,7 @@ lang: sk
 
 **Obrazovka NDI** je obrazovka, ktorá sa namiesto na monitor posiela cez **sieť**. Použite ju pre displej, ktorý nie je blízko počítača a je napojený cez dekodér NDI (krabičku alebo displej s vstavaným NDI).
 
-![Pridanie obrazovky NDI](../screenshots/ndi-screen.png)
+![Pridanie obrazovky NDI](../screenshots/sk/ndi-screen.png)
 
 > **Vyskúšané na Macu cez vlastnú knižnicu NDI. Zatiaľ nevyskúšané so skutočným displejom ani dekodérom NDI a zatiaľ nie je k dispozícii pre Windows ani Linux.**
 

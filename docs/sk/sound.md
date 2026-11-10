@@ -9,7 +9,7 @@ lang: sk
 
 Karta **Mixér** je malý mixážny pult, ktorý určuje, čo počujú diváci prenosu. Neovláda zvuk v budove kostola: ten zostáva na vašom vlastnom mixážnom pulte a reproduktoroch.
 
-![Karta Mixér](../screenshots/mixer.png)
+![Karta Mixér](../screenshots/sk/mixer.png)
 
 ## Tri zvuky
 

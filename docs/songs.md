@@ -34,6 +34,21 @@ Press **Save**. Until you do, the editor says *Unsaved changes*; **Revert** disc
 - The program shows exactly the sections you wrote, in the order you wrote them. If the chorus is sung after every verse, write it after every verse.
 - Check the text on the real screen: font size and colour are set per screen (see [screens](screens.md)).
 
+## Chords
+
+Chords go **in the song's text**, on their own line above the words they belong to (spaces line them up):
+
+```
+  G           D
+/: Hosanna, hosanna,
+  Em          C    D
+hosanna Bohu na nebi!:/
+```
+
+![A song with its chords in the editor](screenshots/chords-editor.png)
+
+A line that holds only chord names (`G`, `Em`, `C/G`, `A7`, `Hm` ...) is a chord line. Chord lines are **never shown** on a screen unless that screen is set to show chords (see [screens](screens.md#chords-on-a-screen)), and they do not count for searching, slides or the export to Quelea. Songs imported from a chord-sheet PDF keep their chords when they are imported this way.
+
 ## Backgrounds for songs
 
 From the highest priority:

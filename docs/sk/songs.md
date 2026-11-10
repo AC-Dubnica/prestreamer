@@ -9,7 +9,7 @@ lang: sk
 
 Všetky piesne sú na karte **Piesne**. Sú uložené v jednej knižnici a môže ich použiť ktorákoľvek bohoslužba.
 
-![Karta Piesne](../screenshots/songs.png)
+![Karta Piesne](../screenshots/sk/songs.png)
 
 ## Nájdenie piesne
 
@@ -19,7 +19,7 @@ Píšte do vyhľadávacieho poľa nad zoznamom. Vyhľadávanie nerozlišuje veľ
 
 Kliknutím na pieseň otvoríte jej editor, alebo stlačením **+** v hornej časti zoznamu vytvoríte novú.
 
-![Editor piesne](../screenshots/song-editor.png)
+![Editor piesne](../screenshots/sk/song-editor.png)
 
 1. **Názov.**
 2. **Text.** Riadok `[Verš 1]` napísaný samostatne začína novú časť; jej názov sa zobrazí v označení snímky. **Prázdny riadok začína novú snímku.** Každý odsek, za ktorým necháte medzeru, je teda na obrazovkách jedna snímka.
@@ -34,6 +34,21 @@ Stlačte **Uložiť pieseň**. Kým to neurobíte, editor zobrazuje *Neuložené
 - Dva až štyri krátke riadky na snímke sa dobre čítajú aj zo zadnej časti sály.
 - Program zobrazí presne tie časti, ktoré ste napísali, v poradí, v akom ste ich napísali. Ak sa refrén spieva po každej slohe, napíšte ho po každej slohe.
 - Text skontrolujte na skutočnej obrazovke: veľkosť písma a farba sa nastavujú pre každú obrazovku zvlášť (pozrite [obrazovky](screens.md)).
+
+## Akordy
+
+Akordy patria **do textu piesne**, na vlastný riadok nad slová, ku ktorým patria (medzery ich zarovnajú):
+
+```
+  G           D
+/: Hosanna, hosanna,
+  Em          C    D
+hosanna Bohu na nebi!:/
+```
+
+![Pieseň s akordmi v editore](../screenshots/sk/chords-editor.png)
+
+Riadok, ktorý obsahuje iba názvy akordov (`G`, `Em`, `C/G`, `A7`, `Hm` ...), je riadok akordov. Riadky akordov sa **nikdy nezobrazia** na obrazovke, ak nie je nastavená na zobrazenie akordov (pozri [obrazovky](screens.md#akordy-na-obrazovke)), a nepočítajú sa pri hľadaní, snímkach ani pri exporte do Quelea.
 
 ## Pozadia piesní
 

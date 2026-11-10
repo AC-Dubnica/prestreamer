@@ -7,7 +7,7 @@ lang: sk
 
 # Čítania z Biblie
 
-![Karta Biblia](../screenshots/bible.png)
+![Karta Biblia](../screenshots/sk/bible.png)
 
 ## Pred prvým čítaním
 
