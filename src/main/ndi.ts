@@ -3,8 +3,9 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import type { Writable } from 'node:stream'
 import { join } from 'node:path'
-import { NDI_FPS, NDI_MISSING, ndiLibraryCandidates, ndiSourceName } from '../shared/ndi'
+import { NDI_FPS, ndiMissing, ndiLibraryCandidates, ndiSourceName } from '../shared/ndi'
 import type { NdiSound, NdiStatus } from '../shared/types'
+import { t } from '../shared/i18n'
 
 /** The sender program (src/native/ndisend.c, compiled by build.mjs). It sits unpacked next to the asar in an installed app. */
 function helperPath(): string {
@@ -39,11 +40,11 @@ export class NdiOutputs {
     this.stop(id)
     const name = ndiSourceName(screenName)
     const library = findNdiLibrary()
-    if (!library) return this.onStatus(id, { state: 'error', message: NDI_MISSING })
+    if (!library) return this.onStatus(id, { state: 'error', message: ndiMissing() })
     const helper = helperPath()
-    if (!existsSync(helper)) return this.onStatus(id, { state: 'error', message: 'The NDI sender is missing from this build (it is compiled from src/native/ndisend.c; Windows is not supported yet).' })
+    if (!existsSync(helper)) return this.onStatus(id, { state: 'error', message: t('main.ndi.senderMissing') })
 
-    this.onStatus(id, { state: 'starting', message: `Starting NDI source “${name}”…` })
+    this.onStatus(id, { state: 'starting', message: t('main.ndi.starting', { name }) })
     const proc = spawn(helper, ['send', library, name, String(width), String(height), String(NDI_FPS), ...(sound !== 'none' ? ['audio'] : [])], { stdio: ['pipe', 'ignore', 'pipe', ...(sound !== 'none' ? ['pipe' as const] : [])] })
     const audioPipe = sound !== 'none' ? (proc.stdio[3] as Writable) : null
     audioPipe?.on('error', () => {})
@@ -54,7 +55,7 @@ export class NdiOutputs {
     proc.stderr!.on('data', (d: Buffer) => {
       log = (log + d.toString()).slice(-1000)
       if (/^READY$/m.test(log) && !out.timer) {
-        this.onStatus(id, { state: 'sending', message: `Sending as “${name}”${sound === 'stream' ? ' with the stream\'s sound' : sound === 'video' ? ' with the sound of videos' : ''}` })
+        this.onStatus(id, { state: 'sending', message: t(sound === 'stream' ? 'main.ndi.sendingStream' : sound === 'video' ? 'main.ndi.sendingVideo' : 'main.ndi.sending', { name }) })
         out.timer = this.pace(proc, width, height, getFrame)
       }
     })

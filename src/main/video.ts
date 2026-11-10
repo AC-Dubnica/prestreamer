@@ -8,6 +8,7 @@ import type { ImportedVideo } from '../shared/types'
 import { mediaDir } from './library'
 import { ffmpegPath, ffprobePath } from './tools'
 import { planImport, type ImportPlan, type Probe } from './video-plan'
+import { t } from '../shared/i18n'
 
 const run = promisify(execFile)
 
@@ -15,7 +16,7 @@ async function probe(path: string): Promise<Probe> {
   const { stdout } = await run(ffprobePath(), ['-v', 'error', '-show_entries', 'format=format_name,duration:stream=codec_type,codec_name,pix_fmt', '-of', 'json', path])
   const info = JSON.parse(stdout) as { format: { format_name: string; duration?: string }; streams: { codec_type: string; codec_name: string; pix_fmt?: string }[] }
   const v = info.streams.find((s) => s.codec_type === 'video')
-  if (!v) throw new Error('No video stream found in this file')
+  if (!v) throw new Error(t('main.video.noStream'))
   const a = info.streams.find((s) => s.codec_type === 'audio')
   return {
     container: info.format.format_name,
@@ -36,8 +37,8 @@ function ffmpeg(args: string[], durationSec: number, onProgress: (pct: number) =
       const m = /out_time_us=(\d+)/.exec(d.toString())
       if (m && durationSec > 0) onProgress(Math.min(99, Math.round((Number(m[1]) / 1e6 / durationSec) * 100)))
     })
-    proc.on('error', (e) => reject(new Error(e.message.includes('ENOENT') ? 'ffmpeg not found (set FFMPEG_PATH)' : e.message)))
-    proc.on('close', (code) => (code === 0 ? resolve() : reject(new Error(err.trim() || `ffmpeg exited with code ${code}`))))
+    proc.on('error', (e) => reject(new Error(e.message.includes('ENOENT') ? t('main.video.ffmpegMissing') : e.message)))
+    proc.on('close', (code) => (code === 0 ? resolve() : reject(new Error(err.trim() || t('main.ffmpeg.exited', { code: String(code) })))))
   })
 }
 
@@ -86,9 +87,9 @@ const VIDEO_EXT = ['mp4', 'm4v', 'mov', 'mkv', 'webm', 'avi', 'wmv', 'mpg', 'mpe
 export async function pickVideo(parent: BrowserWindow | null, onProgress: (pct: number) => void): Promise<ImportedVideo | null> {
   if (process.env.PRESTREAMER_VIDEO_FILE) return importVideoFile(process.env.PRESTREAMER_VIDEO_FILE, onProgress) // dev hook: stands in for the file dialog
   const options: Electron.OpenDialogOptions = {
-    title: 'Choose a video for the service',
+    title: t('main.video.pickTitle'),
     properties: ['openFile'],
-    filters: [{ name: 'Video', extensions: VIDEO_EXT }],
+    filters: [{ name: t('main.video.filterName'), extensions: VIDEO_EXT }],
   }
   const result = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options)
   if (result.canceled || !result.filePaths[0]) return null

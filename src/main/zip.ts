@@ -1,4 +1,5 @@
 import { deflateRawSync, inflateRawSync } from 'node:zlib'
+import { t } from '../shared/i18n'
 
 export interface ZipEntry {
   name: string
@@ -9,12 +10,12 @@ export interface ZipEntry {
 export function readZip(buf: Buffer): ZipEntry[] {
   let end = -1
   for (let i = buf.length - 22; i >= Math.max(0, buf.length - 22 - 0xffff); i--) if (buf.readUInt32LE(i) === 0x06054b50) { end = i; break }
-  if (end < 0) throw new Error('This is not a ZIP file')
+  if (end < 0) throw new Error(t('main.zip.notZip'))
   const count = buf.readUInt16LE(end + 10)
   let p = buf.readUInt32LE(end + 16)
   const entries: ZipEntry[] = []
   for (let n = 0; n < count; n++) {
-    if (buf.readUInt32LE(p) !== 0x02014b50) throw new Error('The ZIP file is damaged')
+    if (buf.readUInt32LE(p) !== 0x02014b50) throw new Error(t('main.zip.damaged'))
     const flags = buf.readUInt16LE(p + 8)
     const method = buf.readUInt16LE(p + 10)
     const size = buf.readUInt32LE(p + 20)
@@ -33,7 +34,7 @@ export function readZip(buf: Buffer): ZipEntry[] {
         const data = buf.subarray(start, start + size)
         if (method === 0) return Buffer.from(data)
         if (method === 8) return inflateRawSync(data)
-        throw new Error(`"${name}" uses a ZIP compression this app cannot read`)
+        throw new Error(t('main.zip.compression', { name }))
       },
     })
   }

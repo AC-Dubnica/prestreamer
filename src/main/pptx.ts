@@ -1,6 +1,7 @@
 import { BrowserWindow } from 'electron'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { t } from '../shared/i18n'
 
 export const MAX_SLIDES = 300
 const RENDER_WIDTH = 1920
@@ -30,7 +31,7 @@ export function renderPptxSlides(data: Buffer, outDir: string, nameFor: (index: 
       if (err) reject(err)
       else resolve({ files, info })
     }
-    const timer = setTimeout(() => finish(new Error('Drawing the presentation took too long')), 5 * 60_000)
+    const timer = setTimeout(() => finish(new Error(t('main.pptx.drawTimeout'))), 5 * 60_000)
     // An offscreen window hands out the last frame it painted. Without a GPU (a CI machine) a picture that has just been decoded can
     // take a few frames to appear, so wait for a few paints, nudging the window to draw, before the slide is captured.
     const painted = (frames: number, timeoutMs: number) => new Promise<void>((resolve) => {
@@ -51,11 +52,11 @@ export function renderPptxSlides(data: Buffer, outDir: string, nameFor: (index: 
     if (process.env.PRESTREAMER_DEBUG_PPTX) win.webContents.on('console-message', (...a: unknown[]) => { const m = String((a[0] as { message?: string })?.message ?? a[2] ?? ''); if (m.startsWith('PPTXDBG')) console.log(m) })
     ipc.on('pptx:progress', (_e, done: number, total: number) => onProgress(done, total))
     ipc.on('pptx:done', (_e, result: { slides: number; info?: unknown } | { error: string }) => {
-      if ('error' in result) finish(new Error(`This presentation could not be read: ${result.error}`))
+      if ('error' in result) finish(new Error(t('main.pptx.readFailed', { error: result.error })))
       else finish(null, result.info)
     })
     ipc.on('pptx:ready', () => win.webContents.send('pptx:job', { data: new Uint8Array(data), width: RENDER_WIDTH, maxSlides: MAX_SLIDES }))
-    win.webContents.on('render-process-gone', () => finish(new Error('The presentation renderer crashed')))
+    win.webContents.on('render-process-gone', () => finish(new Error(t('main.pptx.rendererCrashed'))))
     void win.loadFile(join(__dirname, '../renderer/pptx-render.html')).catch((err) => finish(err as Error))
   })
 }

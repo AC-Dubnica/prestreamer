@@ -1,5 +1,5 @@
 import {
-  blendLevels, defaultDmxSettings, DMX_NO_INTERFACE, fitLevels, idleDmx, renderUniverse, sanitizeDmxSettings, sceneFade,
+  blendLevels, defaultDmxSettings, dmxNoInterface, fitLevels, idleDmx, renderUniverse, sanitizeDmxSettings, sceneFade,
   type DmxCommand, type DmxSettings, type DmxStatus, type Levels,
 } from '../shared/dmx'
 
@@ -203,7 +203,7 @@ export class DmxController {
     this.port = port
     if (!port) {
       this.state = 'error'
-      this.message = DMX_NO_INTERFACE
+      this.message = dmxNoInterface()
       this.scheduleRetry()
       return
     }

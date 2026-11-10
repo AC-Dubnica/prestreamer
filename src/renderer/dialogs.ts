@@ -1,3 +1,5 @@
+import { t } from '../shared/i18n'
+
 /** Modal dialogs. Electron has no window.prompt/confirm, and a native dialog would not match the app anyway. */
 
 function el<T extends HTMLElement = HTMLElement>(tag: string, props: Partial<T> = {}, ...kids: (Node | string)[]): T {
@@ -50,7 +52,7 @@ export function askText(o: AskTextOptions): Promise<string | null> {
   return new Promise((resolve) => {
     let answered = false
     const input = el<HTMLInputElement>('input', { type: 'text', value: o.value ?? '', placeholder: o.placeholder ?? '', maxLength: 80 })
-    const ok = el<HTMLButtonElement>('button', { className: 'primary', textContent: o.confirm ?? 'OK' })
+    const ok = el<HTMLButtonElement>('button', { className: 'primary', textContent: o.confirm ?? t('operator.dialog.ok') })
     const refresh = () => { ok.disabled = !input.value.trim() }
     const close = showModal(
       (close) => {
@@ -64,7 +66,7 @@ export function askText(o: AskTextOptions): Promise<string | null> {
         ok.onclick = submit
         input.oninput = refresh
         input.onkeydown = (e) => { if (e.key === 'Enter') submit() }
-        return dialog(o.title, [el('label', { className: 'dlabel', textContent: o.label }), input], [el('button', { textContent: 'Cancel', onclick: () => close() }), ok])
+        return dialog(o.title, [el('label', { className: 'dlabel', textContent: o.label }), input], [el('button', { textContent: t('operator.dialog.cancel'), onclick: () => close() }), ok])
       },
       () => { if (!answered) resolve(null) },
     )
@@ -88,8 +90,8 @@ export function confirmDialog(o: ConfirmOptions): Promise<boolean> {
     let answered = false
     showModal(
       (close) => {
-        const ok = el('button', { className: o.danger ? 'danger' : 'primary', textContent: o.confirm ?? 'OK', onclick: () => { answered = true; resolve(true); close() } })
-        const cancel = el('button', { textContent: 'Cancel', onclick: () => close() })
+        const ok = el('button', { className: o.danger ? 'danger' : 'primary', textContent: o.confirm ?? t('operator.dialog.ok'), onclick: () => { answered = true; resolve(true); close() } })
+        const cancel = el('button', { textContent: t('operator.dialog.cancel'), onclick: () => close() })
         queueMicrotask(() => (o.danger ? cancel : ok).focus()) // a destructive action is never the default
         return dialog(o.title, [el('p', { className: 'dmsg', textContent: o.message })], [cancel, ok])
       },

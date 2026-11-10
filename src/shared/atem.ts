@@ -1,3 +1,5 @@
+import { t } from './i18n'
+
 /** ATEM switcher control over Ethernet (the Mini's USB port is only a webcam output, it cannot carry control). Pure model, no I/O. */
 
 /** What an ATEM answers on out of the box; tried when no address was saved. */
@@ -44,7 +46,7 @@ export const idleAtem: AtemStatus = {
   program: 0,
   preview: 0,
   inTransition: false,
-  message: 'Looking for an ATEM…',
+  get message() { return t('devices.atem.looking') },
 }
 
 export type AtemCommand =

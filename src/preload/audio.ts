@@ -1,9 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { AUDIO_IPC, type AudioConfig, type AudioStatus, type Meters, type PlaybackState } from '../shared/types'
+import type { Lang } from '../shared/i18n'
+import { AUDIO_IPC, IPC, type AudioConfig, type AudioStatus, type Meters, type PlaybackState } from '../shared/types'
 import type { MixerConfig } from '../shared/mixer'
 
 // The hidden audio window gets only what it needs: receive config, report status and levels, send PCM.
 const api = {
+  /** The language of the interface: the messages this window reports are shown to the operator. */
+  language: ipcRenderer.sendSync(IPC.languageSync) as Lang,
   onApply: (cb: (p: { config: AudioConfig; mixer: MixerConfig }) => void) => {
     ipcRenderer.on(AUDIO_IPC.apply, (_e, p: { config: AudioConfig; mixer: MixerConfig }) => cb(p))
   },

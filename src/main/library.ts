@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto'
 import type { Background, MediaKind } from '../shared/types'
 import { mediaNameFromUrl } from './media-path'
 import { parseRange } from './range'
+import { t } from '../shared/i18n'
 
 export const mediaDir = () => join(app.getPath('userData'), 'media')
 
@@ -21,9 +22,9 @@ export function importMediaFile(path: string, kind: MediaKind): Background {
 
 export async function pickMedia(parent: BrowserWindow | null, kind: MediaKind): Promise<Background | null> {
   const options: Electron.OpenDialogOptions = {
-    title: kind === 'image' ? 'Choose a background image' : 'Choose a background video',
+    title: kind === 'image' ? t('main.library.pickImage') : t('main.library.pickVideo'),
     properties: ['openFile'],
-    filters: [{ name: kind === 'image' ? 'Images' : 'Videos', extensions: kind === 'image' ? IMAGE_EXT : VIDEO_EXT }],
+    filters: [{ name: kind === 'image' ? t('main.library.filterImages') : t('main.library.filterVideos'), extensions: kind === 'image' ? IMAGE_EXT : VIDEO_EXT }],
   }
   // PRESTREAMER_MEDIA_FILE stands in for the file dialog in the end-to-end tests.
   if (process.env.PRESTREAMER_MEDIA_FILE) return importMediaFile(process.env.PRESTREAMER_MEDIA_FILE, kind)
@@ -40,7 +41,7 @@ export async function pickPictures(parent: BrowserWindow | null): Promise<{ titl
   if (process.env.PRESTREAMER_PICTURE_FILES) {
     paths = process.env.PRESTREAMER_PICTURE_FILES.split(',') // stands in for the file dialog in the end-to-end tests
   } else {
-    const options: Electron.OpenDialogOptions = { title: 'Choose pictures to show', properties: ['openFile', 'multiSelections'], filters: [{ name: 'Pictures', extensions: IMAGE_EXT }] }
+    const options: Electron.OpenDialogOptions = { title: t('main.library.pickPictures'), properties: ['openFile', 'multiSelections'], filters: [{ name: t('main.library.filterPictures'), extensions: IMAGE_EXT }] }
     const result = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options)
     if (result.canceled || !result.filePaths.length) return null
     paths = [...result.filePaths].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })) // 2.png before 10.png
@@ -52,7 +53,7 @@ export async function pickPictures(parent: BrowserWindow | null): Promise<{ titl
     copyFileSync(p, join(mediaDir(), file))
     return file
   })
-  return { title: paths.length === 1 ? basename(paths[0], extname(paths[0])) : `${basename(paths[0], extname(paths[0]))} + ${paths.length - 1} more`, slides }
+  return { title: paths.length === 1 ? basename(paths[0], extname(paths[0])) : t('main.library.picturesMore', { name: basename(paths[0], extname(paths[0])), count: paths.length - 1 }), slides }
 }
 
 /** Every picture and video imported so far, for the background picker. */

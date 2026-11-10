@@ -4,6 +4,8 @@ Presentation software for church services with a built-in live streamer: **prese
 
 Run a Sunday service from one window: a run sheet of songs, Bible passages, videos, presentations and pictures; lyrics over picture or video backgrounds on any number of physical and virtual screens; a stage monitor; live announcements; a mixing console for the stream audio; ATEM switcher control; and one-click streaming to YouTube. Built with Electron for macOS, Windows and Linux.
 
+**Languages:** the interface is available in English and Slovak (Settings → Language; automatic by default, following the computer). Adding another language is one catalog per language: see `CLAUDE.md`, *Languages*.
+
 **User guide:** step-by-step chapters with screenshots for the people who run a service are in [docs/](docs/index.md) (published as a GitHub Pages site when Pages is switched on for the `docs/` folder).
 
 **Download:** installers for macOS (Apple silicon and Intel), Windows and Linux (`.deb` and `.AppImage`, Intel/AMD) are on the [Releases page](https://github.com/AC-Dubnica/prestreamer/releases). They are not code-signed yet, so the first start needs one extra step (see *Build, CI and releases*).

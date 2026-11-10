@@ -5,6 +5,7 @@ import { makeSplitter } from './splitter'
 import { bestGrid } from '../shared/layout'
 import { isBlank } from '../shared/screens'
 import type { PlaybackState, ScreenConfig, ScreenState } from '../shared/types'
+import { t } from '../shared/i18n'
 import { iconButton } from './icons'
 import { scaledPreview, type ScaledPreview } from './slideview'
 
@@ -34,7 +35,7 @@ const recallMode = (): Mode => { try { return localStorage.getItem(MODE_KEY) ===
 interface Shown { box: HTMLElement; pv: ScaledPreview; off: HTMLElement; clear: HTMLButtonElement; toggle: HTMLButtonElement }
 function shown(): Shown {
   const pv = scaledPreview()
-  const off = el('div', { className: 'off', textContent: 'OFF' })
+  const off = el('div', { className: 'off', textContent: t('devices.monitor.off') })
   // Controls for this one screen, on its picture. They must not also select the cell they are in.
   const clear = el<HTMLButtonElement>('button', { className: 'mtool' })
   const toggle = el<HTMLButtonElement>('button', { className: 'mtool' })
@@ -59,7 +60,7 @@ export function createMonitorView(root: HTMLElement, deps: MonitorDeps) {
 
   const title = el('div', { className: 'mtitle' })
   const modeButtons = (['one', 'all'] as const).map((m) => {
-    const b = el<HTMLButtonElement>('button', { textContent: m === 'one' ? 'One screen' : 'All screens', title: m === 'one' ? 'One screen as large as possible, the others in a strip' : 'Every screen at once' })
+    const b = el<HTMLButtonElement>('button', { textContent: m === 'one' ? t('devices.monitor.oneScreen') : t('devices.monitor.allScreens'), title: m === 'one' ? t('devices.monitor.oneScreenHint') : t('devices.monitor.allScreensHint') })
     b.onclick = () => setMode(m)
     return b
   })
@@ -85,11 +86,11 @@ export function createMonitorView(root: HTMLElement, deps: MonitorDeps) {
   root.replaceChildren(bar, main, splitter, side)
   makeSplitter(splitter, { host: root, variable: '--side', side: 'right', min: 220, max: 640, initial: 340, key: 'prestreamer.monitor.side', panel: () => side })
 
-  const previous = iconButton('up', 'Previous slide (←)', () => deps.step(-1), { label: 'Previous', className: 'step' })
-  const forward = iconButton('down', 'Next slide (→ or Space)', () => deps.step(1), { label: 'Next', className: 'primary step' })
-  const playPause = iconButton('play', 'Play or pause the video (Space)', () => void api.playbackCommand({ type: deps.getPlayback().playing ? 'pause' : 'play' }))
-  const camera = iconButton('camera', 'Camera only: the stream shows just the live camera', () => void api.setCameraOnly(!deps.getState().cameraOnly), { label: 'Camera only' })
-  const announce = iconButton('bell', 'Live announcement (A)', () => deps.openAnnounce(), { label: 'Announce' })
+  const previous = iconButton('up', t('devices.monitor.prevHint'), () => deps.step(-1), { label: t('devices.monitor.prev'), className: 'step' })
+  const forward = iconButton('down', t('devices.monitor.nextHint'), () => deps.step(1), { label: t('devices.monitor.next'), className: 'primary step' })
+  const playPause = iconButton('play', t('devices.monitor.playPauseHint'), () => void api.playbackCommand({ type: deps.getPlayback().playing ? 'pause' : 'play' }))
+  const camera = iconButton('camera', t('devices.monitor.cameraHint'), () => void api.setCameraOnly(!deps.getState().cameraOnly), { label: t('devices.monitor.camera') })
+  const announce = iconButton('bell', t('devices.monitor.announceHint'), () => deps.openAnnounce(), { label: t('devices.monitor.announce') })
   // One row: the slide controls and Announce together on the left, the stream's Camera only alone on the right.
   bar.append(previous, forward, playPause, announce, el('span', { className: 'grow' }), camera, modeSwitch)
 
@@ -106,12 +107,12 @@ export function createMonitorView(root: HTMLElement, deps: MonitorDeps) {
   function tools(s: Shown, sc: ScreenConfig, state: ScreenState): void {
     const live = state.live.includes(sc.id)
     const blank = isBlank(state.screens, state.blank, sc.id)
-    s.clear.textContent = blank ? 'Show' : 'Clear'
-    s.clear.title = blank ? `Bring the slide back on ${sc.name}` : `Take the slide off ${sc.name} only; the other screens keep theirs`
+    s.clear.textContent = blank ? t('devices.monitor.show') : t('devices.monitor.clear')
+    s.clear.title = blank ? t('devices.monitor.showHint', { name: sc.name }) : t('devices.monitor.clearHint', { name: sc.name })
     s.clear.disabled = !live || (!blank && !state.slide)
     s.clear.onclick = () => void api.clearScreen(sc.id, !blank)
-    s.toggle.textContent = live ? 'Close' : 'Open'
-    s.toggle.title = `${live ? 'Close' : 'Open'} ${sc.name}`
+    s.toggle.textContent = live ? t('devices.monitor.closeBtn') : t('devices.monitor.openBtn')
+    s.toggle.title = live ? t('devices.monitor.closeHint', { name: sc.name }) : t('devices.monitor.openHint', { name: sc.name })
     s.toggle.classList.toggle('danger', live)
     s.toggle.onclick = () => deps.toggleScreen(sc.id)
   }
@@ -146,27 +147,27 @@ export function createMonitorView(root: HTMLElement, deps: MonitorDeps) {
     paint(big.pv, selected, state)
     big.off.style.display = live ? 'none' : 'flex'
     tools(big, selected, state)
-    title.textContent = `${selected.name} · ${w}×${h}${live ? '' : ' · closed'}`
+    title.textContent = t(live ? 'devices.monitor.titleOpen' : 'devices.monitor.titleClosed', { name: selected.name, w, h })
 
     // The strip: every screen, the selected one marked.
     const ids = new Set(state.screens.map((s) => s.id))
     for (const [id, t] of thumbs) if (!ids.has(id)) { t.pv.dispose(); t.root.remove(); thumbs.delete(id) }
     for (const sc of state.screens) {
-      let t = thumbs.get(sc.id)
-      if (!t) {
+      let th = thumbs.get(sc.id)
+      if (!th) {
         const pv = scaledPreview()
-        const tOff = el('div', { className: 'off', textContent: 'OFF' })
+        const tOff = el('div', { className: 'off', textContent: t('devices.monitor.off') })
         const name = el('div', { className: 'monname' })
         const card = el('div', { className: 'monthumb' }, el('div', { className: 'pv' }, pv.box, tOff), name)
         card.onclick = () => deps.select(sc.id)
-        t = { root: card, pv, off: tOff, name }
-        thumbs.set(sc.id, t)
+        th = { root: card, pv, off: tOff, name }
+        thumbs.set(sc.id, th)
       }
-      paint(t.pv, sc, state)
-      t.off.style.display = state.live.includes(sc.id) ? 'none' : 'flex'
-      t.name.textContent = sc.name
-      t.root.classList.toggle('sel', sc.id === selected.id)
-      t.root.dataset.id = sc.id
+      paint(th.pv, sc, state)
+      th.off.style.display = state.live.includes(sc.id) ? 'none' : 'flex'
+      th.name.textContent = sc.name
+      th.root.classList.toggle('sel', sc.id === selected.id)
+      th.root.dataset.id = sc.id
     }
     const wanted = state.screens.map((s) => thumbs.get(s.id)!.root)
     if (wanted.some((n, i) => strip.children[i] !== n)) strip.append(...wanted)
@@ -174,7 +175,7 @@ export function createMonitorView(root: HTMLElement, deps: MonitorDeps) {
 
   function renderAll(state: ScreenState, selected: ScreenConfig): void {
     if (content.firstChild !== grid) { content.replaceChildren(grid); resizer.observe(grid) }
-    title.textContent = `All screens · ${state.screens.length}`
+    title.textContent = t('devices.monitor.allTitle', { n: state.screens.length })
     const ids = new Set(state.screens.map((s) => s.id))
     for (const [id, c] of cells) if (!ids.has(id)) { c.shown.pv.dispose(); c.root.remove(); cells.delete(id) }
     for (const sc of state.screens) {
@@ -183,7 +184,7 @@ export function createMonitorView(root: HTMLElement, deps: MonitorDeps) {
         const s = shown()
         const name = el('div', { className: 'monname' })
         const fit = el('div', { className: 'mfit' }, s.box)
-        const cell = el('div', { className: 'moncell', title: 'Click to select this screen, double-click to see it large' }, fit, name)
+        const cell = el('div', { className: 'moncell', title: t('devices.monitor.cellHint') }, fit, name)
         cell.onclick = () => deps.select(sc.id)
         cell.ondblclick = () => { deps.select(sc.id); setMode('one') }
         c = { root: cell, shown: s, name }
@@ -195,7 +196,7 @@ export function createMonitorView(root: HTMLElement, deps: MonitorDeps) {
       paint(c.shown.pv, sc, state)
       c.shown.off.style.display = live ? 'none' : 'flex'
       tools(c.shown, sc, state)
-      c.name.textContent = `${sc.name} · ${w}×${h}${live ? '' : ' · closed'}`
+      c.name.textContent = t(live ? 'devices.monitor.titleOpen' : 'devices.monitor.titleClosed', { name: sc.name, w, h })
       c.root.classList.toggle('sel', sc.id === selected.id)
       c.root.dataset.id = sc.id
     }
@@ -218,12 +219,12 @@ export function createMonitorView(root: HTMLElement, deps: MonitorDeps) {
     else renderAll(state, selected)
 
     const slide = state.slide
-    now.textContent = slide ? `On air: ${slide.video ? `video ${slide.video.title}` : slide.picture ? slide.label : `${slide.label} — ${slide.text.split('\n')[0]}`}` : 'Nothing on air'
-    next.textContent = state.next ? `Next: ${state.next.label}${state.next.text ? ` — ${state.next.text.split('\n')[0]}` : ''}` : ''
+    now.textContent = slide ? (slide.video ? t('devices.monitor.onAirVideo', { title: slide.video.title }) : slide.picture ? t('devices.monitor.onAirLabel', { label: slide.label }) : t('devices.monitor.onAirSlide', { label: slide.label, text: slide.text.split('\n')[0] })) : t('devices.monitor.nothing')
+    next.textContent = state.next ? state.next.text ? t('devices.monitor.nextSlide', { label: state.next.label, text: state.next.text.split('\n')[0] }) : t('devices.monitor.nextLabel', { label: state.next.label }) : ''
 
     const playing = deps.getPlayback()
     playPause.hidden = !slide?.video
-    playPause.title = playing.playing ? 'Pause the video (Space)' : 'Play the video (Space)'
+    playPause.title = playing.playing ? t('devices.monitor.pauseVideo') : t('devices.monitor.playVideo')
     camera.hidden = selected.kind !== 'virtual'
     camera.classList.toggle('primary', state.cameraOnly)
     camera.setAttribute('aria-pressed', String(state.cameraOnly))

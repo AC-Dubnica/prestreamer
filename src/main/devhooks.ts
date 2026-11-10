@@ -32,6 +32,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
  *   PRESTREAMER_SNAPSHOT=out.png   capture the operator window
  *   PRESTREAMER_EVAL="js"          run JS in the operator before the snapshot (prints the result)
  *   PRESTREAMER_ATEM=1             look for an ATEM even with PRESTREAMER_USER_DATA set (tests normally send no network packets)
+ *   PRESTREAMER_LANG=en|sk         the interface language (with PRESTREAMER_USER_DATA set the tests run in English otherwise)
  *   PRESTREAMER_DMX_FAKE=file      runs DMX output into a file (its latest frame: start code, then 512 slots) instead of a USB interface
  *   PRESTREAMER_NO_AUTO_OPEN=1     with SNAPSHOT/EVAL: do not open the screens or show a slide first (to test how the app opens)
  *   PRESTREAMER_STREAMTEST=out.mkv stream the test pattern to a file (PRESTREAMER_SECONDS, PRESTREAMER_AUDIO=test|multitest,

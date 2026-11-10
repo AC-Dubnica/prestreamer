@@ -1,3 +1,5 @@
+import { t } from './i18n'
+
 /**
  * NDI output. A screen of kind 'ndi' is drawn offscreen like a virtual screen and its frames are sent over the network as an NDI
  * source, so a display far from this computer can show it through an NDI decoder. The sending is done by a small helper program
@@ -51,7 +53,7 @@ export function ndiLibraryCandidates(w: NdiLibraryWhere): string[] {
 }
 
 /** What the operator reads when no NDI library was found. */
-export const NDI_MISSING = 'The NDI library was not found. Install the free NDI Tools from ndi.video (or put NDI\'s library in vendor/ndi before building), then open this screen again.'
+export const ndiMissing = (): string => t('devices.ndi.missing')
 
 /** A name for the NDI source: the screen's name, without control characters, within the limit. Never empty. */
 export function ndiSourceName(screenName: string): string {

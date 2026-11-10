@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs
 import { basename, extname, join } from 'node:path'
 import { parseZefania, summarize, type Bible, type BibleImportResult, type BibleSummary, type BibleVerse } from '../shared/bible'
 import { writeJsonAtomic } from './store'
+import { t } from '../shared/i18n'
 
 const MAX_FILE_BYTES = 60 * 1024 * 1024 // the largest real Bibles are about 5 MB; anything far bigger is not one
 
@@ -56,8 +57,8 @@ export class BibleStore {
   importFile(path: string): BibleImportResult {
     const file = basename(path)
     try {
-      if (extname(path).toLowerCase() !== '.xml') throw new Error('Only Zefania XML files (.xml) can be imported')
-      if (statSync(path).size > MAX_FILE_BYTES) throw new Error('The file is too large to be a Bible')
+      if (extname(path).toLowerCase() !== '.xml') throw new Error(t('main.bibles.onlyXml'))
+      if (statSync(path).size > MAX_FILE_BYTES) throw new Error(t('main.bibles.tooLarge'))
       const { summary, replaced } = this.importXml(readFileSync(path, 'utf8'), basename(path, extname(path)))
       return { file, name: summary.name, status: replaced ? 'replaced' : 'imported' }
     } catch (err) {

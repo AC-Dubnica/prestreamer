@@ -4,6 +4,8 @@ title: PreStreamer guide
 
 # PreStreamer guide
 
+*Slovensky: [Príručka k PreStreameru](sk/index.md).*
+
 PreStreamer runs a church service from one window: the songs, Bible readings, videos and presentations on the screens in the room, the live stream to YouTube, the sound mixer for the stream, the camera switcher and the stage lights.
 
 This guide is for the people who run it on Sunday. Each chapter is one job, written as steps you can follow with the app open. Start with **Getting started**, print the **Sunday checklist**, and come back to a chapter when you need it.

@@ -20,6 +20,7 @@ import {
   type ScreenState,
   type Slide,
 } from '../shared/types'
+import { t } from '../shared/i18n'
 
 /**
  * Owns the logical screens and the window that renders each live one.
@@ -351,7 +352,7 @@ export class ScreenManager {
       win = new BrowserWindow({
         ...(bounds
           ? { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height, fullscreen: false, frame: false, enableLargerThanScreen: true }
-          : { width: 960, height: 540, frame: true, title: `${cfg.name} (no display bound)` }),
+          : { width: 960, height: 540, frame: true, title: t('main.screens.noDisplay', { name: cfg.name }) }),
         backgroundColor: '#000000',
         // A frameless window on macOS has rounded corners and a shadow, which show as dark notches on a full-screen output.
         ...(display ? { roundedCorners: false, hasShadow: false } : {}),
@@ -480,7 +481,7 @@ export class ScreenManager {
   }
 }
 
-const displayName = (d: Display): string => d.label || `Display ${d.id}`
+const displayName = (d: Display): string => d.label || t('main.screens.display', { id: d.id })
 
 const escapeHtml = (text: string): string => text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 

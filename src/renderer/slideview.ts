@@ -1,3 +1,4 @@
+import { formatTime, t } from '../shared/i18n'
 import { TONE_COLORS, announceFontPx, type Announcement } from '../shared/announce'
 import { mediaUrl, type Background, type Look, type PlaybackState, type Slide, type VideoSource } from '../shared/types'
 
@@ -173,15 +174,15 @@ export class SlideView {
     }
     const H = this.lastH
     const W = this.lastW
-    const tick = () => { this.stageClock.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
+    const tick = () => { this.stageClock.textContent = formatTime(new Date(), { hour: '2-digit', minute: '2-digit' }) }
     tick()
     if (!this.clockTimer) this.clockTimer = setInterval(tick, 1000)
     Object.assign(this.stageClock.style, { top: `${H * 0.03}px`, right: `${W * 0.04}px`, fontSize: `${H * 0.07}px` })
     const tag = document.createElement('div')
-    tag.textContent = 'NEXT'
+    tag.textContent = t('devices.stage.next')
     Object.assign(tag.style, { fontSize: '.6em', letterSpacing: '.12em', fontWeight: '800', opacity: '.6', marginBottom: '.2em' })
     const body = document.createElement('div')
-    body.textContent = this.nextSlide ? (this.nextSlide.video ? `▶ ${this.nextSlide.video.title}` : this.nextSlide.picture ? this.nextSlide.label : this.nextSlide.text) : 'End of the list'
+    body.textContent = this.nextSlide ? (this.nextSlide.video ? `▶ ${this.nextSlide.video.title}` : this.nextSlide.picture ? this.nextSlide.label : this.nextSlide.text) : t('devices.stage.end')
     if (!this.nextSlide) body.style.opacity = '.5'
     this.stageNext.replaceChildren(tag, body)
     Object.assign(this.stageNext.style, { left: `${W * 0.04}px`, right: `${W * 0.04}px`, bottom: `${H * 0.03}px`, height: `${H * 0.22}px`, fontSize: `${H * 0.05}px` })
@@ -477,7 +478,7 @@ function mountCamera(host: HTMLElement, source: Extract<VideoSource, { type: 'ca
   if (!live) {
     const ph = document.createElement('div')
     Object.assign(ph.style, { ...fill, background: '#222', color: '#888', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '28px' })
-    ph.textContent = `camera: ${source.label}`
+    ph.textContent = t('devices.stage.camera', { label: source.label })
     host.append(ph)
     return () => {}
   }
@@ -498,7 +499,7 @@ function mountCamera(host: HTMLElement, source: Extract<VideoSource, { type: 'ca
       video.srcObject = s
     })
     .catch((err: Error) => {
-      video.replaceWith(Object.assign(document.createElement('div'), { textContent: `camera error: ${err.message}` }))
+      video.replaceWith(Object.assign(document.createElement('div'), { textContent: t('devices.stage.cameraError', { message: err.message }) }))
     })
   return () => {
     stopped = true

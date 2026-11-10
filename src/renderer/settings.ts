@@ -5,6 +5,8 @@ import type { DisplayInfo, ScreenConfig, ScreenState } from '../shared/types'
 import { idleAtem, type AtemStatus } from '../shared/atem'
 import { idleDmx } from '../shared/dmx'
 import { createDmxSettings } from './dmx-settings'
+import { createLanguageSettings } from './language-settings'
+import { t } from '../shared/i18n'
 import { askText, confirmDialog } from './dialogs'
 import { iconButton } from './icons'
 import { describeRole, openScreenForm } from './screen-form'
@@ -34,7 +36,7 @@ function displayMap(displays: DisplayInfo[]): HTMLElement {
     })
     .join('')
   const box = el('div', { className: 'dmap' })
-  box.innerHTML = `<svg width="${(maxX - minX) * scale + 2}" height="${(maxY - minY) * scale + 2}" role="img" aria-label="Display arrangement">${rects}</svg>`
+  box.innerHTML = `<svg width="${(maxX - minX) * scale + 2}" height="${(maxY - minY) * scale + 2}" role="img" aria-label="${t('settings.displays.mapAria')}">${rects}</svg>`
   return box
 }
 
@@ -49,14 +51,16 @@ export function createSettingsView(root: HTMLElement, api: PrestreamerApi, toggl
   let atemStatus: AtemStatus = idleAtem
   let streamPage: ReturnType<typeof createStreamSettings> | null = null
   const dmxPage = createDmxSettings(api, idleDmx)
+  const languagePage = createLanguageSettings(api)
   let appearanceNote = ''
   // The categories listed down the left side; the one open is remembered.
   const CATEGORIES = [
-    { id: 'visuals', label: 'Visuals', icon: 'image', hint: 'Backgrounds for songs and Bible readings, and the logo' },
-    { id: 'screens', label: 'Screens', icon: 'present', hint: 'The outputs (audience displays, stage monitor, stream, mirrors) and the monitors connected to this computer' },
-    { id: 'stream', label: 'Stream', icon: 'play', hint: 'Where the stream goes (YouTube or a file), the screen and key, and how it is encoded' },
-    { id: 'atem', label: 'ATEM', icon: 'camera', hint: 'The video switcher: its address and which switching buttons to show' },
-    { id: 'dmx', label: 'DMX', icon: 'bulb', hint: 'Stage lighting through a USB DMX interface: the lights, the scenes and the interface' },
+    { id: 'visuals', label: t('settings.cat.visuals.label'), icon: 'image', hint: t('settings.cat.visuals.hint') },
+    { id: 'screens', label: t('settings.cat.screens.label'), icon: 'present', hint: t('settings.cat.screens.hint') },
+    { id: 'stream', label: t('settings.cat.stream.label'), icon: 'play', hint: t('settings.cat.stream.hint') },
+    { id: 'atem', label: 'ATEM', icon: 'camera', hint: t('settings.cat.atem.hint') },
+    { id: 'dmx', label: 'DMX', icon: 'bulb', hint: t('settings.cat.dmx.hint') },
+    { id: 'language', label: t('settings.cat.language.label'), icon: 'globe', hint: t('settings.cat.language.hint') },
   ] as const
   type CategoryId = (typeof CATEGORIES)[number]['id']
   const CATEGORY_KEY = 'prestreamer.settingsCategory'
@@ -70,14 +74,14 @@ export function createSettingsView(root: HTMLElement, api: PrestreamerApi, toggl
     const ndi = sc.kind === 'ndi' ? state.ndi[sc.id] : undefined
     const where = sc.kind !== 'display'
       ? `${sc.width}×${sc.height}${sc.kind === 'ndi' ? ' · NDI' : ''}`
-      : sc.displayId === null ? 'Opens in a window (no display chosen)' : bound ? `Display ${state.displays.indexOf(bound) + 1} · ${bound.label} · ${bound.width}×${bound.height}${bound.primary ? ' · main display' : ''}` : `${sc.displayLabel ?? 'Display'} (not connected)`
-    const warn = sc.kind === 'display' && bound?.primary ? el('div', { className: 'warn', textContent: state.displays.length > 1 ? 'This is your main display, where this window is. While live, the screen covers it.' : 'This is your only display, so a live screen covers this window.' }) : null
+      : sc.displayId === null ? t('settings.card.window') : bound ? t(bound.primary ? 'settings.card.displayMain' : 'settings.card.display', { n: state.displays.indexOf(bound) + 1, label: bound.label, size: `${bound.width}×${bound.height}` }) : t('settings.card.notConnected', { label: sc.displayLabel ?? t('settings.card.displayWord') })
+    const warn = sc.kind === 'display' && bound?.primary ? el('div', { className: 'warn', textContent: state.displays.length > 1 ? t('settings.card.mainWarn') : t('settings.card.onlyWarn') }) : null
 
-    const del = iconButton('trash', 'Remove this screen', async () => {
+    const del = iconButton('trash', t('settings.card.removeTitle'), async () => {
       const ok = await confirmDialog({
-        title: `Remove ${sc.name}?`,
-        message: `${sc.name} and its look (colours, fonts, source, sound) will be deleted.${live ? ' It is open now and will be closed.' : ''}`,
-        confirm: 'Remove screen',
+        title: t('settings.card.removeConfirmTitle', { name: sc.name }),
+        message: t(live ? 'settings.card.removeConfirmLive' : 'settings.card.removeConfirm', { name: sc.name }),
+        confirm: t('settings.card.removeConfirmButton'),
         danger: true,
       })
       if (ok) void api.removeScreen(sc.id)
@@ -87,13 +91,13 @@ export function createSettingsView(root: HTMLElement, api: PrestreamerApi, toggl
       el('div', { className: 'sethead' },
         el('span', { className: `dot ${live ? 'on' : ''}` }),
         el('strong', { className: 'scname', textContent: sc.name }),
-        el('span', { className: 'badge', textContent: sc.kind === 'display' ? 'Display screen' : sc.kind === 'ndi' ? 'NDI screen' : 'Virtual screen' }),
+        el('span', { className: 'badge', textContent: sc.kind === 'display' ? t('settings.kind.display') : sc.kind === 'ndi' ? t('settings.kind.ndi') : t('settings.kind.virtual') }),
         el('span', { className: 'grow' }),
-        el('button', { className: live ? 'danger' : 'primary', textContent: live ? 'Close' : 'Open', title: live ? `Close ${sc.name}` : `Open ${sc.name}`, onclick: () => toggleScreen(sc.id) }),
-        iconButton('gear', 'Look: colours, fonts, background, text layout, video source', () => deps.configure(sc.id), { size: 15, label: 'Look…' }),
-        iconButton('pencil', 'Change name, what it shows, display or size', () => openScreenForm(api, () => lastState ?? state, sc.id, { streaming: deps.streaming }), { size: 15, label: 'Edit…' }),
-        iconButton('up', 'Move up: higher priority', () => void api.moveScreen(sc.id, -1), { size: 15, disabled: index === 0 }),
-        iconButton('down', 'Move down: lower priority', () => void api.moveScreen(sc.id, 1), { size: 15, disabled: index === state.screens.length - 1 }),
+        el('button', { className: live ? 'danger' : 'primary', textContent: live ? t('settings.card.close') : t('settings.card.open'), title: t(live ? 'settings.card.closeTitle' : 'settings.card.openTitle', { name: sc.name }), onclick: () => toggleScreen(sc.id) }),
+        iconButton('gear', t('settings.card.lookTitle'), () => deps.configure(sc.id), { size: 15, label: t('settings.card.look') }),
+        iconButton('pencil', t('settings.card.editTitle'), () => openScreenForm(api, () => lastState ?? state, sc.id, { streaming: deps.streaming }), { size: 15, label: t('settings.card.edit') }),
+        iconButton('up', t('settings.card.moveUp'), () => void api.moveScreen(sc.id, -1), { size: 15, disabled: index === 0 }),
+        iconButton('down', t('settings.card.moveDown'), () => void api.moveScreen(sc.id, 1), { size: 15, disabled: index === state.screens.length - 1 }),
         del,
       ),
       el('div', { className: 'scrole', textContent: describeRole(sc, state) }),
@@ -107,7 +111,7 @@ export function createSettingsView(root: HTMLElement, api: PrestreamerApi, toggl
   function streamSection(): HTMLElement {
     streamPage ??= createStreamSettings({ api, ...deps.stream })
     streamPage.refresh()
-    return el('div', { className: 'setsec' }, el('div', { className: 'sethead2' }, el('h2', { textContent: 'Stream' })), streamPage.root)
+    return el('div', { className: 'setsec' }, el('div', { className: 'sethead2' }, el('h2', { textContent: t('settings.cat.stream.label') })), streamPage.root)
   }
 
   /** The ATEM page: where the switcher is, and which switching buttons the panels (Present and Monitor tabs) show. */
@@ -117,26 +121,26 @@ export function createSettingsView(root: HTMLElement, api: PrestreamerApi, toggl
       box.onchange = () => void api.atemSetButtons({ [key]: box.checked }).then((s) => { atemStatus = s })
       return el('label', { className: 'srow2' }, el('span', { textContent: label }), el('span', { className: 'inl' }, box, el('span', { className: 'dim', textContent: hint })))
     }
-    const change = el('button', { textContent: 'Change…', onclick: async () => {
-      const value = await askText({ title: 'ATEM address', label: 'IP address of the switcher (ATEM Software Control shows it; factory setting 192.168.10.240)', value: atemStatus.address, placeholder: '192.168.10.240', confirm: 'Connect' })
+    const change = el('button', { textContent: t('settings.change'), onclick: async () => {
+      const value = await askText({ title: t('settings.atem.addressTitle'), label: t('settings.atem.addressLabel'), value: atemStatus.address, placeholder: '192.168.10.240', confirm: t('settings.atem.connect') })
       if (value !== null) atemStatus = await api.atemSetAddress(value)
       if (lastState) render(lastState, true)
     } })
     return el('div', { className: 'setsec' },
-      el('div', { className: 'sethead2' }, el('h2', { textContent: 'ATEM switcher' })),
+      el('div', { className: 'sethead2' }, el('h2', { textContent: t('settings.atem.title') })),
       el('div', { className: 'setcard' },
-        el('div', { className: 'sethead' }, el('span', { className: `dot ${atemStatus.state === 'connected' ? 'on' : ''}` }), el('strong', { className: 'scname', textContent: atemStatus.state === 'connected' ? atemStatus.model : 'Not connected' }), el('span', { className: 'grow' })),
+        el('div', { className: 'sethead' }, el('span', { className: `dot ${atemStatus.state === 'connected' ? 'on' : ''}` }), el('strong', { className: 'scname', textContent: atemStatus.state === 'connected' ? atemStatus.model : t('settings.atem.notConnected') }), el('span', { className: 'grow' })),
         el('div', { className: 'dim', textContent: atemStatus.message }),
-        el('label', { className: 'srow2' }, el('span', { textContent: 'Address' }), el('span', { className: 'inl' }, el('span', { textContent: atemStatus.address }), change)),
+        el('label', { className: 'srow2' }, el('span', { textContent: t('settings.atem.address') }), el('span', { className: 'inl' }, el('span', { textContent: atemStatus.address }), change)),
       ),
-      el('h3', { className: 'sethead3', textContent: 'Buttons in the ATEM panels' }),
+      el('h3', { className: 'sethead3', textContent: t('settings.atem.buttons') }),
       el('div', { className: 'setcard' },
-        el('label', { className: 'srow2' }, el('span', { textContent: 'Program' }), el('span', { className: 'dim', textContent: 'always shown: one button per input' })),
-        tick('Preview', 'the preview row, to line up the next camera before a Cut or Auto', 'preview'),
-        tick('Cut', 'swap preview and program at once', 'cut'),
-        tick('Auto', 'swap them with the switcher\'s transition', 'auto'),
+        el('label', { className: 'srow2' }, el('span', { textContent: t('settings.atem.program') }), el('span', { className: 'dim', textContent: t('settings.atem.programHint') })),
+        tick(t('settings.atem.preview'), t('settings.atem.previewHint'), 'preview'),
+        tick(t('settings.atem.cut'), t('settings.atem.cutHint'), 'cut'),
+        tick(t('settings.atem.auto'), t('settings.atem.autoHint'), 'auto'),
       ),
-      el('p', { className: 'dim', textContent: 'The ATEM is controlled over Ethernet: the Mini\'s USB port is only a webcam. The panels are in the Present tab (under the screens) and the Monitor tab (under the picture), and appear only while a switcher is connected.' }),
+      el('p', { className: 'dim', textContent: t('settings.atem.note') }),
     )
   }
 
@@ -144,14 +148,14 @@ export function createSettingsView(root: HTMLElement, api: PrestreamerApi, toggl
   function lookRow(label: string, hint: string, current: { kind: 'image' | 'video'; file: string } | null, choose: () => void, clear: () => void): HTMLElement {
     return el('div', { className: 'lookrow' },
       el('div', { className: 'lookname' }, el('strong', { textContent: label }), el('span', { className: 'dim', textContent: hint })),
-      current ? mediaThumb(current) : el('div', { className: 'mthumb none', textContent: 'None' }),
-      el('button', { textContent: current ? 'Change…' : 'Choose…', onclick: choose }),
-      iconButton('x', `Clear: no ${label.toLowerCase()}`, clear, { size: 15, disabled: !current }),
+      current ? mediaThumb(current) : el('div', { className: 'mthumb none', textContent: t('settings.look.none') }),
+      el('button', { textContent: current ? t('settings.change') : t('settings.choose'), onclick: choose }),
+      iconButton('x', t('settings.look.clear', { what: label.toLowerCase() }), clear, { size: 15, disabled: !current }),
     )
   }
 
   async function chooseBackground(title: string, current: Appearance['songBackground'], apply: (bg: { kind: 'image' | 'video'; file: string } | null) => Appearance): Promise<void> {
-    const bg = await pickBackground(api, current, { title, noneLabel: 'No background', noneHint: 'Each song or screen keeps its own colour' })
+    const bg = await pickBackground(api, current, { title, noneLabel: t('settings.look.noBackground'), noneHint: t('settings.look.noBackgroundHint') })
     if (bg === undefined) return
     if (bg !== null && bg.kind === 'css') return
     appearance = await api.appearanceSet(apply(bg))
@@ -162,26 +166,26 @@ export function createSettingsView(root: HTMLElement, api: PrestreamerApi, toggl
   function lookSection(): HTMLElement {
     const save = async (next: Appearance, note = '') => { appearance = await api.appearanceSet(next); appearanceNote = note; if (lastState) render(lastState, true) }
     return el('div', { className: 'setsec' },
-      el('div', { className: 'sethead2' }, el('h2', { textContent: 'Backgrounds and logo' })),
+      el('div', { className: 'sethead2' }, el('h2', { textContent: t('settings.look.title') })),
       el('div', { className: 'setcard' },
-        lookRow('Songs', 'behind every song without a picture or video of its own', appearance.songBackground,
-          () => void chooseBackground('Background for all songs', appearance.songBackground, (bg) => ({ ...appearance, songBackground: bg })),
+        lookRow(t('settings.look.songs'), t('settings.look.songsHint'), appearance.songBackground,
+          () => void chooseBackground(t('settings.look.songsPick'), appearance.songBackground, (bg) => ({ ...appearance, songBackground: bg })),
           () => void save({ ...appearance, songBackground: null })),
-        lookRow('Scripture', 'behind Bible readings without a picture or video of their own', appearance.scriptureBackground,
-          () => void chooseBackground('Background for all Bible readings', appearance.scriptureBackground, (bg) => ({ ...appearance, scriptureBackground: bg })),
+        lookRow(t('settings.look.scripture'), t('settings.look.scriptureHint'), appearance.scriptureBackground,
+          () => void chooseBackground(t('settings.look.scripturePick'), appearance.scriptureBackground, (bg) => ({ ...appearance, scriptureBackground: bg })),
           () => void save({ ...appearance, scriptureBackground: null })),
-        lookRow('Logo', 'shown on every screen by the Logo button (or the L key)', appearance.logo ? { kind: 'image', file: appearance.logo } : null,
+        lookRow(t('settings.look.logo'), t('settings.look.logoHint'), appearance.logo ? { kind: 'image', file: appearance.logo } : null,
           async () => {
-            const bg = await pickBackground(api, appearance.logo ? { kind: 'image', file: appearance.logo } : null, { title: 'Choose the logo', noneLabel: 'No logo', noneHint: 'The Logo button stays off' })
+            const bg = await pickBackground(api, appearance.logo ? { kind: 'image', file: appearance.logo } : null, { title: t('settings.look.logoPick'), noneLabel: t('settings.look.noLogo'), noneHint: t('settings.look.noLogoHint') })
             if (bg === undefined) return
             if (bg === null) return void save({ ...appearance, logo: null })
-            if (bg.kind !== 'image') return void save(appearance, 'A logo must be a picture, not a video.')
+            if (bg.kind !== 'image') return void save(appearance, t('settings.look.logoMustBePicture'))
             void save({ ...appearance, logo: bg.file })
           },
           () => void save({ ...appearance, logo: null })),
         el('div', { className: 'dim', textContent: appearanceNote }),
       ),
-      el('p', { className: 'dim', textContent: 'A song\'s or slide\'s own picture or video always wins. Next comes the background chosen here, then the background of the screen itself (the ⚙ button on a screen in the Present tab), then its colour.' }),
+      el('p', { className: 'dim', textContent: t('settings.look.precedence') }),
     )
   }
 
@@ -192,23 +196,23 @@ export function createSettingsView(root: HTMLElement, api: PrestreamerApi, toggl
     lastSignature = signature
 
     const displays = el('div', { className: 'setsec' },
-      el('div', { className: 'sethead2' }, el('h2', { textContent: 'Displays' }), iconButton('screen', 'Show a number on every display for three seconds', () => void api.identifyDisplays(), { label: 'Identify displays' })),
-      ...state.displays.map((d, i) => el('div', { className: 'drow', textContent: `${i + 1}   ${d.label} · ${d.width}×${d.height} at (${d.x}, ${d.y})${d.primary ? ' · primary' : ''}` })),
-      state.displays.length ? displayMap(state.displays) : el('div', { className: 'dim', textContent: 'No displays detected.' }),
-      el('p', { className: 'dim', textContent: 'Plug in a monitor or projector and it appears here at once. A display screen below is shown full-screen on the display you pick.' }),
+      el('div', { className: 'sethead2' }, el('h2', { textContent: t('settings.displays.title') }), iconButton('screen', t('settings.displays.identifyTitle'), () => void api.identifyDisplays(), { label: t('settings.displays.identify') })),
+      ...state.displays.map((d, i) => el('div', { className: 'drow', textContent: t(d.primary ? 'settings.displays.rowPrimary' : 'settings.displays.row', { n: i + 1, label: d.label, size: `${d.width}×${d.height}`, x: d.x, y: d.y }) })),
+      state.displays.length ? displayMap(state.displays) : el('div', { className: 'dim', textContent: t('settings.displays.none') }),
+      el('p', { className: 'dim', textContent: t('settings.displays.note') }),
     )
 
     const addBar = el('div', { className: 'addbar' },
-      el('button', { className: 'primary', textContent: 'Add screen…', title: 'A display screen (audience, stage monitor, stream copy) or a virtual screen for the stream', onclick: () => openScreenForm(api, () => lastState ?? state, null, { streaming: deps.streaming }) }),
-      el('span', { className: 'dim', textContent: 'Display screens are shown on a monitor or projector; a virtual screen is what the stream picks up.' }),
+      el('button', { className: 'primary', textContent: t('settings.screens.add'), title: t('settings.screens.addTitle'), onclick: () => openScreenForm(api, () => lastState ?? state, null, { streaming: deps.streaming }) }),
+      el('span', { className: 'dim', textContent: t('settings.screens.addHint') }),
     )
 
     const screens = el('div', { className: 'setsec' },
-      el('div', { className: 'sethead2' }, el('h2', { textContent: 'Screens' })),
+      el('div', { className: 'sethead2' }, el('h2', { textContent: t('settings.cat.screens.label') })),
       addBar,
-      el('p', { className: 'dim', textContent: 'The order is the priority: it is the order of the screens in the Present tab, and the top screen is the one whose look is used for slide previews. Use the arrows to change it. Look… opens the same settings as the ⚙ on the screen in the Present tab.' }),
+      el('p', { className: 'dim', textContent: t('settings.screens.order') }),
       ...state.screens.map((sc, i) => screenCard(sc, state, i)),
-      el('p', { className: 'dim', textContent: 'A virtual screen is rendered inside PreStreamer, not shown on a monitor: it is what the stream picks up (and where text over a camera is composed). It does not appear as a display in macOS or Windows.' }),
+      el('p', { className: 'dim', textContent: t('settings.screens.virtualNote') }),
     )
 
     const nav = el('nav', { className: 'setnav', role: 'tablist' }, ...CATEGORIES.map((c) => {
@@ -223,7 +227,7 @@ export function createSettingsView(root: HTMLElement, api: PrestreamerApi, toggl
       return b
     }))
     // The connected monitors come first: they are what the screens below are bound to.
-    root.replaceChildren(nav, el('div', { className: 'setbody', role: 'tabpanel' }, ...(category === 'visuals' ? [lookSection()] : category === 'stream' ? [streamSection()] : category === 'atem' ? [atemSection()] : category === 'dmx' ? [dmxPage.root] : [displays, screens])))
+    root.replaceChildren(nav, el('div', { className: 'setbody', role: 'tabpanel' }, ...(category === 'visuals' ? [lookSection()] : category === 'stream' ? [streamSection()] : category === 'atem' ? [atemSection()] : category === 'dmx' ? [dmxPage.root] : category === 'language' ? [languagePage.root] : [displays, screens])))
   }
 
   void api.atemGet().then((s) => { atemStatus = s; if (category === 'atem' && lastState) render(lastState, true) })

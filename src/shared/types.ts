@@ -1,5 +1,6 @@
 import type { Announcement } from './announce'
 import type { StreamStats } from './stream-stats'
+import { t } from './i18n'
 
 /**
  * A logical output, like a ProPresenter "screen". Independent of any physical display.
@@ -328,6 +329,9 @@ export const IPC = {
   atemSetAddress: 'atem:set-address',
   atemSend: 'atem:send',
   atemSetButtons: 'atem:set-buttons',
+  languageGet: 'language:get',
+  languageSync: 'language:sync',
+  languageSet: 'language:set',
   dmxGet: 'dmx:get',
   dmxState: 'dmx:state',
   dmxSetSettings: 'dmx:set-settings',
@@ -372,7 +376,7 @@ export interface AudioStatus {
 }
 
 export const defaultAudio: AudioConfig = { source: { type: 'silence' } }
-export const idleAudio: AudioStatus = { state: 'idle', message: 'Silence', channelCount: 0 }
+export const idleAudio: AudioStatus = { state: 'idle', get message() { return t('shared.audio.silence') }, channelCount: 0 }
 
 export const AUDIO_IPC = {
   configure: 'audio:configure',

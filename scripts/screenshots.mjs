@@ -3,17 +3,32 @@
 // (King James, John 3) and a made-up band in the mixer. Needs a display and ffmpeg (to draw the backgrounds); windows open briefly.
 //   node scripts/screenshots.mjs            all of them
 //   node scripts/screenshots.mjs mixer      only the named ones
+//   node scripts/screenshots.mjs --lang=sk  in another language (pictures go to docs/screenshots/sk/); labels the scenarios click
+//                                           are looked up by their English text in the translation catalog
 import { spawnSync } from 'node:child_process'
 import { copyFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createRequire } from 'node:module'
+import { buildSync } from 'esbuild'
 import { ensureElectron } from './electron-path.mjs'
 
 const electronPath = await ensureElectron()
 const ffmpeg = process.env.FFMPEG_PATH || 'ffmpeg'
 const outDir = process.env.E2E_OUT_DIR || join(tmpdir(), 'prestreamer-screenshots')
-const target = new URL('../docs/screenshots/', import.meta.url).pathname
+const args = process.argv.slice(2)
+const lang = args.find((a) => a.startsWith('--lang='))?.slice(7) || process.env.SCREENSHOT_LANG || 'en'
+const target = new URL(lang === 'en' ? '../docs/screenshots/' : `../docs/screenshots/${lang}/`, import.meta.url).pathname
 mkdirSync(outDir, { recursive: true })
+mkdirSync(target, { recursive: true })
+
+// The app's own translations, bundled so the scenarios can ask for "the text of this English label in the language of the picture".
+const catalogFile = join(outDir, 'i18n-catalog.cjs')
+buildSync({ entryPoints: [new URL('../src/shared/i18n/index.ts', import.meta.url).pathname], bundle: true, platform: 'node', format: 'cjs', outfile: catalogFile, logLevel: 'error' })
+const { allMessages } = createRequire(import.meta.url)(catalogFile)
+const byEnglish = new Map(Object.entries(allMessages.en).filter(([, m]) => typeof m === 'string').map(([k, m]) => [m, k]))
+/** The label in the language of the pictures. Unknown text (user data such as scene names) is returned as it is. */
+const L = (english) => { const key = byEnglish.get(english); const m = key && allMessages[lang]?.[key]; return typeof m === 'string' ? m : english }
 
 // Two soft gradients to put behind songs and readings, so the slides look like a real service rather than flat colour.
 const songBg = join(outDir, 'song-background.png')
@@ -74,7 +89,10 @@ const prelude = `
   const w = (ms) => new Promise((r) => setTimeout(r, ms))
   const q = (sel, root = document) => root.querySelector(sel)
   const qa = (sel, root = document) => [...root.querySelectorAll(sel)]
-  const tab = (name) => qa('#tabs button').find((b) => b.textContent.trim() === name)
+  const TABS = ['Present', 'Monitor', 'Songs', 'Bible', 'Mixer', 'Settings']
+  const tab = (name) => qa('#tabs button')[TABS.indexOf(name)]
+  const NAV = ['Visuals', 'Screens', 'Stream', 'ATEM', 'DMX', 'Language']
+  const nav = (name) => qa('#view-settings .setnav button')[NAV.indexOf(name)]
   const key = async (k) => { document.body.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true })); await w(450) }
   const backgrounds = async () => {
     const bg = await prestreamer.mediaImport('image')
@@ -142,7 +160,7 @@ const shots = {
     scenario: `${prelude}
       await backgrounds()
       tab('Settings').click(); await w(600)
-      qa('#view-settings .setnav button').find((b) => b.textContent.trim() === 'Stream').click(); await w(900)`,
+      nav('Stream').click(); await w(900)`,
   },
   // Settings → Stream set to YouTube (no key is saved: the field is empty), for the streaming chapter of the guide.
   'settings-youtube': {
@@ -151,7 +169,7 @@ const shots = {
     scenario: `${prelude}
       await backgrounds()
       tab('Settings').click(); await w(600)
-      qa('#view-settings .setnav button').find((b) => b.textContent.trim() === 'Stream').click(); await w(900)`,
+      nav('Stream').click(); await w(900)`,
   },
   // The dialog for adding a screen, on the NDI type (it shows no display names, unlike the list of screens behind it).
   'ndi-screen': {
@@ -159,7 +177,7 @@ const shots = {
     scenario: `${prelude}
       await backgrounds()
       tab('Settings').click(); await w(600)
-      qa('#view-settings .setnav button').find((b) => b.textContent.trim() === 'Screens').click(); await w(700)
+      nav('Screens').click(); await w(700)
       qa('#view-settings button').find((b) => b.textContent.includes('Add screen')).click(); await w(600)
       qa('.kindcard').find((b) => b.textContent.includes('NDI screen')).click(); await w(500)
       const n = q('.sd input[type=text]'); n.value = 'Hall display'; n.dispatchEvent(new Event('input', { bubbles: true })); await w(400)`,
@@ -185,7 +203,7 @@ const shots = {
     scenario: `${prelude}
       await backgrounds()
       tab('Settings').click(); await w(600)
-      qa('#view-settings .setnav button').find((b) => b.textContent.trim() === 'DMX').click(); await w(900)`,
+      nav('DMX').click(); await w(900)`,
   },
   // The Present tab with numbered markers, for "A tour of the window" in the guide.
   'tour-present': {
@@ -227,14 +245,14 @@ const shots = {
     scenario: `${prelude}
       await backgrounds()
       tab('Settings').click(); await w(600)
-      btnText('Visuals', q('#view-settings .setnav')).click(); await w(900)`,
+      nav('Visuals').click(); await w(900)`,
   },
   'settings-atem': {
     media: songBg,
     scenario: `${prelude}
       await backgrounds()
       tab('Settings').click(); await w(600)
-      btnText('ATEM', q('#view-settings .setnav')).click(); await w(900)`,
+      nav('ATEM').click(); await w(900)`,
   },
   // A presentation (here a PDF) in the run sheet, one picture per slide.
   presentation: {
@@ -270,10 +288,10 @@ const shots = {
 
 // A three-page PDF for the presentation picture, made by the app itself (the same hook the end-to-end test uses).
 const deckPdf = join(outDir, 'deck.pdf')
-const wantsDeck = process.argv.slice(2).length === 0 || process.argv.includes('presentation')
+const wantsDeck = args.filter((a) => !a.startsWith('--')).length === 0 || args.includes('presentation')
 if (wantsDeck) spawnSync(electronPath, ['.'], { env: { ...process.env, PRESTREAMER_USER_DATA: join(outDir, 'userdata-makepdf'), PRESTREAMER_MAKEPDF: deckPdf }, timeout: 60_000 })
 
-const wanted = process.argv.slice(2)
+const wanted = args.filter((a) => !a.startsWith('--'))
 const names = wanted.length ? wanted : Object.keys(shots)
 let failed = 0
 for (const name of names) {
@@ -288,7 +306,7 @@ for (const name of names) {
   const png = join(outDir, `${name}.png`)
   rmSync(png, { force: true })
   const run = spawnSync(electronPath, ['.'], {
-    env: { ...process.env, PRESTREAMER_USER_DATA: userData, PRESTREAMER_SNAPSHOT: png, PRESTREAMER_EVAL: `(async () => { ${shot.scenario}\n return 'ok' })()`, ...(shot.media ? { PRESTREAMER_MEDIA_FILE: shot.media } : {}), ...(shot.env ? shot.env(userData) : {}) },
+    env: { ...process.env, PRESTREAMER_USER_DATA: userData, PRESTREAMER_LANG: lang, PRESTREAMER_SNAPSHOT: png, PRESTREAMER_EVAL: `(async () => { ${shot.scenario}\n return 'ok' })()`, ...(shot.media ? { PRESTREAMER_MEDIA_FILE: shot.media } : {}), ...(shot.env ? shot.env(userData) : {}) },
     encoding: 'utf8',
     timeout: 120_000,
   })

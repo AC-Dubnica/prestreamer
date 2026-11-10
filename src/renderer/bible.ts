@@ -1,6 +1,7 @@
 import type { PrestreamerApi } from '../preload'
 import { buildSlides, formatReference, parseReference, sliceVerses, type BibleImportResult, type BibleSummary, type BibleVerse, type ScriptureSlide } from '../shared/bible'
 import type { Look, Slide } from '../shared/types'
+import { t } from '../shared/i18n'
 import { confirmDialog } from './dialogs'
 import { iconButton } from './icons'
 import { scaledPreview, type ScaledPreview } from './slideview'
@@ -23,11 +24,8 @@ export interface BibleViewDeps {
 }
 
 const PER_SLIDE: { value: string; text: string }[] = [
-  { value: 'auto', text: 'Fit to the slide' },
-  { value: '1', text: '1 verse' },
-  { value: '2', text: '2 verses' },
-  { value: '3', text: '3 verses' },
-  { value: '4', text: '4 verses' },
+  { value: 'auto', text: t('bible.perSlide.fit') },
+  ...[1, 2, 3, 4].map((n) => ({ value: String(n), text: t('bible.perSlide.n', { n }) })),
 ]
 
 /**
@@ -89,10 +87,10 @@ export function createBibleView(root: HTMLElement, d: BibleViewDeps) {
 
   async function runImport(task: Promise<BibleImportResult[]>, nothingFound?: string): Promise<void> {
     const results = await task
-    if (!results.length) { say(nothingFound ?? 'Nothing was imported.', Boolean(nothingFound)); return render() }
+    if (!results.length) { say(nothingFound ?? t('bible.nothingImported'), Boolean(nothingFound)); return render() }
     const ok = results.filter((r) => r.status !== 'failed')
     const failed = results.filter((r) => r.status === 'failed')
-    say([ok.length ? `Imported: ${ok.map((r) => r.name).join(', ')}.` : '', ...failed.map((r) => `${r.file}: ${r.error}`)].filter(Boolean).join(' '), failed.length > 0 && ok.length === 0)
+    say([ok.length ? t('bible.imported', { names: ok.map((r) => r.name).join(', ') }) : '', ...failed.map((r) => `${r.file}: ${r.error}`)].filter(Boolean).join(' '), failed.length > 0 && ok.length === 0)
     await loadList()
     await loadChapter()
     render()
@@ -101,10 +99,10 @@ export function createBibleView(root: HTMLElement, d: BibleViewDeps) {
   async function importFromQuelea(): Promise<void> {
     const { folders, results } = await d.api.bibleImportQuelea()
     if (!folders.length) {
-      say("Quelea's Bible folder was not found on this computer. Use \"Choose files…\" and pick the .xml Bible files from your Quelea Bible folder (usually a folder named \"bibles\" inside \".quelea\" in your user folder).", true)
+      say(t('bible.quelea.notFound'), true)
       return render()
     }
-    await runImport(Promise.resolve(results), 'No Bible files were found in the Quelea folder.')
+    await runImport(Promise.resolve(results), t('bible.quelea.none'))
   }
 
   const activeRange = () => ({ a: sliceVerses(verses, from, to), b: sliceVerses(compareVerses, from, to) })
@@ -123,22 +121,22 @@ export function createBibleView(root: HTMLElement, d: BibleViewDeps) {
     const list = bibles.length
       ? bibles.map((b) => el('div', { className: `item ${b.id === versionId ? 'sel' : ''}`, onclick: async () => { versionId = b.id; if (compareId === b.id) compareId = ''; await loadChapter(); render() } },
           el('span', { className: 't', textContent: b.name }),
-          iconButton('trash', `Remove ${b.name}`, async (e) => {
+          iconButton('trash', t('bible.removeThing', { name: b.name }), async (e) => {
             e.stopPropagation()
-            if (await confirmDialog({ title: `Remove "${b.name}"?`, message: 'It is only removed from PreStreamer. You can import it again from its file.', confirm: 'Remove', danger: true })) {
+            if (await confirmDialog({ title: t('bible.removeAsk', { name: b.name }), message: t('bible.removeMsg'), confirm: t('bible.remove'), danger: true })) {
               bibles = await d.api.bibleRemove(b.id)
               await loadList()
               await loadChapter()
               render()
             }
           }, { size: 14 })))
-      : [el('div', { className: 'emptystate' }, el('p', { textContent: 'No Bible versions yet. Import the Bible files you use in Quelea (Zefania XML), for example Roháček or Ekumenický preklad.' }))]
+      : [el('div', { className: 'emptystate' }, el('p', { textContent: t('bible.noVersions') }))]
     return el('aside', {},
-      el('div', { className: 'head' }, 'Versions'),
+      el('div', { className: 'head' }, t('bible.versions')),
       ...list,
       el('div', { className: 'bimport' },
-        el('button', { className: bibles.length ? '' : 'primary', textContent: 'Import from Quelea', title: "Find Quelea's Bible folder and import every Bible in it", onclick: () => void importFromQuelea() }),
-        iconButton('book', 'Choose Bible files (Zefania XML)…', () => void runImport(d.api.bibleImportDialog()), { badge: true, label: 'Choose files…' })),
+        el('button', { className: bibles.length ? '' : 'primary', textContent: t('bible.importQuelea'), title: t('bible.importQueleaHint'), onclick: () => void importFromQuelea() }),
+        iconButton('book', t('bible.chooseHint'), () => void runImport(d.api.bibleImportDialog()), { badge: true, label: t('bible.chooseFiles') })),
       note ? el('div', { className: `status ${note.error ? 'error' : 'running'}`, textContent: note.text }) : el('span'),
     )
   }
@@ -146,15 +144,15 @@ export function createBibleView(root: HTMLElement, d: BibleViewDeps) {
   function main(): HTMLElement {
     const v = version()
     const b = book()
-    if (!v || !b) return el('div', { className: 'bmain' }, el('div', { className: 'row', textContent: 'Import a Bible version to start reading.' }))
+    if (!v || !b) return el('div', { className: 'bmain' }, el('div', { className: 'row', textContent: t('bible.startReading') }))
 
-    const ref = el<HTMLInputElement>('input', { type: 'text', value: refText, placeholder: 'Type a reference, e.g. Ján 3,16-18', title: 'Book, chapter and verses: Ján 3,16-18 · Jn 3:16 · 1 Kor 13' })
+    const ref = el<HTMLInputElement>('input', { type: 'text', value: refText, placeholder: t('bible.refPlaceholder'), title: t('bible.refHint') })
     ref.onkeydown = async (e) => {
       if (e.key !== 'Enter') return
       refText = ref.value
       const parsed = parseReference(ref.value, v.books)
-      if (!parsed) { say(`Could not understand "${ref.value}". Try a book name, a chapter and verses, like Ján 3,16-18.`, true); return render() }
-      if (parsed.chapter > v.books[parsed.bookIndex].chapters) { say(`${v.books[parsed.bookIndex].name} has only ${v.books[parsed.bookIndex].chapters} chapter${v.books[parsed.bookIndex].chapters === 1 ? '' : 's'}.`, true); return render() }
+      if (!parsed) { say(t('bible.refError', { ref: ref.value }), true); return render() }
+      if (parsed.chapter > v.books[parsed.bookIndex].chapters) { say(t('bible.onlyChapters', { book: v.books[parsed.bookIndex].name, n: v.books[parsed.bookIndex].chapters }), true); return render() }
       note = null
       await openPassage(parsed.bookIndex, parsed.chapter, parsed.from, parsed.to)
     }
@@ -162,7 +160,7 @@ export function createBibleView(root: HTMLElement, d: BibleViewDeps) {
     bookSel.append(...v.books.map((k, i) => el<HTMLOptionElement>('option', { value: String(i), textContent: k.name, selected: i === bookIdx })))
     bookSel.onchange = () => void openPassage(Number(bookSel.value), 1, null, null)
     const chapterSel = el<HTMLSelectElement>('select')
-    for (let c = 1; c <= b.chapters; c++) chapterSel.append(el<HTMLOptionElement>('option', { value: String(c), textContent: `Chapter ${c}`, selected: c === chapter }))
+    for (let c = 1; c <= b.chapters; c++) chapterSel.append(el<HTMLOptionElement>('option', { value: String(c), textContent: t('bible.chapter', { n: c }), selected: c === chapter }))
     chapterSel.onchange = () => void openPassage(bookIdx, Number(chapterSel.value), null, null)
     const step = (delta: number) => {
       const next = chapter + delta
@@ -170,8 +168,8 @@ export function createBibleView(root: HTMLElement, d: BibleViewDeps) {
       else if (delta > 0 && bookIdx + 1 < v.books.length) void openPassage(bookIdx + 1, 1, null, null)
       else if (delta < 0 && bookIdx > 0) void openPassage(bookIdx - 1, v.books[bookIdx - 1].chapters, null, null)
     }
-    const compareSel = el<HTMLSelectElement>('select', { title: 'Show a second version next to this one' })
-    compareSel.append(el<HTMLOptionElement>('option', { value: '', textContent: 'Compare with: none' }), ...bibles.filter((x) => x.id !== versionId).map((x) => el<HTMLOptionElement>('option', { value: x.id, textContent: x.name, selected: x.id === compareId })))
+    const compareSel = el<HTMLSelectElement>('select', { title: t('bible.compareHint') })
+    compareSel.append(el<HTMLOptionElement>('option', { value: '', textContent: t('bible.compareNone') }), ...bibles.filter((x) => x.id !== versionId).map((x) => el<HTMLOptionElement>('option', { value: x.id, textContent: x.name, selected: x.id === compareId })))
     compareSel.onchange = async () => { compareId = compareSel.value; scrollToSelection = true; await loadChapter(); render() } // extra lines shift the verses: keep the selection in view
 
     const inRange = (n: number) => (from === null || n >= from) && (to === null || n <= to)
@@ -179,7 +177,7 @@ export function createBibleView(root: HTMLElement, d: BibleViewDeps) {
     const verseRows = verses.map((vs) =>
       el('div', {
         className: `bverse ${inRange(vs.n) ? 'sel' : ''}`,
-        title: 'Click to choose a verse, Shift+click to extend the selection',
+        title: t('bible.verseHint'),
         onclick: (e: MouseEvent) => { if (e.shiftKey && from !== null) to = Math.max(vs.n, from); else { from = vs.n; to = vs.n } refText = formatReference(b.name, chapter, from, to); render() },
       }, el('span', { className: 'bnum', textContent: String(vs.n) }), el('span', {}, el('span', { textContent: vs.text }), compareByNumber.has(vs.n) ? el('span', { className: 'bcmp', textContent: compareByNumber.get(vs.n)! }) : el('span'))))
 
@@ -201,28 +199,28 @@ export function createBibleView(root: HTMLElement, d: BibleViewDeps) {
       pv.update(look, { label: sl.label, text: sl.text, background: d.background() ?? null }, 1920, 1080, false)
       const tag = el('div', { className: 'tag', textContent: sl.label })
       tag.style.background = '#0f766e'
-      return el('div', { className: 'card', title: 'Click to show on the screens', onclick: () => d.present({ label: sl.label, text: sl.text }) }, tag, pv.box)
+      return el('div', { className: 'card', title: t('bible.cardHint'), onclick: () => d.present({ label: sl.label, text: sl.text }) }, tag, pv.box)
     }))
 
     const first = sliceVerses(verses, from, to)
     const title = first.length ? `${formatReference(b.name, chapter, first[0].n, first[first.length - 1].n)} · ${[v.name, bibles.find((x) => x.id === compareId)?.name].filter(Boolean).join(' / ')}` : ''
-    const addBtn = iconButton('book', 'Add this reading to the current service', async () => {
+    const addBtn = iconButton('book', t('bible.addHint'), async () => {
       const service = await d.addReading(title, slides)
-      say(service ? `Added "${title}" to ${service}.` : 'Create a service in the Present tab first.', !service)
+      say(service ? t('bible.added', { title, service }) : t('bible.createService'), !service)
       render()
-    }, { badge: true, label: 'Add to service', className: 'primary', disabled: !slides.length })
+    }, { badge: true, label: t('bible.addLabel'), className: 'primary', disabled: !slides.length })
 
     return el('div', { className: 'bmain' },
       el('div', { className: 'bbar' }, ref, bookSel, chapterSel, compareSel),
       el('div', { className: 'bbar' },
-        el('button', { textContent: '‹ Previous chapter', onclick: () => step(-1) }),
-        el('button', { textContent: 'Next chapter ›', onclick: () => step(1) }),
-        el('button', { textContent: 'Whole chapter', onclick: () => { from = null; to = null; refText = formatReference(b.name, chapter, null, null); render() } }),
-        el('span', { className: 'dim', textContent: from === null ? 'Whole chapter selected' : `Verses ${from}${to !== from ? `–${to}` : ''} selected` })),
-      el('div', { className: 'bverses' }, ...(verseRows.length ? verseRows : [el('div', { className: 'row', textContent: 'This chapter has no text in this version.' })])),
+        el('button', { textContent: t('bible.prevChapter'), onclick: () => step(-1) }),
+        el('button', { textContent: t('bible.nextChapter'), onclick: () => step(1) }),
+        el('button', { textContent: t('bible.wholeChapter'), onclick: () => { from = null; to = null; refText = formatReference(b.name, chapter, null, null); render() } }),
+        el('span', { className: 'dim', textContent: from === null ? t('bible.wholeSelected') : t('bible.versesSelected', { range: `${from}${to !== from ? `–${to}` : ''}` }) })),
+      el('div', { className: 'bverses' }, ...(verseRows.length ? verseRows : [el('div', { className: 'row', textContent: t('bible.noText') })])),
       el('div', { className: 'bopts' },
-        el('label', {}, 'Slides: ', perSel), el('label', {}, numBox, ' verse numbers'), el('label', {}, refBox, ' reference on slide'), el('span', { className: 'grow' }), addBtn),
-      el('div', { className: 'head' }, `Slides (${slides.length})`),
+        el('label', {}, t('bible.slidesLabel'), perSel), el('label', {}, numBox, t('bible.verseNumbers')), el('label', {}, refBox, t('bible.referenceOnSlide')), el('span', { className: 'grow' }), addBtn),
+      el('div', { className: 'head' }, t('bible.slidesCount', { n: slides.length })),
       grid,
     )
   }

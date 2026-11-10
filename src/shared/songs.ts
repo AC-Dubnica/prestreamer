@@ -1,4 +1,5 @@
 import type { Background, Service, Slide, Song } from './types'
+import { t } from './i18n'
 
 /**
  * Song text format:
@@ -112,15 +113,15 @@ export function readingSlides(slides: { label: string; text: string }[], all: Ba
 
 /** The extra details a song can carry (the same ones Quelea has), in the order the editor lists them. */
 export const SONG_DETAIL_FIELDS = [
-  { key: 'number', label: 'Song number' },
-  { key: 'author', label: 'Author' },
-  { key: 'copyright', label: 'Copyright' },
-  { key: 'ccli', label: 'CCLI number' },
-  { key: 'year', label: 'Year' },
-  { key: 'publisher', label: 'Publisher' },
-  { key: 'key', label: 'Key' },
-  { key: 'capo', label: 'Capo' },
-  { key: 'notes', label: 'Notes' },
+  { key: 'number', label: t('songs.detail.number') },
+  { key: 'author', label: t('songs.detail.author') },
+  { key: 'copyright', label: t('songs.detail.copyright') },
+  { key: 'ccli', label: t('songs.detail.ccli') },
+  { key: 'year', label: t('songs.detail.year') },
+  { key: 'publisher', label: t('songs.detail.publisher') },
+  { key: 'key', label: t('songs.detail.key') },
+  { key: 'capo', label: t('songs.detail.capo') },
+  { key: 'notes', label: t('songs.detail.notes') },
 ] as const
 
 /** The per-slide pictures without entries for slides that no longer exist (the text was shortened) and without trailing blanks. */

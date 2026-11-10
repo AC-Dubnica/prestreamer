@@ -3,6 +3,7 @@
  * on the stream. Pure parts only: how a deck becomes slides, which converters to try, and the scripts that drive them.
  */
 import type { ServiceItem, Slide } from './types'
+import { t } from './i18n'
 
 export type PresentationItem = Extract<ServiceItem, { kind: 'presentation' }>
 
@@ -11,7 +12,7 @@ export const PRESENTATION_EXTENSIONS = ['pptx', 'ppt', 'pps', 'ppsx', 'key', 'od
 
 /** One slide per picture; the label ("Slide 3 / 12") is unique, so the live slide is never mistaken for another one. */
 export function presentationSlides(it: PresentationItem): Slide[] {
-  return it.slides.map((file, i) => ({ label: `Slide ${i + 1} / ${it.slides.length}`, text: '', picture: { file }, itemId: it.id }))
+  return it.slides.map((file, i) => ({ label: t('shared.presentation.slide', { n: i + 1, total: it.slides.length }), text: '', picture: { file }, itemId: it.id }))
 }
 
 export type Platform = 'darwin' | 'win32' | 'linux'
@@ -43,9 +44,9 @@ export function converterPlan(path: string, platform: Platform): Converter[] {
 /** Why a file cannot be imported, in words for the operator. */
 export function unsupportedMessage(path: string, platform: Platform): string {
   const ext = extOf(path)
-  if (ext === 'key' && platform !== 'darwin') return 'Keynote files can only be opened on a Mac. In Keynote choose File > Export To > PDF (or PowerPoint) and import that file instead.'
-  if (!PRESENTATION_EXTENSIONS.includes(ext)) return `PreStreamer cannot import .${ext || '?'} files. Use PowerPoint, Keynote, OpenDocument or PDF.`
-  return 'No program that can open this file was found. Export it as a PDF from the program you made it in and import the PDF.'
+  if (ext === 'key' && platform !== 'darwin') return t('shared.presentation.keynoteMac')
+  if (!PRESENTATION_EXTENSIONS.includes(ext)) return t('shared.presentation.badType', { ext: ext || '?' })
+  return t('shared.presentation.noProgram')
 }
 
 const appleString = (s: string): string => `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`

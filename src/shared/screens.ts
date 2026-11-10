@@ -1,4 +1,5 @@
 import { defaultLook, type MediaBackground, type Look, type ScreenConfig, type VideoSource } from './types'
+import { t } from './i18n'
 
 export const SCREEN_LIMITS = { width: [320, 7680], height: [240, 4320], fontSize: [16, 200], videoVolumeDb: [-60, 0] } as const
 
@@ -49,7 +50,7 @@ export const SIZE_PRESETS: { label: string; width: number; height: number }[] = 
   { label: '1080p · 1920×1080', width: 1920, height: 1080 },
   { label: '720p · 1280×720', width: 1280, height: 720 },
   { label: '4K · 3840×2160', width: 3840, height: 2160 },
-  { label: 'Vertical 1080×1920', width: 1080, height: 1920 },
+  { get label() { return t('settings.size.vertical') }, width: 1080, height: 1920 },
 ]
 
 /** A copy of the list with the item `delta` places up (-1) or down (+1), or null if it is unknown or already at that end. */

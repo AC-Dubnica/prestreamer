@@ -20,6 +20,8 @@ import { openScreenDialog } from './screen-dialog'
 import { createSettingsView } from './settings'
 import { ENCODER_CHOICES, defaultStreamSettings, type StreamSettings } from '../shared/stream-settings'
 import { scaledPreview, type ScaledPreview } from './slideview'
+import { t, formatNumber } from '../shared/i18n'
+import { translateDocument } from './i18n-dom'
 
 declare const prestreamer: PrestreamerApi
 
@@ -29,6 +31,13 @@ function el<T extends HTMLElement = HTMLElement>(tag: string, props: Partial<T> 
   const e = Object.assign(document.createElement(tag) as T, props)
   e.append(...kids)
   return e
+}
+
+translateDocument()
+{
+  // The hint above the screens has a gear symbol and bold text inside it, so its pieces are placed around markers.
+  const parts = t('operator.screens.hint', { gear: '\u0001', openAll: '\u0002' }).split(/([\u0001\u0002])/)
+  $('screenshint').replaceChildren(...parts.map((p) => (p === '\u0001' ? el('span', { className: 'gearhint', textContent: '⚙' }) : p === '\u0002' ? el('b', { textContent: t('operator.openAll.label') }) : p)))
 }
 
 const BACKGROUNDS = [
@@ -85,7 +94,7 @@ const currentService = (): Service | undefined => services.find((x) => x.id === 
 const selectedItem = (): ServiceItem | undefined => currentService()?.items.find((i) => i.id === selectedItemId)
 const songById = (id: string) => songs.find((x) => x.id === id)
 const songOfItem = (it: ServiceItem): Song | undefined => (it.kind === 'song' ? songById(it.songId) : undefined)
-const videoCue = (it: Extract<ServiceItem, { kind: 'video' }>): Slide => ({ label: 'Video', text: it.title, itemId: it.id, video: { file: it.file, title: it.title, durationSec: it.durationSec } })
+const videoCue = (it: Extract<ServiceItem, { kind: 'video' }>): Slide => ({ label: t('operator.video.label'), text: it.title, itemId: it.id, video: { file: it.file, title: it.title, durationSec: it.durationSec } })
 const currentSong = (): Song | undefined => {
   const it = selectedItem()
   if (it) return songOfItem(it)
@@ -132,33 +141,33 @@ async function mutateService(fn: (svc: Service) => void): Promise<void> {
 function renderSchedule(): void {
   const svc = currentService()
   const sel = $('servicesel') as HTMLSelectElement
-  sel.replaceChildren(...services.map((x) => el<HTMLOptionElement>('option', { value: x.id, textContent: `${x.name} · ${x.items.length} item${x.items.length === 1 ? '' : 's'}`, selected: x.id === svc?.id })))
+  sel.replaceChildren(...services.map((x) => el<HTMLOptionElement>('option', { value: x.id, textContent: t('operator.service.option', { name: x.name, n: x.items.length }), selected: x.id === svc?.id })))
   sel.disabled = !svc
   for (const b of serviceButtons.needsService) b.disabled = !svc
   if (!svc) {
     return $('schedule').replaceChildren(
-      el('div', { className: 'emptystate' }, el('p', { textContent: 'No service yet.' }), el('button', { className: 'primary', textContent: 'Create a service', onclick: () => void newService() })),
+      el('div', { className: 'emptystate' }, el('p', { textContent: t('operator.service.none') }), el('button', { className: 'primary', textContent: t('operator.service.create'), onclick: () => void newService() })),
     )
   }
 
   const liveItem = state.slide?.itemId
   const rows = svc.items.map((it, idx) => {
     const kind: IconName = it.kind === 'video' ? 'film' : it.kind === 'scripture' ? 'book' : it.kind === 'presentation' ? 'presentation' : 'music'
-    const title = it.kind === 'song' ? (songOfItem(it)?.title ?? '(deleted song)') : it.title
+    const title = it.kind === 'song' ? (songOfItem(it)?.title ?? t('operator.song.deleted')) : it.title
     const swap = (a: number, b: number) => void mutateService((d) => { [d.items[a], d.items[b]] = [d.items[b], d.items[a]] })
     const tool = (name: IconName, tip: string, fn: () => void, disabled = false) => iconButton(name, tip, (e) => { e.stopPropagation(); fn() }, { size: 14, disabled })
     const kindIcon = el('span', { className: 'kind' })
     kindIcon.innerHTML = iconSvg(kind, 15)
-    return el('div', { className: `srow ${it.id === selectedItemId ? 'sel' : ''}`, title: idx < 9 ? `Jump to this item: ${MOD_KEY}${idx + 1}. Then → or Space starts it.` : 'Jump to this item', onclick: () => jumpToItem(it.id) },
+    return el('div', { className: `srow ${it.id === selectedItemId ? 'sel' : ''}`, title: idx < 9 ? t('operator.run.jumpKey', { key: `${MOD_KEY}${idx + 1}` }) : t('operator.run.jump'), onclick: () => jumpToItem(it.id) },
       el('span', { className: `n ${it.id === liveItem ? 'livemark' : ''}`, textContent: it.id === liveItem ? '●' : String(idx + 1) }),
       kindIcon,
       el('span', { className: 't', textContent: title }),
-      tool('up', 'Move up', () => swap(idx - 1, idx), idx === 0),
-      tool('down', 'Move down', () => swap(idx, idx + 1), idx === svc.items.length - 1),
-      tool('x', 'Remove from service', () => { if (selectedItemId === it.id) selectedItemId = null; void mutateService((d) => { d.items.splice(idx, 1) }) }),
+      tool('up', t('operator.run.moveUp'), () => swap(idx - 1, idx), idx === 0),
+      tool('down', t('operator.run.moveDown'), () => swap(idx, idx + 1), idx === svc.items.length - 1),
+      tool('x', t('operator.run.remove'), () => { if (selectedItemId === it.id) selectedItemId = null; void mutateService((d) => { d.items.splice(idx, 1) }) }),
     )
   })
-  $('schedule').replaceChildren(...(rows.length ? rows : [el('div', { className: 'row', textContent: 'Empty. Use the song or video icon above to add items.' })]))
+  $('schedule').replaceChildren(...(rows.length ? rows : [el('div', { className: 'row', textContent: t('operator.run.empty') })]))
 }
 
 function renderLibrary(): void {
@@ -170,30 +179,30 @@ function renderLibrary(): void {
       return el('div', { className: `item ${x.id === editingId ? 'sel' : ''}`, onclick: () => startEdit(x) },
         ...(x.number ? [el('span', { className: 'num', textContent: x.number })] : []),
         el('span', { className: 't', textContent: x.title }),
-        ...(uses ? [el('span', { className: 'inservice', title: `In the current service${uses > 1 ? ` ${uses} times` : ''}`, textContent: uses > 1 ? `✓ ×${uses}` : '✓' })] : []),
-        iconButton('plus', 'Add to the current service', (e) => { e.stopPropagation(); void addSongToService(x.id) }, { size: 14, badge: false }),
+        ...(uses ? [el('span', { className: 'inservice', title: uses > 1 ? t('operator.library.inServiceTimes', { n: uses }) : t('operator.library.inService'), textContent: uses > 1 ? `✓ ×${uses}` : '✓' })] : []),
+        iconButton('plus', t('operator.library.add'), (e) => { e.stopPropagation(); void addSongToService(x.id) }, { size: 14, badge: false }),
       )
-    }) : [el('div', { className: 'row', textContent: songs.length ? 'No match.' : 'No songs yet.' })]),
+    }) : [el('div', { className: 'row', textContent: songs.length ? t('operator.common.noMatch') : t('operator.library.empty') })]),
   )
 }
 
 /** A short message at the bottom of the window, for changes that happen out of sight (a song added to a run sheet from the Songs tab). */
 let toastTimer: ReturnType<typeof setTimeout> | undefined
 function toast(text: string, error = false): void {
-  let t = document.getElementById('toast')
-  if (!t) { t = el('div', { id: 'toast', role: 'status' }); document.body.append(t) }
-  t.textContent = text
-  t.className = error ? 'show error' : 'show'
+  let box = document.getElementById('toast')
+  if (!box) { box = el('div', { id: 'toast', role: 'status' }); document.body.append(box) }
+  box.textContent = text
+  box.className = error ? 'show error' : 'show'
   clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => { t!.className = '' }, 2600)
+  toastTimer = setTimeout(() => { box!.className = '' }, 2600)
 }
 
 async function addSongToService(id: string): Promise<void> {
   const svc = currentService()
   const song = songById(id)
-  if (!svc) { toast('Create a service first: there is nowhere to add the song', true); return }
+  if (!svc) { toast(t('operator.toast.noService'), true); return }
   await mutateService((d) => { d.items.push({ id: crypto.randomUUID(), kind: 'song', songId: id }) })
-  toast(`Added "${song?.title ?? 'song'}" to ${svc.name} (item ${svc.items.length + 1})`)
+  toast(t('operator.toast.added', { title: song?.title ?? t('operator.song.fallback'), service: svc.name, n: svc.items.length + 1 }))
 }
 
 /** Opens a song in the editor of the Songs view (always a copy: nothing changes until Save). */
@@ -207,12 +216,12 @@ function startEdit(song: Song, isNew = false): void {
 /** Searchable picker so a song can be added to the run sheet without leaving the Present view. */
 function openSongPicker(): void {
   const modal = $('modal')
-  const input = el<HTMLInputElement>('input', { type: 'text', placeholder: 'Add which song?' })
+  const input = el<HTMLInputElement>('input', { type: 'text', placeholder: t('operator.picker.placeholder') })
   const list = el('div', { className: 'list' })
   const close = () => { modal.hidden = true; modal.replaceChildren() }
   const fill = () => {
     const shown = songs.filter((x) => songMatches(x, input.value))
-    list.replaceChildren(...(shown.length ? shown.map((x) => el('div', { className: 'item', onclick: () => { void addSongToService(x.id); close() } }, ...(x.number ? [el('span', { className: 'num', textContent: x.number })] : []), el('span', { className: 't', textContent: x.title }))) : [el('div', { className: 'row', textContent: 'No match.' })]))
+    list.replaceChildren(...(shown.length ? shown.map((x) => el('div', { className: 'item', onclick: () => { void addSongToService(x.id); close() } }, ...(x.number ? [el('span', { className: 'num', textContent: x.number })] : []), el('span', { className: 't', textContent: x.title }))) : [el('div', { className: 'row', textContent: t('operator.common.noMatch') })]))
   }
   input.oninput = fill
   input.onkeydown = (e) => { if (e.key === 'Escape') close(); else if (e.key === 'Enter') (list.firstElementChild as HTMLElement | null)?.click() }
@@ -225,16 +234,16 @@ function openSongPicker(): void {
 
 async function addVideoToService(): Promise<void> {
   const status = $('videostatus')
-  if (!currentService()) { status.textContent = 'Create a service first'; return }
+  if (!currentService()) { status.textContent = t('operator.service.createFirst'); return }
   status.className = 'status'
-  status.textContent = 'Choosing…'
+  status.textContent = t('operator.status.choosing')
   try {
     const v = await prestreamer.videoImport()
     if (v) await mutateService((svc) => { svc.items.push({ id: crypto.randomUUID(), kind: 'video', ...v }) })
     status.textContent = ''
   } catch (err) {
     status.className = 'status error'
-    status.textContent = `Import failed: ${(err as Error).message.replace(/^Error invoking remote method '[^']*': (Error: )?/, '')}`
+    status.textContent = t('operator.import.failed', { message: (err as Error).message.replace(/^Error invoking remote method '[^']*': (Error: )?/, '') })
   }
 }
 
@@ -260,7 +269,7 @@ async function forgetMedia(file: string): Promise<void> {
 /** Adds one or more pictures, each shown whole as a slide, like a presentation. */
 async function addPicturesToService(): Promise<void> {
   const status = $('videostatus')
-  if (!currentService()) { status.textContent = 'Create a service first'; return }
+  if (!currentService()) { status.textContent = t('operator.service.createFirst'); return }
   status.className = 'status'
   try {
     const pics = await prestreamer.picturesImport()
@@ -268,23 +277,23 @@ async function addPicturesToService(): Promise<void> {
     status.textContent = ''
   } catch (err) {
     status.className = 'status error'
-    status.textContent = `Import failed: ${(err as Error).message.replace(/^Error invoking remote method '[^']*': (Error: )?/, '')}`
+    status.textContent = t('operator.import.failed', { message: (err as Error).message.replace(/^Error invoking remote method '[^']*': (Error: )?/, '') })
   }
 }
 
 /** Adds a PowerPoint / Keynote / PDF deck: each slide becomes a picture, shown whole on every screen. */
 async function addPresentationToService(): Promise<void> {
   const status = $('videostatus')
-  if (!currentService()) { status.textContent = 'Create a service first'; return }
+  if (!currentService()) { status.textContent = t('operator.service.createFirst'); return }
   status.className = 'status'
-  status.textContent = 'Choosing…'
+  status.textContent = t('operator.status.choosing')
   try {
     const deck = await prestreamer.presentationImport()
     if (deck) await mutateService((svc) => { svc.items.push({ id: crypto.randomUUID(), kind: 'presentation', title: deck.title, slides: deck.slides }) })
     status.textContent = '' // the new item in the run sheet is the confirmation
   } catch (err) {
     status.className = 'status error'
-    status.textContent = `Import failed: ${(err as Error).message.replace(/^Error invoking remote method '[^']*': (Error: )?/, '')}`
+    status.textContent = t('operator.import.failed', { message: (err as Error).message.replace(/^Error invoking remote method '[^']*': (Error: )?/, '') })
   }
 }
 
@@ -349,20 +358,20 @@ function renderCenter(): void {
       card.append(tag, pv.box)
       if (edit) {
         const own = !!edit.ownOf(i)
-        card.append(iconButton('image', own ? 'This slide has its own picture or video. Click to change or remove it.' : 'A picture or video behind this slide only', (e) => { e.stopPropagation(); edit.forSlide(i) }, { size: 13, className: `cardbg ${own ? 'on' : ''}` }))
+        card.append(iconButton('image', own ? t('operator.bg.slideOwn') : t('operator.bg.slideOnly'), (e) => { e.stopPropagation(); edit.forSlide(i) }, { size: 13, className: `cardbg ${own ? 'on' : ''}` }))
       }
       grid.append(card)
     })
     return grid
   }
   /** The button in a section's title that sets one picture or video for all its slides at once. */
-  const allSlidesButton = (edit: BgEdit): HTMLElement => iconButton('image', `A picture or video behind all slides of ${edit.name}`, edit.forAll, { size: 14, label: 'Background' })
+  const allSlidesButton = (edit: BgEdit): HTMLElement => iconButton('image', t('operator.bg.allOf', { name: edit.name }), edit.forAll, { size: 14, label: t('operator.bg.label') })
 
   const songEdit = (song: Song): BgEdit => ({
     name: song.title,
     ownOf: (i) => song.slideBackgrounds?.[i] ?? null,
     forSlide: async (i) => {
-      const bg = await pickBackground(prestreamer, song.slideBackgrounds?.[i] && song.slideBackgrounds[i]!.kind !== 'css' ? song.slideBackgrounds[i] : null, { title: `Background for slide ${i + 1} only`, noneLabel: "Use the song's background", noneHint: 'This slide goes back to the background of the whole song', onDeleted: (f) => void forgetMedia(f) })
+      const bg = await pickBackground(prestreamer, song.slideBackgrounds?.[i] && song.slideBackgrounds[i]!.kind !== 'css' ? song.slideBackgrounds[i] : null, { title: t('operator.bg.forSlide', { n: i + 1 }), noneLabel: t('operator.bg.useSong'), noneHint: t('operator.bg.songHint'), onDeleted: (f) => void forgetMedia(f) })
       if (bg === undefined) return
       const slideBackgrounds = withSlideBackground(song.slideBackgrounds, i, bg)
       songs = await prestreamer.songsSave({ ...song, slideBackgrounds })
@@ -370,7 +379,7 @@ function renderCenter(): void {
       renderAll()
     },
     forAll: async () => {
-      const bg = await pickBackground(prestreamer, song.background && song.background.kind !== 'css' ? song.background : null, { title: `Background for all slides of ${song.title}`, onDeleted: (f) => void forgetMedia(f) })
+      const bg = await pickBackground(prestreamer, song.background && song.background.kind !== 'css' ? song.background : null, { title: t('operator.bg.forAll', { name: song.title }), onDeleted: (f) => void forgetMedia(f) })
       if (bg === undefined) return
       songs = await prestreamer.songsSave({ ...song, background: bg, slideBackgrounds: [] }) // one picture for every slide: the single-slide ones are reset
       if (editing?.song.id === song.id) { editing.song.background = bg; editing.song.slideBackgrounds = [] }
@@ -381,12 +390,12 @@ function renderCenter(): void {
     name: it.title,
     ownOf: (i) => it.slideBackgrounds?.[i] ?? null,
     forSlide: async (i) => {
-      const bg = await pickBackground(prestreamer, it.slideBackgrounds?.[i] && it.slideBackgrounds[i]!.kind !== 'css' ? it.slideBackgrounds[i] : null, { title: `Background for slide ${i + 1} only`, noneLabel: "Use the reading's background", onDeleted: (f) => void forgetMedia(f) })
+      const bg = await pickBackground(prestreamer, it.slideBackgrounds?.[i] && it.slideBackgrounds[i]!.kind !== 'css' ? it.slideBackgrounds[i] : null, { title: t('operator.bg.forSlide', { n: i + 1 }), noneLabel: t('operator.bg.useReading'), onDeleted: (f) => void forgetMedia(f) })
       if (bg === undefined) return
       void mutateService((svc) => { const x = svc.items.find((n) => n.id === it.id); if (x?.kind === 'scripture') x.slideBackgrounds = withSlideBackground(x.slideBackgrounds, i, bg) })
     },
     forAll: async () => {
-      const bg = await pickBackground(prestreamer, it.background && it.background.kind !== 'css' ? it.background : null, { title: `Background for all slides of ${it.title}`, onDeleted: (f) => void forgetMedia(f) })
+      const bg = await pickBackground(prestreamer, it.background && it.background.kind !== 'css' ? it.background : null, { title: t('operator.bg.forAll', { name: it.title }), onDeleted: (f) => void forgetMedia(f) })
       if (bg === undefined) return
       void mutateService((svc) => { const x = svc.items.find((n) => n.id === it.id); if (x?.kind === 'scripture') { x.background = bg; x.slideBackgrounds = [] } })
     },
@@ -401,8 +410,8 @@ function renderCenter(): void {
   if (!items.length) {
     // No service items yet: show the song being browsed, so there is always something to look at.
     const song = currentSong()
-    if (!song) return root.replaceChildren(el('div', { className: 'row', textContent: 'Select an item in the run sheet, or add songs in the Songs tab.' }))
-    sections.push(section(null, [song.title, iconButton('pencil', 'Edit this song', () => startEdit(song), { className: 'ml' })], [slideGrid(songSlides(song))]))
+    if (!song) return root.replaceChildren(el('div', { className: 'row', textContent: t('operator.center.empty') }))
+    sections.push(section(null, [song.title, iconButton('pencil', t('operator.song.edit'), () => startEdit(song), { className: 'ml' })], [slideGrid(songSlides(song))]))
   }
   for (const it of items) {
     if (it.kind === 'video') {
@@ -416,7 +425,7 @@ function renderCenter(): void {
       const song = songOfItem(it)
       if (!song) continue
       const edit = songEdit(song)
-      sections.push(section(it.id, [song.title, iconButton('pencil', 'Edit this song', () => startEdit(song), { className: 'ml' }), allSlidesButton(edit)], [slideGrid(songSlides(song, it.id), edit)]))
+      sections.push(section(it.id, [song.title, iconButton('pencil', t('operator.song.edit'), () => startEdit(song), { className: 'ml' }), allSlidesButton(edit)], [slideGrid(songSlides(song, it.id), edit)]))
     }
   }
   // Room after the last item, so that item too can be scrolled up to the top.
@@ -446,14 +455,14 @@ const playbackPosition = (): number =>
 let transport: { toggle: HTMLButtonElement; seek: HTMLInputElement; time: HTMLElement; file: string; dragging: boolean } | null = null
 
 function updateTransport(): void {
-  const t = transport
-  if (!t) return
-  const mine = playback.file === t.file
+  const tr = transport
+  if (!tr) return
+  const mine = playback.file === tr.file
   const playingNow = mine && playback.playing
-  t.toggle.innerHTML = `${iconSvg(playingNow ? 'pause' : 'play', 14)}<span>${playingNow ? 'Pause' : 'Play'}</span>`
+  tr.toggle.innerHTML = `${iconSvg(playingNow ? 'pause' : 'play', 14)}<span>${playingNow ? t('operator.video.pause') : t('operator.video.play')}</span>`
   const pos = mine ? playbackPosition() : 0
-  if (!t.dragging) t.seek.value = String(pos)
-  t.time.textContent = `${fmtTime(pos)} / ${fmtTime(Number(t.seek.max))}`
+  if (!tr.dragging) tr.seek.value = String(pos)
+  tr.time.textContent = `${fmtTime(pos)} / ${fmtTime(Number(tr.seek.max))}`
 }
 setInterval(updateTransport, 250)
 
@@ -464,7 +473,7 @@ function renderVideoPanel(it: Extract<ServiceItem, { kind: 'video' }>, ref: Scre
 
   const pv = scaledPreview()
   if (ref) pv.update(ref.look, cue, 1920, 1080, false)
-  const tag = el('div', { className: 'tag', textContent: `Video · ${fmtTime(it.durationSec)}` })
+  const tag = el('div', { className: 'tag', textContent: t('operator.video.tag', { time: fmtTime(it.durationSec) }) })
   tag.style.background = '#0f766e'
   const card = el('div', { className: `card vcard ${isLive() ? 'live' : ''}`, onclick: () => prestreamer.showSlide(cue) }, tag, pv.box)
 
@@ -473,22 +482,22 @@ function renderVideoPanel(it: Extract<ServiceItem, { kind: 'video' }>, ref: Scre
     if (!isLive()) await prestreamer.showSlide(cue) // first press brings the video up on the screens
     await prestreamer.playbackCommand({ type: playback.file === it.file && playback.playing ? 'pause' : 'play' })
   }
-  const stop = iconButton('stop', 'Stop and rewind', async () => { if (isLive()) await prestreamer.playbackCommand({ type: 'stop' }) }, { size: 14, label: 'Stop' })
-  const show = el('button', { textContent: 'Show on screens', onclick: () => prestreamer.showSlide(cue) })
+  const stop = iconButton('stop', t('operator.video.stopRewind'), async () => { if (isLive()) await prestreamer.playbackCommand({ type: 'stop' }) }, { size: 14, label: t('operator.video.stop') })
+  const show = el('button', { textContent: t('operator.video.show'), onclick: () => prestreamer.showSlide(cue) })
   const seek = el<HTMLInputElement>('input', { type: 'range', min: '0', max: String(it.durationSec), step: '0.1', value: '0' })
   const time = el('span', { className: 'time' })
-  const t = { toggle, seek, time, file: it.file, dragging: false }
+  const tp = { toggle, seek, time, file: it.file, dragging: false }
   let lastSeek = 0
-  seek.onpointerdown = () => { t.dragging = true }
-  seek.onpointerup = () => { t.dragging = false }
+  seek.onpointerdown = () => { tp.dragging = true }
+  seek.onpointerup = () => { tp.dragging = false }
   seek.oninput = async () => {
     if (Date.now() - lastSeek < 80) return // throttle while scrubbing
     lastSeek = Date.now()
     if (!isLive()) await prestreamer.showSlide(cue)
     await prestreamer.playbackCommand({ type: 'seek', sec: Number(seek.value) })
   }
-  if (selected || !transport) transport = t
-  const panel = el('div', {}, el('div', { className: 'vpanel' }, card, el('div', { className: 'vt' }, toggle, stop, show, seek, time)), el('div', { className: 'row', textContent: 'Space plays or pauses a video that is on screen. → moves on to the next item and stops it. Sound plays from the screen with "Play video sound" on.' }))
+  if (selected || !transport) transport = tp
+  const panel = el('div', {}, el('div', { className: 'vpanel' }, card, el('div', { className: 'vt' }, toggle, stop, show, seek, time)), el('div', { className: 'row', textContent: t('operator.video.help') }))
   updateTransport()
   return panel
 }
@@ -497,7 +506,7 @@ function renderVideoPanel(it: Extract<ServiceItem, { kind: 'video' }>, ref: Scre
 function showEditor(): void {
   const ref = state.screens.find((x) => x.id === selectedScreenId) ?? state.screens[0]
   if (editing) renderEditor($('songeditor'), ref)
-  else $('songeditor').replaceChildren(el('div', { className: 'row', textContent: 'Select a song, or create a new one with the + icon.' }))
+  else $('songeditor').replaceChildren(el('div', { className: 'row', textContent: t('operator.editor.select') }))
 }
 
 /** Song editor: title, background (gradient / imported image / imported video), text, live preview. */
@@ -510,11 +519,11 @@ function renderEditor(root: HTMLElement, ref: ScreenConfig | undefined): void {
   body.oninput = () => { updatePreview(); renderStripSoon(); markDirty() }
 
   // What a song carries is saved with it by Save: its text, pictures and videos (for the whole song and for single slides) and details.
-  const snapshot = (x: Song): string => JSON.stringify([x.title.trim() || 'Untitled', x.body, x.background ?? null, trimSlideBackgrounds(x.slideBackgrounds, parseSong(x).length), SONG_DETAIL_FIELDS.map((f) => x[f.key] ?? '')])
+  const snapshot = (x: Song): string => JSON.stringify([x.title.trim() || t('operator.song.untitled'), x.body, x.background ?? null, trimSlideBackgrounds(x.slideBackgrounds, parseSong(x).length), SONG_DETAIL_FIELDS.map((f) => x[f.key] ?? '')])
   const dirtyNote = el('span', { className: 'dim dirty' })
   const markDirty = () => {
     const saved = songs.find((x) => x.id === draft.id)
-    dirtyNote.textContent = editing!.isNew || !saved || snapshot(saved) !== snapshot({ ...draft, body: body.value }) ? 'Unsaved changes' : ''
+    dirtyNote.textContent = editing!.isNew || !saved || snapshot(saved) !== snapshot({ ...draft, body: body.value }) ? t('operator.editor.unsaved') : ''
   }
 
   const pv = scaledPreview()
@@ -526,7 +535,7 @@ function renderEditor(root: HTMLElement, ref: ScreenConfig | undefined): void {
     draft.body = body.value
     const list = parseSong(draft)
     selSlide = Math.min(selSlide, Math.max(0, list.length - 1))
-    const cur = list[selSlide] ?? { label: 'Preview', text: 'Type some text', background: draft.background }
+    const cur = list[selSlide] ?? { label: t('operator.editor.preview'), text: t('operator.editor.sample'), background: draft.background }
     pv.update(previewLook(), withDefaults(cur), 1920, 1080, true)
   }
 
@@ -547,9 +556,9 @@ function renderEditor(root: HTMLElement, ref: ScreenConfig | undefined): void {
       const tag = el('div', { className: 'tag', textContent: sl.label })
       tag.style.background = sectionColor(sl.label)
       const card = el('div', { className: `card ${i === selSlide ? 'pick' : ''}`, onclick: () => { selSlide = i; updatePreview(); renderStrip() } }, tag, small.box)
-      card.append(iconButton('image', own ? 'This slide has its own picture or video, saved with the song. Click to change or remove it.' : 'A picture or video behind this slide only, saved with the song', async (e) => {
+      card.append(iconButton('image', own ? t('operator.editor.slideOwn') : t('operator.editor.slideOnly'), async (e) => {
         e.stopPropagation()
-        const bg = await pickBackground(prestreamer, draft.slideBackgrounds?.[i] && draft.slideBackgrounds[i]!.kind !== 'css' ? draft.slideBackgrounds[i] : null, { title: `Background for slide ${i + 1} only`, noneLabel: "Use the song's background", onDeleted: (f) => void forgetMedia(f) })
+        const bg = await pickBackground(prestreamer, draft.slideBackgrounds?.[i] && draft.slideBackgrounds[i]!.kind !== 'css' ? draft.slideBackgrounds[i] : null, { title: t('operator.bg.forSlide', { n: i + 1 }), noneLabel: t('operator.bg.useSong'), onDeleted: (f) => void forgetMedia(f) })
         if (bg === undefined) return
         draft.slideBackgrounds = withSlideBackground(draft.slideBackgrounds, i, bg)
         selSlide = i
@@ -557,7 +566,7 @@ function renderEditor(root: HTMLElement, ref: ScreenConfig | undefined): void {
       }, { size: 13, className: `cardbg ${own ? 'on' : ''}` }))
       return card
     }))
-    if (!list.length) strip.replaceChildren(el('div', { className: 'dim', textContent: 'Slides appear here as you type.' }))
+    if (!list.length) strip.replaceChildren(el('div', { className: 'dim', textContent: t('operator.editor.slidesEmpty') }))
   }
   const renderStripSoon = () => { if (stripTimer) clearTimeout(stripTimer); stripTimer = setTimeout(renderStrip, 300) }
 
@@ -567,8 +576,8 @@ function renderEditor(root: HTMLElement, ref: ScreenConfig | undefined): void {
   void prestreamer.mediaList().then((list) => { mediaNames = new Map(list.map((m) => [m.file, m.name])); renderBgLabel() })
   const renderBgLabel = () => {
     const b = draft.background
-    if (b && b.kind !== 'css') bgLabel.replaceChildren(mediaThumb(b), el('span', { textContent: `${b.kind === 'image' ? 'Picture' : 'Video'}: ${mediaNames.get(b.file) ?? b.file.slice(0, 8)}` }))
-    else bgLabel.replaceChildren(el('span', { textContent: !b ? 'none' : 'gradient / colour' }))
+    if (b && b.kind !== 'css') bgLabel.replaceChildren(mediaThumb(b), el('span', { textContent: t('operator.bg.current', { kind: b.kind === 'image' ? t('operator.bg.picture') : t('operator.bg.video'), name: mediaNames.get(b.file) ?? b.file.slice(0, 8) }) }))
+    else bgLabel.replaceChildren(el('span', { textContent: !b ? t('operator.bg.none') : t('operator.bg.gradient') }))
   }
   const swatches = el('div', { className: 'sw nopad' })
   for (const css of BACKGROUNDS) {
@@ -576,18 +585,18 @@ function renderEditor(root: HTMLElement, ref: ScreenConfig | undefined): void {
     b.style.background = css
     swatches.append(b)
   }
-  const chooseBtn = iconButton('screen', 'Choose a picture or a looping video from your library, or import a new one', async () => {
-    const bg = await pickBackground(prestreamer, draft.background && draft.background.kind !== 'css' ? draft.background : null, { title: 'Background for all slides of this song', onDeleted: (f) => void forgetMedia(f) })
+  const chooseBtn = iconButton('screen', t('operator.bg.choose'), async () => {
+    const bg = await pickBackground(prestreamer, draft.background && draft.background.kind !== 'css' ? draft.background : null, { title: t('operator.bg.forAllThis'), onDeleted: (f) => void forgetMedia(f) })
     if (bg !== undefined) { setBackground(bg); void prestreamer.mediaList().then((list) => { mediaNames = new Map(list.map((m) => [m.file, m.name])); renderBgLabel() }) }
-  }, { badge: true, label: 'Picture or video…' })
+  }, { badge: true, label: t('operator.bg.pictureOrVideo') })
 
-  const del = iconButton('trash', 'Delete song', async () => {
+  const del = iconButton('trash', t('operator.editor.delete'), async () => {
     // A song that was never saved is only a draft: nothing to confirm.
     if (!editing?.isNew) {
       const ok = await confirmDialog({
-        title: `Delete "${draft.title}"?`,
-        message: 'The song and its slides are removed from the library. A run sheet that uses it will show "(deleted song)" in its place.',
-        confirm: 'Delete song',
+        title: t('operator.editor.deleteTitle', { title: draft.title }),
+        message: t('operator.editor.deleteMessage'),
+        confirm: t('operator.editor.delete'),
         danger: true,
       })
       if (!ok) return
@@ -597,27 +606,27 @@ function renderEditor(root: HTMLElement, ref: ScreenConfig | undefined): void {
     editing = songs[0] ? { song: structuredClone(songs[0]), isNew: false } : null
     renderAll()
     showEditor()
-  }, { label: 'Delete' })
-  const save = iconButton('save', 'Save song', async () => {
+  }, { label: t('operator.common.delete') })
+  const save = iconButton('save', t('operator.editor.save'), async () => {
     draft.body = body.value
-    draft.title = title.value.trim() || 'Untitled'
+    draft.title = title.value.trim() || t('operator.song.untitled')
     draft.slideBackgrounds = trimSlideBackgrounds(draft.slideBackgrounds, parseSong(draft).length)
     songs = await prestreamer.songsSave(draft)
     songId = draft.id
     editing = { song: structuredClone(draft), isNew: false }
     renderAll()
     showEditor()
-  }, { className: 'primary', label: 'Save' })
-  const revert = iconButton('undo', 'Discard unsaved changes', () => {
+  }, { className: 'primary', label: t('operator.common.save') })
+  const revert = iconButton('undo', t('operator.editor.discard'), () => {
     const saved = songs.find((x) => x.id === draft.id)
     editing = saved ? { song: structuredClone(saved), isNew: false } : null
     renderAll()
     showEditor()
-  }, { label: 'Revert' })
-  const addToService = iconButton('music', 'Add this song to the current service', () => void addSongToService(draft.id), { badge: true, label: 'Add to service', className: 'primary', disabled: editing!.isNew })
+  }, { label: t('operator.editor.revert') })
+  const addToService = iconButton('music', t('operator.editor.addTip'), () => void addSongToService(draft.id), { badge: true, label: t('operator.editor.add'), className: 'primary', disabled: editing!.isNew })
 
   // The same details Quelea keeps with a song (author, copyright, CCLI, ...), so nothing is lost when songs come over from Quelea.
-  const details = el<HTMLDetailsElement>('details', { className: 'sdetails' }, el('summary', { textContent: 'Song details: number, author, copyright, CCLI, key, capo, notes' }),
+  const details = el<HTMLDetailsElement>('details', { className: 'sdetails' }, el('summary', { textContent: t('operator.editor.details') }),
     el('div', { className: 'sdgrid' }, ...SONG_DETAIL_FIELDS.flatMap((f) => {
       const input = el<HTMLInputElement>('input', { type: 'text', value: draft[f.key] ?? '', maxLength: 200 })
       input.oninput = () => { if (input.value) draft[f.key] = input.value; else delete draft[f.key]; markDirty() }
@@ -627,14 +636,14 @@ function renderEditor(root: HTMLElement, ref: ScreenConfig | undefined): void {
 
   const form = el('div', { className: 'editor' })
   form.append(
-    el('div', { className: 'field' }, el('label', { textContent: 'Title' }), title),
-    el('div', { className: 'field' }, el('label', { textContent: 'Background' }), bgLabel, swatches,
-      el('div', { className: 'btns' }, el('button', { textContent: 'None', onclick: () => setBackground(null) }), chooseBtn)),
-    el('div', { className: 'field' }, el('label', { textContent: 'Text — [Label] starts a section, a blank line starts a new slide' }), body),
+    el('div', { className: 'field' }, el('label', { textContent: t('operator.editor.title') }), title),
+    el('div', { className: 'field' }, el('label', { textContent: t('operator.bg.label') }), bgLabel, swatches,
+      el('div', { className: 'btns' }, el('button', { textContent: t('operator.common.none'), onclick: () => setBackground(null) }), chooseBtn)),
+    el('div', { className: 'field' }, el('label', { textContent: t('operator.editor.text') }), body),
     details,
     el('div', { className: 'btns' }, save, revert, ...(editing!.isNew ? [] : [del]), dirtyNote, el('span', { className: 'grow' }), addToService),
   )
-  root.replaceChildren(el('h1', { textContent: editing!.isNew ? 'New song' : draft.title }), el('div', { className: 'editorwrap' }, form, el('div', { className: 'editorprev' }, el('label', { textContent: 'Preview' }), pv.box, el('label', { textContent: 'Slides — the picture button sets a picture or video for one slide' }), strip, el('div', { className: 'dim', textContent: 'Pictures and videos are saved with the song, by slide position: adding or removing a slide above one shifts them.' }))))
+  root.replaceChildren(el('h1', { textContent: editing!.isNew ? t('operator.song.new') : draft.title }), el('div', { className: 'editorwrap' }, form, el('div', { className: 'editorprev' }, el('label', { textContent: t('operator.editor.preview') }), pv.box, el('label', { textContent: t('operator.editor.slides') }), strip, el('div', { className: 'dim', textContent: t('operator.editor.slidesNote') }))))
   renderBgLabel()
   updatePreview()
   renderStrip()
@@ -650,7 +659,7 @@ const cards = new Map<string, Card>()
 
 function createCard(): Card {
   const pv = scaledPreview()
-  const off = el('div', { className: 'off', textContent: 'OFF' })
+  const off = el('div', { className: 'off', textContent: t('operator.screens.off') })
   const bar = el('div', { className: 'bar' })
   const root = el('div', { className: 'screen' }, bar, el('div', { className: 'pv' }, pv.box, off))
   const grip = el<HTMLButtonElement>('button', { className: 'grip', textContent: '⠿' })
@@ -764,17 +773,17 @@ function renderScreens(): void {
     }
 
     const ndi = sc.kind === 'ndi' ? state.ndi[sc.id] : undefined
-    const target = ndi?.state === 'error' ? `NDI: ${ndi.message}` : shown !== sc ? `mirrors ${shown.name}` : sc.kind === 'virtual' ? `virtual ${w}×${h}` : sc.kind === 'ndi' ? `NDI ${w}×${h}` : sc.displayId === null ? 'window' : (state.displays.find((d) => d.id === sc.displayId)?.label ?? sc.displayLabel ?? 'display')
-    c.grip.title = `Drag to change the order of the screens (or press ↑ ↓ on this handle). The order is the same in Settings.`
-    c.grip.setAttribute('aria-label', `Move ${sc.name}`)
+    const target = ndi?.state === 'error' ? `NDI: ${ndi.message}` : shown !== sc ? t('operator.screens.mirrors', { name: shown.name }) : sc.kind === 'virtual' ? t('operator.screens.virtual', { size: `${w}×${h}` }) : sc.kind === 'ndi' ? `NDI ${w}×${h}` : sc.displayId === null ? t('operator.screens.window') : (state.displays.find((d) => d.id === sc.displayId)?.label ?? sc.displayLabel ?? t('operator.screens.display'))
+    c.grip.title = t('operator.screens.dragTip')
+    c.grip.setAttribute('aria-label', t('operator.screens.move', { name: sc.name }))
     c.bar.replaceChildren(
       c.grip,
-      iconButton(folded ? 'chevronDown' : 'chevronUp', folded ? `Show the preview of ${sc.name}` : `Fold the preview of ${sc.name} away`, () => toggleFolded(sc.id), { size: 15, className: 'fold' }),
+      iconButton(folded ? 'chevronDown' : 'chevronUp', folded ? t('operator.screens.unfold', { name: sc.name }) : t('operator.screens.fold', { name: sc.name }), () => toggleFolded(sc.id), { size: 15, className: 'fold' }),
       el('span', { className: `dot ${live ? 'on' : ''}` }),
       el('span', { className: 'name', textContent: sc.name }),
       el('span', { className: 'meta', textContent: target, title: ndi ? ndi.message : `${w}×${h}` }),
-      iconButton('gear', shown !== sc ? `${sc.name} mirrors ${shown.name}: opens the settings of ${shown.name}` : `Settings for ${sc.name}: background, text, video, sound`, () => configureScreen(shown.id), { size: 15 }),
-      el('button', { className: live ? 'danger' : 'primary', textContent: live ? 'Close' : 'Open', title: live ? `Close ${sc.name}` : `Open ${sc.name} on its display (or in a window)`, onclick: () => void toggleScreen(sc.id) }),
+      iconButton('gear', shown !== sc ? t('operator.screens.mirrorSettings', { name: sc.name, other: shown.name }) : t('operator.screens.settings', { name: sc.name }), () => configureScreen(shown.id), { size: 15 }),
+      el('button', { className: live ? 'danger' : 'primary', textContent: live ? t('operator.screens.close') : t('operator.screens.open'), title: live ? t('operator.screens.closeTip', { name: sc.name }) : t('operator.screens.openTip', { name: sc.name }), onclick: () => void toggleScreen(sc.id) }),
     )
   }
 
@@ -789,7 +798,7 @@ async function detectCameras(): Promise<void> {
     const probe = await navigator.mediaDevices.getUserMedia({ video: true })
     probe.getTracks().forEach((t) => t.stop())
   } catch (err) {
-    streamStatus = { ...streamStatus, message: `Camera access failed: ${(err as Error).message}` }
+    streamStatus = { ...streamStatus, message: t('operator.camera.failed', { message: (err as Error).message }) }
     renderStream()
     return
   }
@@ -818,19 +827,19 @@ const cell = (label: string) => {
 }
 const healthUi = {
   dot: el('span', { className: 'hdot' }),
-  label: el('b', { textContent: 'Not streaming' }),
+  label: el('b', { textContent: t('operator.health.idle') }),
   sub: el('span', { className: 'hsub' }),
-  bitrate: cell('Bitrate'),
-  fps: cell('Frame rate'),
-  dropped: cell('Dropped frames'),
-  speed: cell('Encoding speed'),
-  data: cell('Sent'),
-  canvas: el<HTMLCanvasElement>('canvas', { className: 'spark', title: 'Bitrate over the last two minutes; the dashed line is the target' }),
+  bitrate: cell(t('operator.health.bitrate')),
+  fps: cell(t('operator.health.frameRate')),
+  dropped: cell(t('operator.health.dropped')),
+  speed: cell(t('operator.health.speed')),
+  data: cell(t('operator.health.sent')),
+  canvas: el<HTMLCanvasElement>('canvas', { className: 'spark', title: t('operator.health.sparkTip') }),
   advice: el('div', { className: 'hadvice' }),
 }
 
 /** Camera only: the stream shows nothing but the live camera (no text, slide media, videos or announcements). */
-const cameraButton = iconButton('camera', 'Camera only: stream just the live camera, without text, slide backgrounds, videos or announcements. The room screens are not affected. Click again to bring them back.', () => void prestreamer.setCameraOnly(!state.cameraOnly), { size: 15 })
+const cameraButton = iconButton('camera', t('operator.camera.tip'), () => void prestreamer.setCameraOnly(!state.cameraOnly), { size: 15 })
 
 const COLLAPSE_KEY = 'prestreamer.streamCollapsed'
 const STATS_KEY = 'prestreamer.statsCollapsed'
@@ -859,18 +868,18 @@ function setSection(head: HTMLElement, body: HTMLElement, collapsed: boolean, na
   body.classList.toggle('collapsed', collapsed)
   head.classList.toggle('closed', collapsed)
   head.setAttribute('aria-expanded', String(!collapsed))
-  head.title = collapsed ? `Click to show the ${name} section` : `Click to collapse the ${name} section`
+  head.title = collapsed ? t('operator.section.show', { name }) : t('operator.section.collapse', { name })
 }
 function applyCollapse(): void {
-  setSection($('streamtools').parentElement!, $('stream'), streamCollapsed, 'Stream')
-  setSection(healthHead, $('healthsec'), statsCollapsed, 'Stream health')
-  healthHead.title = statsCollapsed ? 'Click to show the full statistics' : 'Click to collapse the statistics'
+  setSection($('streamtools').parentElement!, $('stream'), streamCollapsed, t('operator.stream.head'))
+  setSection(healthHead, $('healthsec'), statsCollapsed, t('operator.health.head'))
+  healthHead.title = statsCollapsed ? t('operator.health.show') : t('operator.health.collapse')
   setSection($('atemtools').parentElement!, $('atem'), atemCollapsed, 'ATEM')
-  setSection($('dmxtools').parentElement!, $('dmx'), dmxCollapsed, 'DMX lighting')
+  setSection($('dmxtools').parentElement!, $('dmx'), dmxCollapsed, t('operator.dmx.head'))
 }
 
 // The title sits above the panel like "Stream" does; the rating (dot and word) is on its right.
-const healthHead = el('div', { className: 'head', id: 'healthtitle' }, el('span', { textContent: 'Stream health' }), el('span', { className: 'tools hrating' }, healthUi.dot, healthUi.label))
+const healthHead = el('div', { className: 'head', id: 'healthtitle' }, el('span', { textContent: t('operator.health.head') }), el('span', { className: 'tools hrating' }, healthUi.dot, healthUi.label))
 const healthRoot = el('div', { className: 'health' },
   el('div', { className: 'hhead' }, healthUi.sub),
   el('div', { className: 'hgrid' }, healthUi.bitrate.root, healthUi.fps.root, healthUi.dropped.root, healthUi.speed.root, healthUi.data.root),
@@ -878,7 +887,8 @@ const healthRoot = el('div', { className: 'health' },
   healthUi.advice,
 )
 
-const fmt = (n: number) => n.toLocaleString('en-US')
+const fmt = (n: number) => formatNumber(n)
+const fixed = (n: number, digits: number) => formatNumber(n, { minimumFractionDigits: digits, maximumFractionDigits: digits })
 const clock = (sec: number) => [Math.floor(sec / 3600), Math.floor(sec / 60) % 60, sec % 60].map((n) => String(n).padStart(2, '0')).join(':')
 
 function drawSpark(history: number[], target: number): void {
@@ -913,32 +923,32 @@ function renderHealth(): void {
   const bad = (cellEl: { root: HTMLElement }, isBad: boolean) => cellEl.root.classList.toggle('bad', isBad)
   if (streamStatus.state !== 'running' || !st) {
     healthUi.dot.className = 'hdot'
-    healthUi.label.textContent = 'Not streaming'
-    healthUi.sub.textContent = `${s.height}p${s.fps} · ${fmt(s.videoKbps)} kb/s video + ${s.audioKbps} kb/s audio · ${encoderLabel}`
+    healthUi.label.textContent = t('operator.health.idle')
+    healthUi.sub.textContent = t('operator.health.idleSub', { res: `${s.height}p${s.fps}`, video: fmt(s.videoKbps), audio: s.audioKbps, encoder: encoderLabel })
     for (const c of [healthUi.bitrate, healthUi.fps, healthUi.dropped, healthUi.speed, healthUi.data]) { c.value.textContent = '—'; c.sub.textContent = ''; bad(c, false) }
-    healthUi.bitrate.sub.textContent = `target ${fmt(s.videoKbps + s.audioKbps)} kb/s`
+    healthUi.bitrate.sub.textContent = t('operator.health.target', { value: fmt(s.videoKbps + s.audioKbps) })
     healthUi.advice.textContent = ''
     drawSpark([], s.videoKbps + s.audioKbps)
     return
   }
   healthUi.dot.className = `hdot ${st.health}`
-  healthUi.label.textContent = { good: 'Good', warn: 'Unstable', poor: 'Poor', idle: 'Not streaming' }[st.health]
-  healthUi.sub.textContent = `LIVE ${clock(st.uptimeSec)} · ${st.encoder} · ${st.width}×${st.height} @ ${st.targetFps}`
-  healthUi.bitrate.value.textContent = `${fmt(st.bitrateKbps)} kb/s`
-  healthUi.bitrate.sub.textContent = `target ${fmt(st.targetKbps)} kb/s`
-  healthUi.fps.value.textContent = `${st.fps.toFixed(1)} fps`
-  healthUi.fps.sub.textContent = `target ${st.targetFps}`
+  healthUi.label.textContent = { good: t('operator.health.good'), warn: t('operator.health.warn'), poor: t('operator.health.poor'), idle: t('operator.health.idle') }[st.health]
+  healthUi.sub.textContent = t('operator.health.liveSub', { time: clock(st.uptimeSec), encoder: st.encoder, width: st.width, height: st.height, fps: st.targetFps })
+  healthUi.bitrate.value.textContent = t('operator.health.kbps', { value: fmt(st.bitrateKbps) })
+  healthUi.bitrate.sub.textContent = t('operator.health.target', { value: fmt(st.targetKbps) })
+  healthUi.fps.value.textContent = t('operator.health.fps', { value: fixed(st.fps, 1) })
+  healthUi.fps.sub.textContent = t('operator.health.targetFps', { value: st.targetFps })
   healthUi.dropped.value.textContent = fmt(st.droppedFrames)
-  healthUi.dropped.sub.textContent = `${st.recentDropPercent}% in 30 s · ${st.dropPercent60}% in 60 s`
-  healthUi.speed.value.textContent = st.speed === null ? '—' : `${st.speed.toFixed(2)}×`
-  healthUi.speed.sub.textContent = '1.00× is real time'
-  healthUi.data.value.textContent = `${(st.sizeBytes / 1e6).toFixed(1)} MB`
+  healthUi.dropped.sub.textContent = t('operator.health.dropSub', { recent: st.recentDropPercent, sixty: st.dropPercent60 })
+  healthUi.speed.value.textContent = st.speed === null ? '—' : t('operator.health.speedValue', { value: fixed(st.speed, 2) })
+  healthUi.speed.sub.textContent = t('operator.health.realTime')
+  healthUi.data.value.textContent = t('operator.health.mb', { value: fixed(st.sizeBytes / 1e6, 1) })
   bad(healthUi.dropped, st.recentDropPercent > 1)
   bad(healthUi.speed, st.speed !== null && st.speed < 0.98)
   healthUi.advice.textContent =
     st.health === 'good' ? ''
-    : st.speed !== null && st.speed < 0.98 ? 'The encoder is falling behind. In Settings → Stream, lower the resolution, frame rate or bitrate, or choose hardware encoding.'
-    : 'Frames are being dropped, so the connection may be too slow for this bitrate. In Settings → Stream, lower the bitrate.'
+    : st.speed !== null && st.speed < 0.98 ? t('operator.health.adviceSlow')
+    : t('operator.health.adviceDrop')
   drawSpark(st.history, st.targetKbps)
 }
 
@@ -965,7 +975,7 @@ function buildStream(): void {
       if (active) await prestreamer.streamStop()
       else {
         const screen = streamScreen()
-        if (!screen) throw new Error('There is no virtual screen to stream: add one in Settings → Screens')
+        if (!screen) throw new Error(t('operator.stream.noScreenError'))
         if (audioStatus.state !== 'running') await setMixerRunning(true) // start the mixer first if it has something to run
         await prestreamer.streamStart({ screenId: screen.id, mode: streamSettings.mode, audio: 'mixer' })
         renderStream()
@@ -991,33 +1001,33 @@ function renderStream(): void {
   // Say plainly what Start will do: which screen goes where.
   const missingKey = youtube && !keySaved
   streamUi.summary.replaceChildren(
-    el('div', {}, screen ? `${screen.name} (${streamSettings.width}×${streamSettings.height}) → ` : 'No virtual screen to send', el('b', { textContent: screen ? (youtube ? 'YouTube' : 'a file on this computer') : '' })),
-    ...(missingKey ? [el('div', { className: 'streamwarn', textContent: 'No stream key yet. Add it in Settings → Stream.' })] : []),
+    el('div', {}, screen ? t('operator.stream.summaryTo', { name: screen.name, width: streamSettings.width, height: streamSettings.height }) : t('operator.stream.noScreen'), el('b', { textContent: screen ? (youtube ? 'YouTube' : t('operator.stream.toFile')) : '' })),
+    ...(missingKey ? [el('div', { className: 'streamwarn', textContent: t('operator.stream.noKey') })] : []),
   )
   streamUi.button.disabled = !active && (!screen || missingKey)
-  streamUi.button.textContent = active ? 'Stop streaming' : youtube ? 'Start streaming' : 'Start recording'
+  streamUi.button.textContent = active ? t('operator.stream.stop') : youtube ? t('operator.stream.start') : t('operator.stream.record')
   streamUi.button.className = active ? 'danger' : 'primary'
   // Only said when something is wrong: normally the mixer's master simply is the stream's sound.
   const audioOk = audioStatus.state === 'running'
   streamUi.audio.hidden = audioOk
   streamUi.audio.className = 'status warn'
-  streamUi.audio.textContent = 'The mixer has not started, so the stream is silent. Open the Mixer tab to see why.'
+  streamUi.audio.textContent = t('operator.stream.mixerOff')
   cameraButton.classList.toggle('primary', state.cameraOnly)
   cameraButton.setAttribute('aria-pressed', String(state.cameraOnly))
   const target = screen
   const noCamera = target && target.look.source.type === 'none'
   streamUi.cameraNote.className = `status ${state.cameraOnly && noCamera ? 'warn' : ''}`
   streamUi.cameraNote.textContent = state.cameraOnly
-    ? noCamera ? `Camera only is ON, but "${target.name}" has no live source, so the stream is black. Pick a camera in its screen settings.` : 'Camera only is ON: the stream shows just the camera. Text, videos and announcements still show in the room.'
+    ? noCamera ? t('operator.camera.noSource', { name: target.name }) : t('operator.camera.on')
     : ''
   renderHealth()
   streamUi.status.className = `status ${streamStatus.state}`
   const secs = streamStatus.startedAt ? Math.floor((Date.now() - streamStatus.startedAt) / 1000) : 0
   streamUi.status.textContent =
     streamStatus.state === 'running'
-      ? `● LIVE → ${streamStatus.target}\n${secs}s · ${streamStatus.frames} frames · ${streamStatus.dropped} dropped`
+      ? t('operator.stream.live', { target: streamStatus.target ?? '', secs, frames: streamStatus.frames, dropped: streamStatus.dropped })
       : streamStatus.state === 'starting'
-        ? 'Starting…'
+        ? t('operator.stream.starting')
         : streamStatus.message
 }
 
@@ -1036,7 +1046,7 @@ async function refreshAudioDevices(requestPermission: boolean): Promise<void> {
       probe.getTracks().forEach((t) => t.stop())
       devices = await navigator.mediaDevices.enumerateDevices()
     } catch (err) {
-      audioStatus = { state: 'error', message: `Microphone access failed: ${(err as Error).message}`, channelCount: 0 }
+      audioStatus = { state: 'error', message: t('operator.audio.micFailed', { message: (err as Error).message }), channelCount: 0 }
       return renderAudio()
     }
   }
@@ -1202,16 +1212,16 @@ const bibleView = createBibleView($('view-bible'), {
 // --- Tabs, toolbars and global handlers ----------------------------------------------------------
 
 const TABS: { view: View; icon: IconName; label: string }[] = [
-  { view: 'present', icon: 'present', label: 'Present' },
-  { view: 'monitor', icon: 'screen', label: 'Monitor' },
-  { view: 'songs', icon: 'songs', label: 'Songs' },
-  { view: 'bible', icon: 'book', label: 'Bible' },
-  { view: 'mixer', icon: 'sliders', label: 'Mixer' },
-  { view: 'settings', icon: 'gear', label: 'Settings' },
+  { view: 'present', icon: 'present', label: t('operator.tab.present') },
+  { view: 'monitor', icon: 'screen', label: t('operator.tab.monitor') },
+  { view: 'songs', icon: 'songs', label: t('operator.tab.songs') },
+  { view: 'bible', icon: 'book', label: t('operator.tab.bible') },
+  { view: 'mixer', icon: 'sliders', label: t('operator.tab.mixer') },
+  { view: 'settings', icon: 'gear', label: t('operator.tab.settings') },
 ]
 
 function renderTabs(): void {
-  $('tabs').replaceChildren(...TABS.map((t) => iconButton(t.icon, t.label, () => setView(t.view), { label: t.label, className: view === t.view ? 'on' : '' })))
+  $('tabs').replaceChildren(...TABS.map((tab) => iconButton(tab.icon, tab.label, () => setView(tab.view), { label: tab.label, className: view === tab.view ? 'on' : '' })))
 }
 
 function applyView(): void {
@@ -1247,14 +1257,14 @@ async function saveAndSelect(svc: Service): Promise<void> {
 }
 
 async function newService(): Promise<void> {
-  const name = await askText({ title: 'New service', label: 'Name of the service', value: `Sunday ${today()}`, confirm: 'Create' })
+  const name = await askText({ title: t('operator.service.new'), label: t('operator.service.nameLabel'), value: t('operator.service.defaultName', { date: today() }), confirm: t('operator.service.createButton') })
   if (name) await saveAndSelect({ id: crypto.randomUUID(), name, items: [] })
 }
 
 async function renameService(): Promise<void> {
   const svc = currentService()
   if (!svc) return
-  const name = await askText({ title: 'Rename service', label: 'Name of the service', value: svc.name, confirm: 'Rename' })
+  const name = await askText({ title: t('operator.service.renameTitle'), label: t('operator.service.nameLabel'), value: svc.name, confirm: t('operator.service.renameButton') })
   if (name && name !== svc.name) await mutateService((d) => { d.name = name })
 }
 
@@ -1262,7 +1272,7 @@ async function renameService(): Promise<void> {
 async function duplicateService(): Promise<void> {
   const svc = currentService()
   if (!svc) return
-  const name = await askText({ title: 'Duplicate service', label: 'Name for the copy', value: `${svc.name} (copy)`, confirm: 'Duplicate' })
+  const name = await askText({ title: t('operator.service.duplicateTitle'), label: t('operator.service.copyLabel'), value: t('operator.service.copyName', { name: svc.name }), confirm: t('operator.service.duplicateButton') })
   if (name) await saveAndSelect({ id: crypto.randomUUID(), name, items: svc.items.map((it) => ({ ...it, id: crypto.randomUUID() })) })
 }
 
@@ -1271,9 +1281,9 @@ async function deleteService(): Promise<void> {
   if (!svc) return
   const n = svc.items.length
   const ok = await confirmDialog({
-    title: `Delete "${svc.name}"?`,
-    message: `This removes the service and its run sheet (${n} item${n === 1 ? '' : 's'}). The songs and videos themselves stay in your library.`,
-    confirm: 'Delete service',
+    title: t('operator.service.deleteTitle', { name: svc.name }),
+    message: t('operator.service.deleteMessage', { n }),
+    confirm: t('operator.service.deleteButton'),
     danger: true,
   })
   if (!ok) return
@@ -1287,19 +1297,19 @@ const serviceButtons = {
   needsService: [] as HTMLButtonElement[],
 }
 {
-  const rename = iconButton('pencil', 'Rename this service', () => void renameService())
-  const duplicate = iconButton('copy', 'Duplicate this service (start from a copy)', () => void duplicateService())
-  const remove = iconButton('trash', 'Delete this service', () => void deleteService())
+  const rename = iconButton('pencil', t('operator.service.renameTip'), () => void renameService())
+  const duplicate = iconButton('copy', t('operator.service.duplicateTip'), () => void duplicateService())
+  const remove = iconButton('trash', t('operator.service.deleteTip'), () => void deleteService())
   serviceButtons.needsService.push(rename, duplicate, remove)
-  $('svctools').append(iconButton('plus', 'New service', () => void newService()), rename, duplicate, remove)
+  $('svctools').append(iconButton('plus', t('operator.service.new'), () => void newService()), rename, duplicate, remove)
 }
-$('addtools').append(iconButton('music', 'Add a song to the run sheet', openSongPicker, { badge: true }), iconButton('film', 'Add a video to the run sheet', () => void addVideoToService(), { badge: true }), iconButton('presentation', 'Add a presentation (PowerPoint, Keynote or PDF) to the run sheet', () => void addPresentationToService(), { badge: true }), iconButton('image', 'Add pictures to the run sheet: each is shown whole, as a slide', () => void addPicturesToService(), { badge: true }))
+$('addtools').append(iconButton('music', t('operator.add.song'), openSongPicker, { badge: true }), iconButton('film', t('operator.add.video'), () => void addVideoToService(), { badge: true }), iconButton('presentation', t('operator.add.presentation'), () => void addPresentationToService(), { badge: true }), iconButton('image', t('operator.add.pictures'), () => void addPicturesToService(), { badge: true }))
 /** Brings in the songs of a Quelea export (a ZIP of song PDFs); songs the library already has are skipped. */
 async function importSongs(): Promise<void> {
   const out = $('songimport')
   out.hidden = false
   out.className = 'status'
-  out.textContent = 'Reading the songs…'
+  out.textContent = t('operator.songs.reading')
   try {
     const done = await prestreamer.songsImport()
     if (!done) { out.hidden = true; return }
@@ -1307,10 +1317,10 @@ async function importSongs(): Promise<void> {
     if (!songs.some((s) => s.id === songId)) songId = songs[0]?.id ?? ''
     renderAll()
     const { added, skipped, unreadable } = done.result
-    out.textContent = `Added ${added} song${added === 1 ? '' : 's'}, skipped ${skipped} already in the library or repeated in the file${unreadable.length ? `, ${unreadable.length} without lyrics (${unreadable.slice(0, 3).join(', ')}${unreadable.length > 3 ? '…' : ''})` : ''}.`
+    out.textContent = t('operator.songs.imported', { n: added, skipped, unreadable: unreadable.length ? t('operator.songs.unreadable', { count: unreadable.length, list: `${unreadable.slice(0, 3).join(', ')}${unreadable.length > 3 ? '…' : ''}` }) : '' })
   } catch (err) {
     out.className = 'status error'
-    out.textContent = `Import failed: ${(err as Error).message.replace(/^Error invoking remote method '[^']*': (Error: )?/, '')}`
+    out.textContent = t('operator.import.failed', { message: (err as Error).message.replace(/^Error invoking remote method '[^']*': (Error: )?/, '') })
   }
 }
 /** Writes the whole library as a Quelea song pack (.qsp). */
@@ -1318,25 +1328,25 @@ async function exportSongs(): Promise<void> {
   const out = $('songimport')
   out.hidden = false
   out.className = 'status'
-  if (!songs.length) { out.textContent = 'There are no songs to export.'; return }
+  if (!songs.length) { out.textContent = t('operator.songs.noneToExport'); return }
   try {
     const done = await prestreamer.songsExport()
     if (!done) { out.hidden = true; return }
-    out.textContent = `Exported ${done.count} song${done.count === 1 ? '' : 's'} to ${done.path}`
+    out.textContent = t('operator.songs.exported', { n: done.count, path: done.path })
   } catch (err) {
     out.className = 'status error'
-    out.textContent = `Export failed: ${(err as Error).message.replace(/^Error invoking remote method '[^']*': (Error: )?/, '')}`
+    out.textContent = t('operator.songs.exportFailed', { message: (err as Error).message.replace(/^Error invoking remote method '[^']*': (Error: )?/, '') })
   }
 }
 
 /** Removes every song from the library (after asking). Run sheets keep their entries, which then show "(deleted song)". */
 async function clearLibrary(): Promise<void> {
   const out = $('songimport')
-  if (!songs.length) { out.hidden = false; out.className = 'status'; out.textContent = 'The library is already empty.'; return }
+  if (!songs.length) { out.hidden = false; out.className = 'status'; out.textContent = t('operator.songs.alreadyEmpty'); return }
   const ok = await confirmDialog({
-    title: `Delete all ${songs.length} songs?`,
-    message: 'The whole song library is emptied. This cannot be undone, so export it first if you may want it back. Run sheets that use these songs will show "(deleted song)" in their place.',
-    confirm: 'Delete all songs',
+    title: t('operator.songs.clearTitle', { n: songs.length }),
+    message: t('operator.songs.clearMessage'),
+    confirm: t('operator.songs.clearButton'),
     danger: true,
   })
   if (!ok) return
@@ -1347,9 +1357,9 @@ async function clearLibrary(): Promise<void> {
   showEditor()
   out.hidden = false
   out.className = 'status'
-  out.textContent = 'The library is empty.'
+  out.textContent = t('operator.songs.nowEmpty')
 }
-$('songtools').append(iconButton('import', 'Import songs from Quelea (a song pack .qsp, or a ZIP of song PDFs); songs already in the library are skipped', () => void importSongs()), iconButton('export', 'Export all songs as a Quelea song pack (.qsp)', () => void exportSongs()), iconButton('trash', 'Delete all songs from the library', () => void clearLibrary()), iconButton('plus', 'New song', () => startEdit({ id: crypto.randomUUID(), title: 'New song', body: '[Verse 1]\n\n', background: { kind: 'css', css: BACKGROUNDS[0] } }, true)))
+$('songtools').append(iconButton('import', t('operator.songs.importTip'), () => void importSongs()), iconButton('export', t('operator.songs.exportTip'), () => void exportSongs()), iconButton('trash', t('operator.songs.clearTip'), () => void clearLibrary()), iconButton('plus', t('operator.song.new'), () => startEdit({ id: crypto.randomUUID(), title: t('operator.song.new'), body: '[Verse 1]\n\n', background: { kind: 'css', css: BACKGROUNDS[0] } }, true)))
 /** Opens the live announcement popup. */
 function openAnnounce(): void {
   openAnnounceDialog({ api: prestreamer, getState: () => state, getQuick: () => quickMessages, setQuick: (list) => { quickMessages = list }, only: monitorView.single() })
@@ -1362,7 +1372,7 @@ async function toggleScreen(id: string): Promise<void> {
   if (!state.live.includes(id)) return void prestreamer.setLive(id, true)
   const streaming = streamStatus.state === 'running' || streamStatus.state === 'starting'
   if (streaming && sc.kind === 'virtual' && streamScreen()?.id === id) {
-    const ok = await confirmDialog({ title: `Close ${sc.name}?`, message: 'The stream is being made from this screen. Closing it stops the picture going out. Stop the stream first unless you mean it.', confirm: `Close ${sc.name}`, danger: true })
+    const ok = await confirmDialog({ title: t('operator.screens.closeTitle', { name: sc.name }), message: t('operator.screens.closeStreamMessage'), confirm: t('operator.screens.closeConfirm', { name: sc.name }), danger: true })
     if (!ok) return
   }
   void prestreamer.setLive(id, false)
@@ -1376,9 +1386,9 @@ async function openAllScreens(): Promise<void> {
   const covering = closed.filter((s) => s.kind === 'display' && s.displayId !== null && s.displayId === mainDisplay?.id)
   if (covering.length) {
     const ok = await confirmDialog({
-      title: 'Open all screens?',
-      message: `${covering.map((s) => s.name).join(', ')} is set to your main display, which is where this window is. Once open, it covers these controls. Change its display in Settings first, or continue.`,
-      confirm: 'Open them all',
+      title: t('operator.openAll.title'),
+      message: t('operator.openAll.message', { names: covering.map((s) => s.name).join(', ') }),
+      confirm: t('operator.openAll.confirm'),
     })
     if (!ok) return
   }
@@ -1391,15 +1401,15 @@ async function closeAllScreens(): Promise<void> {
   if (!open.length) return
   const streaming = streamStatus.state === 'running' || streamStatus.state === 'starting'
   const ok = await confirmDialog({
-    title: 'Close all screens?',
-    message: `This closes ${open.map((s) => s.name).join(', ')}. The audience loses the picture.${streaming ? '\n\nYou are streaming right now: closing the stream screen stops the picture going out. Stop the stream first unless you mean it.' : ''}`,
-    confirm: 'Close all screens',
+    title: t('operator.closeAll.title'),
+    message: t('operator.closeAll.message', { names: open.map((s) => s.name).join(', '), streaming: streaming ? t('operator.closeAll.streaming') : '' }),
+    confirm: t('operator.closeAll.label'),
     danger: true,
   })
   if (ok) for (const s of open) await prestreamer.setLive(s.id, false)
 }
-const openAllButton = iconButton('screen', 'Open every screen that is closed: audience displays and the stream screen', () => void openAllScreens(), { label: 'Open all screens', className: 'openall' })
-const closeAllButton = iconButton('stop', 'Close every open screen, including the stream screen. Asks first.', () => void closeAllScreens(), { label: 'Close all screens', className: 'closeall' })
+const openAllButton = iconButton('screen', t('operator.openAll.tip'), () => void openAllScreens(), { label: t('operator.openAll.label'), className: 'openall' })
+const closeAllButton = iconButton('stop', t('operator.closeAll.tip'), () => void closeAllScreens(), { label: t('operator.closeAll.label'), className: 'closeall' })
 
 /** The Logo button: puts the logo chosen in Settings on every screen, or takes it off again. */
 function toggleLogo(): void {
@@ -1407,12 +1417,12 @@ function toggleLogo(): void {
   if (!logo) return
   void prestreamer.showSlide(isLogoSlide(state.slide, appearance) ? null : logo)
 }
-const logoButton = iconButton('image', '', toggleLogo, { label: 'Logo', className: 'logobtn' })
+const logoButton = iconButton('image', '', toggleLogo, { label: t('operator.logo.label'), className: 'logobtn' })
 function renderLogoButton(): void {
   const on = isLogoSlide(state.slide, appearance)
   logoButton.disabled = !appearance.logo
   logoButton.classList.toggle('primary', on)
-  logoButton.title = !appearance.logo ? 'Choose a logo in Settings first' : on ? 'Take the logo off the screens (L)' : 'Show the logo on every screen (L)'
+  logoButton.title = !appearance.logo ? t('operator.logo.choose') : on ? t('operator.logo.off') : t('operator.logo.on')
   logoButton.setAttribute('aria-label', logoButton.title)
   logoButton.setAttribute('aria-pressed', String(on))
 }
@@ -1426,21 +1436,21 @@ function renderAnnounceIndicator(): void {
   const a = state.announcement
   btn.hidden = !a
   if (!a) return
-  btn.textContent = `● ANNOUNCEMENT LIVE · Clear`
-  btn.title = `On air: ${a.text}`
+  btn.textContent = t('operator.announce.live')
+  btn.title = t('operator.announce.onAir', { text: a.text })
 }
 $('announcelive').onclick = () => void prestreamer.announceClear()
 
 $('headbtns').append(
-  iconButton('bell', 'Live announcement (A)', openAnnounce, { label: 'Announce', className: 'announcebtn' }),
+  iconButton('bell', t('operator.announce.tip'), openAnnounce, { label: t('operator.announce.label'), className: 'announcebtn' }),
   logoButton,
-  iconButton('x', 'Take the current slide off every screen. The screens stay open. (Esc)', () => void prestreamer.showSlide(null), { label: 'Clear slide' }),
+  iconButton('x', t('operator.clear.tip'), () => void prestreamer.showSlide(null), { label: t('operator.clear.label') }),
   openAllButton,
   closeAllButton,
 )
 
 prestreamer.onPresentationStatus((message) => { $('videostatus').className = 'status'; $('videostatus').textContent = message })
-prestreamer.onVideoProgress((pct) => { $('videostatus').className = 'status'; $('videostatus').textContent = `Converting… ${pct}%` })
+prestreamer.onVideoProgress((pct) => { $('videostatus').className = 'status'; $('videostatus').textContent = t('operator.video.converting', { pct }) })
 prestreamer.onPlayback((st) => { playback = st; cards.forEach((c) => c.pv.setPlayback(st)); updateTransport(); renderSchedule() })
 prestreamer.playbackGet().then((st) => { playback = st })
 void refreshAudioDevices(false)

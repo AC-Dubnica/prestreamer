@@ -1,4 +1,5 @@
 import { compOutDb, eqResponseDb, gateOutDb, normToValue, snap, valueToNorm } from '../shared/curves'
+import { t } from '../shared/i18n'
 import { RANGES, clamp, type CompConfig, type EqConfig, type GateConfig } from '../shared/mixer'
 
 const W = 300
@@ -134,7 +135,7 @@ export function eqGraph(eq: EqConfig, onEdit: () => void): EqGraph {
     redraw()
     onEdit()
   }
-  c.title = 'Drag a dot to change its frequency and gain. Scroll over the middle dot to change its width (Q). While sound plays: the shaded area is the sound coming out, the thin line the sound going in.'
+  c.title = t('mixer.graph.eq')
   redraw()
   return { el: c, redraw, setLive(l) { live = l; redraw() } }
 }
@@ -184,7 +185,7 @@ export function transferGraph(fn: () => (inDb: number) => number, thresholdDb: (
       g.beginPath(); g.arc(lx, ly, 4.5, 0, Math.PI * 2); g.fill()
     }
   }
-  c.title = 'Horizontal: level going in. Vertical: level coming out. The dashed line is "no change". While sound plays, the red dot is the sound right now: how far it sits below the dashed line is how much is taken off.'
+  c.title = t('mixer.graph.curve')
   redraw()
   return {
     el: c, redraw,

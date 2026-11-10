@@ -1,8 +1,9 @@
 import { spawn } from 'node:child_process'
 import { existsSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
-import { dmxPortCandidates, DMX_UNSUPPORTED, isDmxPort } from '../shared/dmx'
+import { dmxPortCandidates, dmxUnsupported, isDmxPort } from '../shared/dmx'
 import type { DmxDeps, DmxLink, DmxLinkEvents } from './dmx'
+import { t } from '../shared/i18n'
 
 /** The sender program (src/native/dmxsend.c, compiled by build.mjs). It sits unpacked next to the asar in an installed app. */
 function helperPath(): string {
@@ -24,8 +25,8 @@ export function realDmxDeps(opts: { fakeFile?: string; disabledReason?: string }
     },
     unavailable: () => {
       if (opts.disabledReason) return opts.disabledReason
-      if (platform !== 'darwin' && platform !== 'linux') return DMX_UNSUPPORTED
-      if (!existsSync(helperPath())) return 'The DMX sender is missing from this build (it is compiled from src/native/dmxsend.c).'
+      if (platform !== 'darwin' && platform !== 'linux') return dmxUnsupported()
+      if (!existsSync(helperPath())) return t('main.dmx.senderMissing')
       return null
     },
     now: () => Date.now(),
@@ -43,11 +44,11 @@ export function realDmxDeps(opts: { fakeFile?: string; disabledReason?: string }
         log = (log + d.toString()).slice(-600)
         if (!ready && /^READY$/m.test(log)) { ready = true; events.ready() }
       })
-      proc.on('error', (err) => { if (!closed) events.failed(`The DMX sender could not start: ${err.message}`) })
+      proc.on('error', (err) => { if (!closed) events.failed(t('main.dmx.cannotStart', { error: err.message })) })
       proc.on('close', () => {
         if (closed) return
         const why = /^ERROR (.*)$/m.exec(log)?.[1]
-        events.failed(why ? `The DMX interface does not work: ${why}` : 'The DMX sender stopped.')
+        events.failed(why ? t('main.dmx.notWorking', { why }) : t('main.dmx.stopped'))
       })
       return {
         write: (slots) => { if (!closed && !proc.stdin!.writableNeedDrain) proc.stdin!.write(slots) },

@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, protocol, session } from 'electron'
+import './early-language' // first: it sets the language before other modules build text as they load
 import { homedir } from 'node:os'
 import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -24,6 +25,8 @@ import { exportSongs, pickSongsZip, songsFromZip } from './song-import'
 import { defaultSession, fitBounds, safeToRestore, sanitizeSession, type Session } from '../shared/session'
 import { defaultAppearance, forgetAppearanceMedia, sanitizeAppearance, type Appearance } from '../shared/appearance'
 import { AtemController, realAtemClient } from './atem'
+import { resolveLanguage, sanitizeLanguageSetting, setLanguage, t, type LanguageSetting } from '../shared/i18n'
+import { savedLanguageSetting, startupLanguage } from './language'
 import { DmxController } from './dmx'
 import { realDmxDeps } from './dmx-helper'
 import { defaultDmxSettings, sanitizeDmxSettings, type DmxCommand } from '../shared/dmx'
@@ -68,6 +71,9 @@ let audio: AudioBridge
 let playback: Playback
 let atem: AtemController
 let dmx: DmxController
+// Interface language: the saved choice, else the computer's. Tests and the dev hooks stay in English unless PRESTREAMER_LANG says otherwise.
+let languageSetting: LanguageSetting = 'auto'
+let language = resolveLanguage('auto', 'en')
 
 // App-wide look: the song and scripture backgrounds and the logo (appearance.json).
 const appearancePath = () => join(userData(), 'appearance.json')
@@ -170,7 +176,7 @@ function presentSlide(slide: Slide | null): void {
 
 async function startStream(req: StreamStartRequest): Promise<void> {
   const cfg = screens.getState().screens.find((s) => s.id === req.screenId)
-  if (!cfg || cfg.kind !== 'virtual') throw new Error('Streaming needs a virtual screen')
+  if (!cfg || cfg.kind !== 'virtual') throw new Error(t('main.stream.needsVirtual'))
   if (!screens.getState().live.includes(cfg.id)) screens.setLive(cfg.id, true)
 
   // PRESTREAMER_RTMP_URL points the stream at a local RTMP server (the end-to-end tests run one), never at YouTube.
@@ -181,10 +187,10 @@ async function startStream(req: StreamStartRequest): Promise<void> {
     const typed = req.streamKey?.trim()
     if (typed) streamKey.save(typed)
     key = typed || streamKey.load() || ''
-    if (!key) throw new Error('No stream key yet: add it in Settings → Stream, under Destination')
+    if (!key) throw new Error(t('main.stream.noKey'))
   }
   const target = testServer
-    ? { url: testServer, format: 'flv' as const, label: 'Local RTMP server (test)' }
+    ? { url: testServer, format: 'flv' as const, label: t('main.stream.localTest') }
     : req.mode === 'youtube'
       ? youtubeTarget(key)
       : fileTarget(req.filePath || join(app.getPath('videos'), `PreStreamer ${new Date().toISOString().slice(0, 16).replace('T', ' ').replace(':', '-')}.mkv`))
@@ -258,7 +264,7 @@ ipcMain.handle(IPC.bibleChapter, (_e, id: string, book: number, chapter: number)
 ipcMain.handle(IPC.bibleRemove, (_e, id: string) => { bibleStore.remove(id); return bibleStore.list() })
 ipcMain.handle(IPC.bibleImportPaths, (_e, paths: string[]) => paths.map((p) => bibleStore.importFile(p)))
 ipcMain.handle(IPC.bibleImportDialog, async () => {
-  const options: Electron.OpenDialogOptions = { title: 'Choose Bible files (Zefania XML)', properties: ['openFile', 'multiSelections'], filters: [{ name: 'Zefania XML Bible', extensions: ['xml'] }] }
+  const options: Electron.OpenDialogOptions = { title: t('main.bibles.pickTitle'), properties: ['openFile', 'multiSelections'], filters: [{ name: t('main.bibles.filterName'), extensions: ['xml'] }] }
   const result = operator ? await dialog.showOpenDialog(operator, options) : await dialog.showOpenDialog(options)
   return result.canceled ? [] : result.filePaths.map((p) => bibleStore.importFile(p))
 })
@@ -284,6 +290,15 @@ ipcMain.handle(IPC.atemGet, () => atem.getStatus())
 ipcMain.handle(IPC.atemSetAddress, (_e, address: unknown) => atem.setAddress(address))
 ipcMain.handle(IPC.atemSend, (_e, cmd: AtemCommand) => atem.send(cmd))
 ipcMain.handle(IPC.atemSetButtons, (_e, patch: unknown) => atem.setButtons(sanitizeAtemButtons({ ...atem.getSettings().buttons, ...(patch && typeof patch === 'object' ? patch : {}) })))
+ipcMain.on(IPC.languageSync, (e) => { e.returnValue = language }) // read by the preload before a page runs
+ipcMain.handle(IPC.languageGet, () => ({ setting: languageSetting, language }))
+ipcMain.handle(IPC.languageSet, (_e, raw: unknown) => {
+  languageSetting = sanitizeLanguageSetting(raw)
+  language = resolveLanguage(languageSetting, app.getLocale())
+  setLanguage(language)
+  try { writeJsonAtomic(join(userData(), 'language.json'), { language: languageSetting }) } catch { /* only a convenience */ }
+  operator?.webContents.reloadIgnoringCache() // every text is built when the page loads; screens opened later use the new language
+})
 ipcMain.handle(IPC.dmxGet, () => dmx.command({ type: 'rescan' }))
 ipcMain.handle(IPC.dmxSetSettings, (_e, settings: unknown) => dmx.setSettings(settings))
 ipcMain.handle(IPC.dmxCommand, (_e, cmd: DmxCommand) => dmx.command(cmd))
@@ -353,6 +368,9 @@ app.whenReady().then(() => {
   // Tests use a scratch data folder and must not send network packets to whatever sits at the default address.
   if (!process.env.PRESTREAMER_USER_DATA || process.env.PRESTREAMER_ATEM === '1') atem.start()
 
+  languageSetting = savedLanguageSetting()
+  language = startupLanguage(app.getLocale(), languageSetting)
+  setLanguage(language)
   const dmxPath = join(userData(), 'dmx.json')
   let dmxSettings = defaultDmxSettings
   try { dmxSettings = sanitizeDmxSettings(JSON.parse(readFileSync(dmxPath, 'utf8'))) } catch { /* nothing saved yet */ }

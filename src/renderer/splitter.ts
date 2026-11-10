@@ -1,3 +1,5 @@
+import { t } from '../shared/i18n'
+
 /**
  * A drag handle between two columns of a grid. Dragging sets a CSS variable (the width of the panel it resizes) on the grid's
  * element; the width is remembered per handle, double-click goes back to the usual width, and the arrow keys nudge it.
@@ -23,7 +25,7 @@ export function makeSplitter(handle: HTMLElement, o: SplitterOptions): void {
   handle.setAttribute('role', 'separator')
   handle.setAttribute('aria-orientation', 'vertical')
   handle.tabIndex = 0
-  handle.title = 'Drag to resize, double-click to reset'
+  handle.title = t('operator.splitter.title')
 
   // Never let a panel take more than half of the view, whatever the saved width says.
   const limit = (w: number) => Math.round(Math.max(o.min, Math.min(o.max, o.host.clientWidth ? o.host.clientWidth * 0.5 : o.max, w)))

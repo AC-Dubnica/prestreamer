@@ -1,6 +1,7 @@
 import { app, safeStorage } from 'electron'
 import { existsSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { t } from '../shared/i18n'
 
 const file = () => join(app.getPath('userData'), 'streamkey.bin')
 
@@ -8,7 +9,7 @@ const file = () => join(app.getPath('userData'), 'streamkey.bin')
 export const streamKey = {
   has: (): boolean => existsSync(file()),
   save(key: string): void {
-    if (!safeStorage.isEncryptionAvailable()) throw new Error('OS secure storage is not available; key not saved')
+    if (!safeStorage.isEncryptionAvailable()) throw new Error(t('main.secrets.unavailable'))
     mkdirSync(app.getPath('userData'), { recursive: true })
     writeFileSync(file(), safeStorage.encryptString(key), { mode: 0o600 })
   },

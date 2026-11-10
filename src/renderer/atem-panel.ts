@@ -1,4 +1,5 @@
 import type { PrestreamerApi } from '../preload'
+import { t } from '../shared/i18n'
 import { canSend, idleAtem, type AtemCommand, type AtemStatus } from '../shared/atem'
 
 function el<T extends HTMLElement = HTMLElement>(tag: string, props: Partial<T> = {}, ...kids: (Node | string)[]): T {
@@ -19,13 +20,13 @@ export function createAtemPanel(body: HTMLElement, api: PrestreamerApi, host: HT
   const title = el('div', { className: 'hhead' }, dot, label)
   const program = el('div', { className: 'atemrow' })
   const preview = el('div', { className: 'atemrow' })
-  const cut = el<HTMLButtonElement>('button', { textContent: 'Cut', title: 'Swap preview and program at once' })
-  const auto = el<HTMLButtonElement>('button', { textContent: 'Auto', title: 'Swap preview and program with the switcher\'s transition' })
+  const cut = el<HTMLButtonElement>('button', { textContent: t('devices.atem.cut'), title: t('devices.atem.cutHint') })
+  const auto = el<HTMLButtonElement>('button', { textContent: t('devices.atem.auto'), title: t('devices.atem.autoHint') })
   const note = el('div', { className: 'status' })
   const group = (caption: string, row: HTMLElement) => el('div', { className: 'atemgrp' }, el('div', { className: 'atemcap', textContent: caption }), row)
-  const previewGroup = group('Preview', preview)
+  const previewGroup = group(t('devices.atem.preview'), preview)
   const go = el('div', { className: 'form atemgo' }, cut, auto)
-  const panel = el('div', { className: 'panelbox atem' }, title, el('div', { className: 'atemgrid' }, group('Program', program), previewGroup, go), note)
+  const panel = el('div', { className: 'panelbox atem' }, title, el('div', { className: 'atemgrid' }, group(t('devices.atem.program'), program), previewGroup, go), note)
   body.replaceChildren(panel)
 
   const send = (cmd: AtemCommand) => { if (canSend(status, cmd)) void api.atemSend(cmd) }
@@ -36,7 +37,7 @@ export function createAtemPanel(body: HTMLElement, api: PrestreamerApi, host: HT
     const cmdFor = (input: number): AtemCommand => ({ type: kind, input })
     row.replaceChildren(...status.inputs.map((i) => {
       const on = (kind === 'program' ? status.program : status.preview) === i.id
-      const b = el<HTMLButtonElement>('button', { textContent: i.name, title: `${i.longName}: put on ${kind}`, className: `atembtn ${kind}${on ? ' on' : ''}` })
+      const b = el<HTMLButtonElement>('button', { textContent: i.name, title: t(kind === 'program' ? 'devices.atem.inputHintProgram' : 'devices.atem.inputHintPreview', { name: i.longName }), className: `atembtn ${kind}${on ? ' on' : ''}` })
       b.disabled = !canSend(status, cmdFor(i.id))
       b.setAttribute('aria-pressed', String(on))
       b.onclick = () => send(cmdFor(i.id))

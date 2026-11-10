@@ -5,6 +5,7 @@ import { FrameSplitter, NATIVE_MAX_CHANNELS, parseAlsaInputs, parseFfmpegAudio, 
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { ffmpegPath } from './tools'
+import { t } from '../shared/i18n'
 
 const START_TIMEOUT_MS = 10_000
 
@@ -24,7 +25,7 @@ const supported = (): boolean => process.platform in HELPERS
 function captureHelperPath(): string {
   const helper = HELPERS[process.platform]
   const path = join(__dirname, '../native', helper.file).replace('app.asar', 'app.asar.unpacked') // executables cannot run from inside the asar
-  if (!existsSync(path)) throw new Error(`The audio reader is missing (it is built from src/native/${helper.source}${process.platform === 'darwin' ? ' with swiftc, which needs the Xcode command line tools' : ''})`)
+  if (!existsSync(path)) throw new Error(t(process.platform === 'darwin' ? 'main.native.missingMac' : 'main.native.missing', { source: helper.source }))
   return path
 }
 
@@ -85,9 +86,9 @@ export class NativeAudio {
     this.stop(name)
     const test = process.env.PRESTREAMER_NATIVE_TEST && name === TEST_RIG.name
     if (!test) {
-      if (!supported()) throw new Error('Reading all channels of an interface is not available on this system')
+      if (!supported()) throw new Error(t('main.native.unsupported'))
       if (process.platform === 'darwin' && systemPreferences.getMediaAccessStatus('microphone') !== 'granted' && !(await systemPreferences.askForMediaAccess('microphone'))) {
-        throw new Error('Microphone access is off for PreStreamer (System Settings → Privacy & Security → Microphone)')
+        throw new Error(t('main.native.micOff'))
       }
     }
     let command: string
@@ -134,8 +135,8 @@ export class NativeAudio {
       proc.on('close', (code) => {
         if (this.captures.get(name) === capture) this.captures.delete(name)
         const reason = log.trim().split('\n').slice(-2).join(' ')
-        if (!settled) return fail(`ffmpeg stopped (${code}): ${reason}`)
-        if (!capture.stopped) onEnd(`${name} stopped delivering audio${reason ? ` (${reason})` : ''}`)
+        if (!settled) return fail(t('main.native.ffmpegStopped', { code: String(code), reason }))
+        if (!capture.stopped) onEnd(reason ? t('main.native.stoppedReason', { name, reason }) : t('main.native.stopped', { name }))
       })
     })
   }

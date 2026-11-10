@@ -29,6 +29,12 @@ macOS asks for permission to use the **camera** and **microphone** when you firs
 
 If you used the program *Quelea* on this computer, PreStreamer imports the Bible translations it finds there the first time it starts. (It only reads those files.)
 
+## Language
+
+PreStreamer speaks **English** and **Slovak** (*Slovenčina*). It starts in the language of the computer and uses English when it has no translation for that language.
+
+To change it, open **Settings → Language** and choose *Automatic*, *English* or *Slovenčina*. The window reloads at once. Screens that are already open keep their old language until you close and open them again. Songs, Bible texts and the names you typed yourself are never translated.
+
 ## A tour of the window
 
 ![The Present tab with numbered parts](screenshots/tour-present.png)

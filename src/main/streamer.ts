@@ -6,6 +6,7 @@ import { defaultStreamSettings, type EncoderChoice, type StreamSettings } from '
 import { RateMeter, assessHealth, dropPercent, parseProgress, parseSpeed, type StreamStats } from '../shared/stream-stats'
 import { idleStream, type StreamStatus } from '../shared/types'
 import { ffmpegPath } from './tools'
+import { t } from '../shared/i18n'
 
 const MAX_CATCH_UP = 10
 const YOUTUBE_INGEST = 'rtmp://a.rtmp.youtube.com/live2'
@@ -164,7 +165,7 @@ export class Streamer {
     onVideoStart?: (startMs: number) => void,
     settings: StreamSettings = defaultStreamSettings,
   ): Promise<void> {
-    if (this.proc) throw new Error('Already streaming')
+    if (this.proc) throw new Error(t('main.streamer.already'))
     this.secret = secret
     this.stderrTail = []
     this.settings = settings
@@ -176,7 +177,7 @@ export class Streamer {
     this.set({ ...idleStream, state: 'starting', target: target.label })
 
     const first = await waitFor(getFrame, 3000)
-    if (!first) return this.fail('Selected screen produced no frames. Is it live?')
+    if (!first) return this.fail(t('main.streamer.noFrames'))
     const { width, height } = first.getSize()
 
     const { name: encoder, note } = await resolveEncoder(settings.encoder)
@@ -192,17 +193,17 @@ export class Streamer {
       this.stderrTail = [...this.stderrTail, ...lines].slice(-8)
     })
     proc.stdin.on('error', () => {}) // EPIPE when ffmpeg dies; handled by 'close'
-    proc.on('error', (e) => this.fail(e.message.includes('ENOENT') ? 'ffmpeg not found on PATH (set FFMPEG_PATH)' : e.message))
+    proc.on('error', (e) => this.fail(e.message.includes('ENOENT') ? t('main.streamer.ffmpegMissing') : e.message))
     proc.on('close', (code) => {
       this.clearTimer()
       this.proc = null
       // Already reported (stop() or fail() got there first): do not overwrite a more helpful message.
       if (this.status.state === 'idle' || this.status.state === 'error') return
-      if (code === 0) this.set({ ...this.status, state: 'idle', message: 'Stopped' })
-      else this.set({ ...this.status, state: 'error', message: this.stderrTail.join('\n') || `ffmpeg exited with code ${code}` })
+      if (code === 0) this.set({ ...this.status, state: 'idle', message: t('main.streamer.stopped') })
+      else this.set({ ...this.status, state: 'error', message: this.stderrTail.join('\n') || t('main.ffmpeg.exited', { code: String(code) }) })
     })
 
-    this.set({ ...this.status, state: 'running', startedAt: Date.now(), message: note ? `Encoder: ${encoder}. ${note}` : `Encoder: ${encoder}` })
+    this.set({ ...this.status, state: 'running', startedAt: Date.now(), message: note ? t('main.streamer.encoderNote', { encoder, note }) : t('main.streamer.encoder', { encoder }) })
 
     let lastImage: NativeImage | null = null
     let lastBuf: Buffer | null = null
@@ -245,13 +246,13 @@ export class Streamer {
     const proc = this.proc
     if (!proc) return
     this.clearTimer()
-    this.set({ ...this.status, state: 'idle', message: 'Stopping…' })
+    this.set({ ...this.status, state: 'idle', message: t('main.streamer.stopping') })
     const closed = new Promise<void>((resolve) => proc.once('close', () => resolve()))
     proc.stdin.end() // lets ffmpeg flush and finalize the container
     const killer = setTimeout(() => proc.kill('SIGKILL'), 5000)
     await closed
     clearTimeout(killer)
-    this.set({ ...this.status, state: 'idle', message: 'Stopped' })
+    this.set({ ...this.status, state: 'idle', message: t('main.streamer.stopped') })
   }
 
   private fail(message: string): void {

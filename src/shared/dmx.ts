@@ -1,5 +1,7 @@
 /** DMX lighting through a USB interface (Enttec Open DMX USB or another FTDI one). Pure model, no I/O. */
 
+import { t } from './i18n'
+
 /** Slots in one DMX universe. */
 export const DMX_CHANNELS = 512
 
@@ -7,10 +9,10 @@ export const DMX_CHANNELS = 512
 export type FixtureKind = 'dimmer' | 'rgb' | 'rgbw' | 'raw'
 
 export const FIXTURE_KINDS: { kind: FixtureKind; label: string; channels: number | null }[] = [
-  { kind: 'dimmer', label: 'Dimmer (1 channel)', channels: 1 },
-  { kind: 'rgb', label: 'RGB light (3 channels: red, green, blue)', channels: 3 },
-  { kind: 'rgbw', label: 'RGBW light (4 channels: red, green, blue, white)', channels: 4 },
-  { kind: 'raw', label: 'Other (you choose the number of channels)', channels: null },
+  { kind: 'dimmer', get label() { return t('devices.dmx.kind.dimmer') }, channels: 1 },
+  { kind: 'rgb', get label() { return t('devices.dmx.kind.rgb') }, channels: 3 },
+  { kind: 'rgbw', get label() { return t('devices.dmx.kind.rgbw') }, channels: 4 },
+  { kind: 'raw', get label() { return t('devices.dmx.kind.raw') }, channels: null },
 ]
 
 export const MAX_RAW_CHANNELS = 32
@@ -81,7 +83,7 @@ export interface DmxStatus {
   blackout: boolean
 }
 
-export const idleDmx: DmxStatus = { state: 'off', message: 'DMX lighting is switched off', port: '', ports: [], settings: defaultDmxSettings, levels: {}, scene: '', master: 100, blackout: false }
+export const idleDmx: DmxStatus = { state: 'off', get message() { return t('devices.dmx.off') }, port: '', ports: [], settings: defaultDmxSettings, levels: {}, scene: '', master: 100, blackout: false }
 
 export type DmxCommand =
   | { type: 'scene'; id: string }
@@ -99,10 +101,10 @@ export function kindChannels(kind: FixtureKind, raw = 1): number {
 
 /** Names of the channels of a fixture, as the faders show them. */
 export function channelLabels(f: Pick<Fixture, 'kind' | 'channels'>): string[] {
-  if (f.kind === 'dimmer') return ['Level']
-  if (f.kind === 'rgb') return ['Red', 'Green', 'Blue']
-  if (f.kind === 'rgbw') return ['Red', 'Green', 'Blue', 'White']
-  return Array.from({ length: f.channels }, (_, i) => `Ch ${i + 1}`)
+  if (f.kind === 'dimmer') return [t('devices.dmx.channel.level')]
+  if (f.kind === 'rgb') return [t('devices.dmx.channel.red'), t('devices.dmx.channel.green'), t('devices.dmx.channel.blue')]
+  if (f.kind === 'rgbw') return [t('devices.dmx.channel.red'), t('devices.dmx.channel.green'), t('devices.dmx.channel.blue'), t('devices.dmx.channel.white')]
+  return Array.from({ length: f.channels }, (_, i) => t('devices.dmx.channel.n', { n: i + 1 }))
 }
 
 const cleanId = (v: unknown, fallback: string): string => (typeof v === 'string' && /^[\w-]{1,40}$/.test(v) ? v : fallback)
@@ -176,12 +178,12 @@ export function patchProblems(fixtures: readonly Fixture[]): string[] {
   const owner = new Map<number, Fixture>()
   const reported = new Set<string>()
   for (const f of fixtures) {
-    if (f.address + f.channels - 1 > DMX_CHANNELS) problems.push(`${f.name} needs channels ${f.address}–${f.address + f.channels - 1}, but a universe ends at ${DMX_CHANNELS}`)
+    if (f.address + f.channels - 1 > DMX_CHANNELS) problems.push(t('devices.dmx.problem.past', { name: f.name, from: f.address, to: f.address + f.channels - 1, max: DMX_CHANNELS }))
     for (let c = f.address; c < f.address + f.channels && c <= DMX_CHANNELS; c++) {
       const other = owner.get(c)
       if (other) {
         const key = `${other.id}|${f.id}`
-        if (!reported.has(key)) { reported.add(key); problems.push(`${f.name} and ${other.name} share channel ${c}`) }
+        if (!reported.has(key)) { reported.add(key); problems.push(t('devices.dmx.problem.share', { name: f.name, other: other.name, channel: c })) }
       } else owner.set(c, f)
     }
   }
@@ -251,5 +253,5 @@ export function isDmxPort(path: string, platform: string): boolean {
   return !!m && dmxPortCandidates([m[1]], platform).length === 1
 }
 
-export const DMX_UNSUPPORTED = 'DMX output through the Open DMX USB works on macOS and Linux for now (Windows needs FTDI\'s driver library).'
-export const DMX_NO_INTERFACE = 'No DMX interface found. Plug in the USB cable and press Rescan.'
+export const dmxUnsupported = (): string => t('devices.dmx.unsupported')
+export const dmxNoInterface = (): string => t('devices.dmx.noInterface')

@@ -269,46 +269,46 @@
       <header>
         <nav id="tabs"></nav>
         <span class="sp"></span>
-        <span id="onair" class="onair" hidden>● LIVE</span>
+        <span id="onair" class="onair" data-i18n="operator.header.live" hidden>● LIVE</span>
         <button id="announcelive" class="announcelive" hidden></button>
         <span id="headbtns"></span>
       </header>
       <div id="view-present" class="view" data-view="present">
         <aside id="presentleft">
-          <div class="head">Service
+          <div class="head"><span data-i18n="operator.service.head">Service</span>
             <span class="tools" id="svctools"></span></div>
           <div class="svc"><select id="servicesel"></select></div>
-          <div class="head">Run sheet <span class="tools" id="addtools"></span></div>
+          <div class="head"><span data-i18n="operator.run.head">Run sheet</span> <span class="tools" id="addtools"></span></div>
           <div id="schedule"></div>
           <div id="videostatus" class="status"></div>
         </aside>
         <div id="split-pl"></div>
         <div id="centercol">
-          <div id="zoombar"><label title="Size of the slide previews"><span class="dim">Preview size</span><input type="range" id="cardzoom" min="130" max="420" step="10" value="190" aria-label="Size of the slide previews"></label></div>
+          <div id="zoombar"><label title="Size of the slide previews" data-i18n-title="operator.zoom.title"><span class="dim" data-i18n="operator.zoom.label">Preview size</span><input type="range" id="cardzoom" min="130" max="420" step="10" value="190" aria-label="Size of the slide previews" data-i18n-aria="operator.zoom.title"></label></div>
           <div id="center"></div>
         </div>
         <div id="split-pr"></div>
         <div id="right">
-          <div class="head">Screens</div>
-          <div class="hint">A red dot means the screen is open. Click a screen to use its look for the slide previews; <span class="gearhint">⚙</span> opens its settings. <b>Open all screens</b> is in the top bar.</div>
+          <div class="head" data-i18n="operator.screens.head">Screens</div>
+          <div class="hint" id="screenshint"></div>
           <div id="screens"></div>
           <div id="atemsec" hidden>
             <div class="head">ATEM <span class="tools" id="atemtools"></span></div>
             <div id="atem"></div>
           </div>
           <div id="dmxsec" hidden>
-            <div class="head">DMX lighting <span class="tools" id="dmxtools"></span></div>
+            <div class="head"><span data-i18n="operator.dmx.head">DMX lighting</span> <span class="tools" id="dmxtools"></span></div>
             <div id="dmx"></div>
           </div>
-          <div class="head">Stream <span class="tools" id="streamtools"></span></div>
+          <div class="head"><span data-i18n="operator.stream.head">Stream</span> <span class="tools" id="streamtools"></span></div>
           <div id="stream"></div>
           <div id="healthsec"></div>
         </div>
       </div>
       <div id="view-songs" class="view" data-view="songs">
         <aside id="songsleft">
-          <div class="head">Songs <span class="tools" id="songtools"></span></div>
-          <div class="svc"><input id="songfilter" type="text" placeholder="Search songs…" /></div>
+          <div class="head"><span data-i18n="operator.songs.head">Songs</span> <span class="tools" id="songtools"></span></div>
+          <div class="svc"><input id="songfilter" type="text" placeholder="Search songs…" data-i18n-placeholder="operator.songs.search" /></div>
           <div id="songimport" class="status" role="status" hidden></div>
           <div id="library"></div>
         </aside>

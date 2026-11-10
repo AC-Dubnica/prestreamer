@@ -2,6 +2,7 @@ import type { AudioApi } from '../preload/audio'
 import { dbToGain, effectiveGains, gainToDb, stripKey, type Effect, type MixerConfig, type MonitorConfig, type Strip } from '../shared/mixer'
 import { createFx, param, type Fx } from './effects'
 import { nativeName } from '../shared/native-audio'
+import { t } from '../shared/i18n'
 import { mediaUrl, type AudioConfig, type FxLive, type Meters, type PlaybackState } from '../shared/types'
 
 declare const audioBridge: AudioApi
@@ -183,7 +184,7 @@ function applyStrip(ctx: AudioContext, n: StripNodes, s: Strip, gain: number): v
 function syncMonitor(g: Graph, cfg: MonitorConfig): void {
   const mon = g.monitor
   param(mon.gain.gain, cfg.on ? dbToGain(cfg.gainDb) : 0, g.ctx)
-  const fail = (err: unknown) => { mon.error = `${cfg.label || 'The monitor output'}: ${(err as Error).message}`; if (graph === g) reportStatus(g) }
+  const fail = (err: unknown) => { mon.error = `${cfg.label || t('mixer.status.monitorOutput')}: ${(err as Error).message}`; if (graph === g) reportStatus(g) }
   if (cfg.deviceId !== mon.deviceId) {
     mon.deviceId = cfg.deviceId
     void (mon.el.setSinkId ? mon.el.setSinkId(cfg.deviceId) : Promise.resolve())
@@ -253,8 +254,8 @@ function reportStatus(g: Graph): void {
   const failed = devices.filter((d) => d.error)
   const allFailed = devices.length > 0 && failed.length === devices.length
   const message = devices.length
-    ? devices.map((d) => `${d.label}: ${d.error ? `cannot open (${d.error})` : `${d.channels} channel${d.channels === 1 ? '' : 's'}`}`).join(' · ')
-    : 'Running, no inputs in the mix yet'
+    ? devices.map((d) => `${d.label}: ${d.error ? t('mixer.status.cannotOpen', { error: d.error }) : t('mixer.status.channels', { n: d.channels })}`).join(' · ')
+    : t('mixer.status.noInputs')
   const def = g.defaultKey ? g.sources.get(g.defaultKey) : undefined
   audioBridge.report({ state: allFailed ? 'error' : 'running', message, channelCount: def?.channelCount ?? 0, devices, ...(g.monitor.error ? { monitorError: g.monitor.error } : {}) })
 }
@@ -437,7 +438,7 @@ async function openSource(g: Graph, key: string, label: string): Promise<Source>
     const started = await audioBridge.nativeStart(native)
     const failed = (error: string): Source => ({ key, label, channelCount: 0, splitter: null, stream: null, error, stop: () => {} })
     if ('error' in started) return failed(started.error)
-    if (graph?.ctx !== ctx) { audioBridge.nativeStop(native, started.id); return failed('The mixer was restarted while this input was opening') }
+    if (graph?.ctx !== ctx) { audioBridge.nativeStop(native, started.id); return failed(t('mixer.status.restarted')) }
     const node = new AudioWorkletNode(ctx, 'native-in', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [started.channels], processorOptions: { channels: started.channels, targetMs: NATIVE_CUSHION_MS } })
     const sink = (frames: ArrayBuffer) => node.port.postMessage(new Float32Array(frames), [frames])
     const onEnd = (message: string) => {
@@ -483,7 +484,7 @@ async function apply(cfg: AudioConfig, initialMixer: MixerConfig): Promise<void>
   const def = defaultSource(cfg)
   // The engine runs for a default source, or when the mixer's Start was pressed and strips name devices of their own.
   if (def.key === null && !(cfg.mixerSources && initialMixer.strips.some((s) => s.source))) {
-    return audioBridge.report({ state: 'idle', message: 'Audio is off', channelCount: 0, devices: [] })
+    return audioBridge.report({ state: 'idle', message: t('mixer.status.off'), channelCount: 0, devices: [] })
   }
 
   let ctx: AudioContext | null = null

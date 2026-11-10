@@ -6,6 +6,7 @@ import { AUDIO_IPC, defaultAudio, idleAudio, idlePlayback, type AudioConfig, typ
 import { defaultMixer, sanitizeMixer, type MixerConfig } from '../shared/mixer'
 import { writeJsonAtomic } from './store'
 import { NativeAudio } from './native-audio'
+import { t } from '../shared/i18n'
 
 const MAX_BACKLOG_BYTES = 1 << 20
 
@@ -168,7 +169,7 @@ export class AudioBridge {
     this.config = cfg
     const win = await this.window()
     const result = new Promise<AudioStatus>((resolve, reject) => {
-      const timer = setTimeout(() => { this.waiter = null; reject(new Error('Audio device did not respond (permission?)')) }, 10000)
+      const timer = setTimeout(() => { this.waiter = null; reject(new Error(t('main.audio.noResponse'))) }, 10000)
       this.waiter = (s) => { clearTimeout(timer); resolve(s) }
     })
     win.webContents.send(AUDIO_IPC.apply, { config: cfg, mixer: this.mixer })

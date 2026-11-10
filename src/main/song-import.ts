@@ -8,6 +8,7 @@ import { IMPORT_BACKGROUND, planSongImport, songFromPdfLines, type ImportedSong 
 import type { Song, SongExportResult, SongImportResult } from '../shared/types'
 import { readPdfTexts } from './pdf'
 import { readZip, writeZip } from './zip'
+import { t } from '../shared/i18n'
 
 const isPdf = (data: Buffer): boolean => data.subarray(0, 5).toString('latin1') === '%PDF-'
 
@@ -19,7 +20,7 @@ export async function songsFromZip(path: string, existing: Song[]): Promise<{ so
   const entries = readZip(readFileSync(path)).filter((e) => !basename(e.name).startsWith('.') && !e.name.startsWith('__MACOSX/'))
   const files = entries.map((e) => ({ name: basename(e.name, extname(e.name)), data: e.read() }))
   const pdfs = files.filter((f) => isPdf(f.data))
-  if (!files.length) throw new Error('There are no songs in this ZIP file')
+  if (!files.length) throw new Error(t('main.songs.zipEmpty'))
   const texts = pdfs.length ? await readPdfTexts(pdfs.map((f) => f.data)) : []
   const imported: ImportedSong[] = []
   const unreadable: string[] = []
@@ -50,7 +51,7 @@ export function songPack(songs: Song[]): Buffer {
 export async function exportSongs(parent: BrowserWindow | null, songs: Song[], folder: string): Promise<SongExportResult | null> {
   let path = process.env.PRESTREAMER_SONGS_EXPORT_FILE
   if (!path) {
-    const options: Electron.SaveDialogOptions = { title: 'Export songs as a Quelea song pack', defaultPath: join(folder, 'PreStreamer songs.qsp'), filters: [{ name: 'Quelea song pack', extensions: ['qsp'] }] }
+    const options: Electron.SaveDialogOptions = { title: t('main.songs.exportTitle'), defaultPath: join(folder, 'PreStreamer songs.qsp'), filters: [{ name: t('main.songs.filterPack'), extensions: ['qsp'] }] }
     const r = parent ? await dialog.showSaveDialog(parent, options) : await dialog.showSaveDialog(options)
     if (r.canceled || !r.filePath) return null
     path = r.filePath
@@ -63,7 +64,7 @@ export async function exportSongs(parent: BrowserWindow | null, songs: Song[], f
 export async function pickSongsZip(parent: BrowserWindow | null, downloads: string): Promise<string | null> {
   const forced = process.env.PRESTREAMER_SONGS_FILE
   if (forced) return forced
-  const options: Electron.OpenDialogOptions = { title: 'Import songs from Quelea (a song pack or a ZIP of song PDFs)', defaultPath: downloads, properties: ['openFile'], filters: [{ name: 'Quelea song pack or ZIP', extensions: ['qsp', 'zip'] }] }
+  const options: Electron.OpenDialogOptions = { title: t('main.songs.importTitle'), defaultPath: downloads, properties: ['openFile'], filters: [{ name: t('main.songs.filterPackOrZip'), extensions: ['qsp', 'zip'] }] }
   const r = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options)
   return r.canceled || !r.filePaths[0] ? null : r.filePaths[0]
 }

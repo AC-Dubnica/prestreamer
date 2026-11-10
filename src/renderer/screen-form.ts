@@ -2,6 +2,7 @@ import type { PrestreamerApi } from '../preload'
 import { SCREEN_LIMITS, SIZE_PRESETS, clampSize, hasRoles, roleOf, rolePatch, type ScreenRole } from '../shared/screens'
 import type { DisplayInfo, Look, NdiSound, ScreenConfig, ScreenState } from '../shared/types'
 import { showModal } from './dialogs'
+import { t } from '../shared/i18n'
 
 function el<T extends HTMLElement = HTMLElement>(tag: string, props: Partial<T> = {}, ...kids: (Node | string)[]): T {
   const e = Object.assign(document.createElement(tag) as T, props)
@@ -11,18 +12,14 @@ function el<T extends HTMLElement = HTMLElement>(tag: string, props: Partial<T> 
 
 type Kind = ScreenConfig['kind']
 
-const KIND_NAME: Record<Kind, string> = { display: 'Display screen', virtual: 'Virtual screen', ndi: 'NDI screen' }
-const KIND_HINT: Record<Kind, string> = {
-  display: 'Shown full-screen on a monitor or projector connected to this computer: the audience, a stage monitor, or a copy of the stream.',
-  virtual: 'Drawn inside PreStreamer, not on a monitor. This is what the stream picks up.',
-  ndi: 'Sent over the network as an NDI source, for a display somewhere else that is fed through an NDI decoder. It can be the audience, a stage monitor, or a copy of the stream with the sound of the stream, the audience sound of the videos, or none.',
-}
+const kindName = (k: Kind): string => t(k === 'display' ? 'settings.kind.display' : k === 'virtual' ? 'settings.kind.virtual' : 'settings.kind.ndi')
+const kindHint = (k: Kind): string => t(k === 'display' ? 'settings.form.kindHint.display' : k === 'virtual' ? 'settings.form.kindHint.virtual' : 'settings.form.kindHint.ndi')
 
 /** What a screen is for, in words: shown on the card and in the dialog. */
 export function describeRole(sc: ScreenConfig, state: ScreenState): string {
-  if (sc.kind === 'virtual') return 'For the stream'
+  if (sc.kind === 'virtual') return t('settings.role.stream')
   const role = roleOf(sc)
-  const text = role.kind === 'stage' ? 'Stage monitor: current slide, next slide and clock' : role.kind === 'mirror' ? `Mirror of ${state.screens.find((s) => s.id === role.of)?.name ?? 'another screen'}` : 'Slides in its own look'
+  const text = role.kind === 'stage' ? t('settings.role.stage') : role.kind === 'mirror' ? t('settings.role.mirror', { name: state.screens.find((s) => s.id === role.of)?.name ?? t('settings.role.anotherScreen') }) : t('settings.role.own')
   return sc.kind === 'ndi' ? `NDI · ${text}` : text
 }
 
@@ -42,6 +39,7 @@ export function openScreenForm(api: PrestreamerApi, getState: () => ScreenState,
   let displayId: number | null = existing?.displayId ?? null
 
   const count = (pred: (s: ScreenConfig) => boolean) => state0.screens.filter(pred).length + 1
+  // These become the screen's saved name, so they stay English like the default screens' names.
   const suggestion = (): string => {
     if (kind === 'virtual') return `Virtual screen ${count((s) => s.kind === 'virtual')}`
     if (kind === 'ndi' && role.kind === 'own') return `NDI screen ${count((s) => s.kind === 'ndi' && !s.mirrorOf && roleOf(s).kind === 'own')}`
@@ -57,22 +55,22 @@ export function openScreenForm(api: PrestreamerApi, getState: () => ScreenState,
   // Type (adding only)
   const kinds = (['display', 'ndi', 'virtual'] as const).map((k) => {
     const b = el<HTMLButtonElement>('button', { className: 'kindcard' },
-      el('strong', { textContent: KIND_NAME[k] }),
-      el('span', { className: 'dim', textContent: KIND_HINT[k] }),
+      el('strong', { textContent: kindName(k) }),
+      el('span', { className: 'dim', textContent: kindHint(k) }),
     )
     b.onclick = () => { kind = k; if (!nameTouched) name.value = ''; sync() }
     return { k, b }
   })
-  const kindFixed = el('div', { className: 'dim', textContent: existing ? `${KIND_NAME[existing.kind]}: the type is fixed once added` : '' })
+  const kindFixed = el('div', { className: 'dim', textContent: existing ? t('settings.form.typeFixed', { kind: kindName(existing.kind) }) : '' })
 
   // Display screens
-  const shows = el<HTMLSelectElement>('select', { title: 'What this screen shows' })
+  const shows = el<HTMLSelectElement>('select', { title: t('settings.form.showsTitle') })
   const mirrorTargets = state0.screens.filter((x) => x.id !== existing?.id && !x.mirrorOf)
   const followed = !!existing && state0.screens.some((x) => x.mirrorOf === existing.id)
   shows.append(
-    el<HTMLOptionElement>('option', { value: 'own', textContent: 'Slides, in its own look' }),
-    el<HTMLOptionElement>('option', { value: 'stage', textContent: 'Stage monitor: current slide, next slide, clock' }),
-    ...(followed ? [] : mirrorTargets.map((x) => el<HTMLOptionElement>('option', { value: `mirror:${x.id}`, textContent: `Mirror of ${x.name}` }))),
+    el<HTMLOptionElement>('option', { value: 'own', textContent: t('settings.form.show.own') }),
+    el<HTMLOptionElement>('option', { value: 'stage', textContent: t('settings.form.show.stage') }),
+    ...(followed ? [] : mirrorTargets.map((x) => el<HTMLOptionElement>('option', { value: `mirror:${x.id}`, textContent: t('settings.role.mirror', { name: x.name }) }))),
   )
   shows.value = role.kind === 'mirror' ? `mirror:${role.of}` : role.kind
   if (shows.value !== (role.kind === 'mirror' ? `mirror:${role.of}` : role.kind)) shows.value = 'own' // the mirrored screen is gone
@@ -83,23 +81,23 @@ export function openScreenForm(api: PrestreamerApi, getState: () => ScreenState,
   const showsHint = el('div', { className: 'dim sfhint' })
 
   const display = el<HTMLSelectElement>('select')
-  display.append(el<HTMLOptionElement>('option', { value: '', textContent: 'None (opens in a window)' }))
+  display.append(el<HTMLOptionElement>('option', { value: '', textContent: t('settings.form.noDisplay') }))
   state0.displays.forEach((d: DisplayInfo, i: number) => {
     const other = state0.screens.find((x) => x.id !== existing?.id && x.kind === 'display' && x.displayId === d.id)
-    display.append(el<HTMLOptionElement>('option', { value: String(d.id), textContent: `${i + 1} · ${d.label} · ${d.width}×${d.height}${d.primary ? ' · main display' : ''}${other ? ` (also used by ${other.name})` : ''}` }))
+    display.append(el<HTMLOptionElement>('option', { value: String(d.id), textContent: t(d.primary ? 'settings.form.displayOptionMain' : 'settings.form.displayOption', { n: i + 1, label: d.label, size: `${d.width}×${d.height}` }) + (other ? t('settings.form.alsoUsedBy', { name: other.name }) : '') }))
   })
-  if (displayId !== null && !state0.displays.some((d) => d.id === displayId)) display.append(el<HTMLOptionElement>('option', { value: String(displayId), textContent: `${existing?.displayLabel ?? 'Display'} (not connected)` }))
+  if (displayId !== null && !state0.displays.some((d) => d.id === displayId)) display.append(el<HTMLOptionElement>('option', { value: String(displayId), textContent: t('settings.card.notConnected', { label: existing?.displayLabel ?? t('settings.card.displayWord') }) }))
   display.value = displayId === null ? '' : String(displayId)
   display.onchange = () => { displayId = display.value ? Number(display.value) : null; sync() }
   const displayWarn = el('div', { className: 'warn' })
 
-  const soundRow = () => row('Video sound', sound, el('span', { className: 'dim', textContent: 'play the sound of video cues from this screen' }))
+  const soundRow = () => row(t('settings.form.videoSound'), sound, el('span', { className: 'dim', textContent: t('settings.form.videoSoundHint') }))
   const sound = el<HTMLInputElement>('input', { type: 'checkbox', checked: existing?.look.videoAudio ?? false })
-  const ndiSound = el<HTMLSelectElement>('select', { title: 'The sound that goes out with the picture' })
+  const ndiSound = el<HTMLSelectElement>('select', { title: t('settings.form.ndiSoundTitle') })
   ndiSound.append(
-    el<HTMLOptionElement>('option', { value: 'stream', textContent: 'Stream' }),
-    el<HTMLOptionElement>('option', { value: 'video', textContent: 'Audience' }),
-    el<HTMLOptionElement>('option', { value: 'none', textContent: 'None' }),
+    el<HTMLOptionElement>('option', { value: 'stream', textContent: t('settings.form.ndiSound.stream') }),
+    el<HTMLOptionElement>('option', { value: 'video', textContent: t('settings.form.ndiSound.video') }),
+    el<HTMLOptionElement>('option', { value: 'none', textContent: t('settings.form.ndiSound.none') }),
   )
   ndiSound.value = existing?.ndiSound ?? 'stream'
 
@@ -109,7 +107,7 @@ export function openScreenForm(api: PrestreamerApi, getState: () => ScreenState,
   const preset = el<HTMLSelectElement>('select')
   const sizeNow = () => `${Number(w.value)}×${Number(h.value)}`
   const syncPreset = () => { const i = SIZE_PRESETS.findIndex((p) => `${p.width}×${p.height}` === sizeNow()); preset.value = i >= 0 ? String(i) : '' }
-  preset.append(el<HTMLOptionElement>('option', { value: '', textContent: 'Custom' }), ...SIZE_PRESETS.map((p, i) => el<HTMLOptionElement>('option', { value: String(i), textContent: p.label })))
+  preset.append(el<HTMLOptionElement>('option', { value: '', textContent: t('settings.form.custom') }), ...SIZE_PRESETS.map((p, i) => el<HTMLOptionElement>('option', { value: String(i), textContent: p.label })))
   preset.onchange = () => { const p = SIZE_PRESETS[Number(preset.value)]; if (p) { w.value = String(p.width); h.value = String(p.height) } sync() }
   w.oninput = h.oninput = () => { syncPreset(); sync() }
   syncPreset()
@@ -119,16 +117,16 @@ export function openScreenForm(api: PrestreamerApi, getState: () => ScreenState,
   if (sizeLocked) { w.disabled = true; h.disabled = true; preset.disabled = true }
 
   const row = (label: string, ...controls: HTMLElement[]) => el('label', { className: 'sdrow' }, el('span', { textContent: label }), el('span', { className: 'inl' }, ...controls))
-  const typeRow = el('div', { className: 'sdgroup' }, el('h4', { textContent: 'Type' }), existing ? kindFixed : el('div', { className: 'kindrow' }, ...kinds.map((k) => k.b)))
-  const rolesGroup = el('div', { className: 'sdgroup' }, el('h4', { textContent: 'What it shows' }), row('Shows', shows), showsHint)
-  const displayGroup = el('div', { className: 'sdgroup' }, el('h4', { textContent: 'Display' }), row('Display', display), displayWarn)
-  const soundGroup = el('div', { className: 'sdgroup' }, el('h4', { textContent: 'Sound' }), soundRow())
-  const ndiNote = el('div', { className: 'dim sfhint', textContent: "The source appears on the network under this screen's name. The stream's sound follows the mixer (silent while it is off); neither sound is delayed to match the picture." })
-  const ndiSoundRow = row('Sound', ndiSound)
-  const virtualGroup = el('div', { className: 'sdgroup' }, el('h4', { textContent: 'Size' }), row('Resolution', preset), row('Width × height', w, el('span', { textContent: '×' }), h), sizeHint, ndiSoundRow, ndiNote)
+  const typeRow = el('div', { className: 'sdgroup' }, el('h4', { textContent: t('settings.form.type') }), existing ? kindFixed : el('div', { className: 'kindrow' }, ...kinds.map((k) => k.b)))
+  const rolesGroup = el('div', { className: 'sdgroup' }, el('h4', { textContent: t('settings.form.whatItShows') }), row(t('settings.form.shows'), shows), showsHint)
+  const displayGroup = el('div', { className: 'sdgroup' }, el('h4', { textContent: t('settings.form.displayGroup') }), row(t('settings.form.displayGroup'), display), displayWarn)
+  const soundGroup = el('div', { className: 'sdgroup' }, el('h4', { textContent: t('settings.form.sound') }), soundRow())
+  const ndiNote = el('div', { className: 'dim sfhint', textContent: t('settings.form.ndiNote') })
+  const ndiSoundRow = row(t('settings.form.sound'), ndiSound)
+  const virtualGroup = el('div', { className: 'sdgroup' }, el('h4', { textContent: t('settings.form.size') }), row(t('settings.form.resolution'), preset), row(t('settings.form.widthHeight'), w, el('span', { textContent: '×' }), h), sizeHint, ndiSoundRow, ndiNote)
 
-  const apply = el<HTMLButtonElement>('button', { className: 'primary', textContent: existing ? 'Apply' : 'Add screen' })
-  const title = el('h3', { className: 'sdtitle', textContent: existing ? `${existing.name} · edit screen` : 'Add a screen' })
+  const apply = el<HTMLButtonElement>('button', { className: 'primary', textContent: existing ? t('settings.apply') : t('settings.form.addButton') })
+  const title = el('h3', { className: 'sdtitle', textContent: existing ? t('settings.form.editTitle', { name: existing.name }) : t('settings.form.addTitle') })
 
   function sync(): void {
     kinds.forEach(({ k, b }) => { b.classList.toggle('on', k === kind); b.setAttribute('aria-pressed', String(k === kind)) })
@@ -139,12 +137,12 @@ export function openScreenForm(api: PrestreamerApi, getState: () => ScreenState,
     virtualGroup.hidden = kind === 'display'
     ndiNote.hidden = ndiSoundRow.hidden = kind !== 'ndi'
     sound.disabled = role.kind !== 'own'
-    showsHint.textContent = role.kind === 'stage' ? 'Never shown on the stream. The Present tab previews and the Monitor tab show it like any screen.' : role.kind === 'mirror' ? 'Looks exactly like that screen (picture, text, announcements). Its own look is not used.' : ''
+    showsHint.textContent = role.kind === 'stage' ? t('settings.form.hint.stage') : role.kind === 'mirror' ? t('settings.form.hint.mirror') : ''
     const bound = state0.displays.find((d) => d.id === displayId)
     displayWarn.hidden = !bound?.primary
-    displayWarn.textContent = bound?.primary ? (state0.displays.length > 1 ? 'This is your main display, where this window is. While live, the screen covers it. Pick another display for the audience.' : 'This is your only display, so a live screen will cover this window. Use "None (opens in a window)" until a second display is connected.') : ''
+    displayWarn.textContent = bound?.primary ? (state0.displays.length > 1 ? t('settings.form.warn.main') : t('settings.form.warn.only')) : ''
     const size = clampSize(Number(w.value), Number(h.value))
-    sizeHint.textContent = sizeLocked ? 'The stream is using this size. Stop the stream to change it.' : `${size.width}×${size.height}${size.width !== Number(w.value) || size.height !== Number(h.value) ? ' (adjusted to the limits, and to even numbers the encoder needs)' : ''}`
+    sizeHint.textContent = sizeLocked ? t('settings.form.sizeLocked') : `${size.width}×${size.height}${size.width !== Number(w.value) || size.height !== Number(h.value) ? t('settings.form.sizeAdjusted') : ''}`
     apply.disabled = false
   }
 
@@ -173,9 +171,9 @@ export function openScreenForm(api: PrestreamerApi, getState: () => ScreenState,
     apply.onclick = () => void submit(close)
     name.onkeydown = (e) => { if (e.key === 'Enter') apply.click() }
     return el('div', { className: 'dialog sd', role: 'dialog' },
-      el('div', { className: 'sdhead' }, title, el('span', { className: 'grow' }), el('button', { textContent: 'Cancel', onclick: () => close() }), apply),
+      el('div', { className: 'sdhead' }, title, el('span', { className: 'grow' }), el('button', { textContent: t('settings.cancel'), onclick: () => close() }), apply),
       el('div', { className: 'sdbody' },
-        el('div', { className: 'sdgroup' }, el('h4', { textContent: 'Name' }), name),
+        el('div', { className: 'sdgroup' }, el('h4', { textContent: t('settings.form.name') }), name),
         typeRow, rolesGroup, displayGroup, soundGroup, virtualGroup,
       ),
     )

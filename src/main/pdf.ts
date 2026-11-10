@@ -2,6 +2,7 @@ import { BrowserWindow } from 'electron'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { PdfLine } from '../shared/song-import'
+import { t } from '../shared/i18n'
 
 export const MAX_PAGES = 300
 const RENDER_WIDTH = 1920
@@ -30,7 +31,7 @@ export function renderPdfPages(data: Buffer, outDir: string, nameFor: (index: nu
       if (err) reject(err)
       else resolve(files)
     }
-    const timer = setTimeout(() => finish(new Error('Drawing the PDF took too long')), 5 * 60_000)
+    const timer = setTimeout(() => finish(new Error(t('main.pdf.drawTimeout'))), 5 * 60_000)
     ipc.handle('pdf:page', (_e, index: number, png: Uint8Array) => {
       const name = nameFor(index)
       writeFileSync(join(outDir, name), Buffer.from(png))
@@ -38,11 +39,11 @@ export function renderPdfPages(data: Buffer, outDir: string, nameFor: (index: nu
     })
     ipc.on('pdf:progress', (_e, done: number, total: number) => onProgress(done, total))
     ipc.on('pdf:done', (_e, result: { pages: number } | { error: string }) => {
-      if ('error' in result) finish(new Error(`The PDF could not be read: ${result.error}`))
+      if ('error' in result) finish(new Error(t('main.pdf.readFailed', { error: result.error })))
       else finish(null)
     })
     ipc.on('pdf:ready', () => win.webContents.send('pdf:job', { data: new Uint8Array(data), width: RENDER_WIDTH, maxPages: MAX_PAGES }))
-    win.webContents.on('render-process-gone', () => finish(new Error('The PDF renderer crashed')))
+    win.webContents.on('render-process-gone', () => finish(new Error(t('main.pdf.rendererCrashed'))))
     void win.loadFile(join(__dirname, '../renderer/pdf-render.html')).catch((err) => finish(err as Error))
   })
 }
@@ -61,13 +62,13 @@ export function readPdfTexts(files: Buffer[]): Promise<PdfLine[][]> {
       if (err) reject(err)
       else resolve(texts)
     }
-    const timer = setTimeout(() => finish(new Error('Reading the PDFs took too long')), 5 * 60_000)
+    const timer = setTimeout(() => finish(new Error(t('main.pdf.readTimeout'))), 5 * 60_000)
     ipc.on('pdf:done', (_e, result: { texts: PdfLine[][] } | { error: string }) => {
       if ('texts' in result) finish(null, result.texts)
-      else finish(new Error(`The PDFs could not be read: ${result.error}`))
+      else finish(new Error(t('main.pdf.readManyFailed', { error: result.error })))
     })
     ipc.on('pdf:ready', () => win.webContents.send('pdf:job', { texts: files.map((f) => new Uint8Array(f)) }))
-    win.webContents.on('render-process-gone', () => finish(new Error('The PDF reader crashed')))
+    win.webContents.on('render-process-gone', () => finish(new Error(t('main.pdf.readerCrashed'))))
     void win.loadFile(join(__dirname, '../renderer/pdf-render.html')).catch((err) => finish(err as Error))
   })
 }

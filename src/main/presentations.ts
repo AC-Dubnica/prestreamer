@@ -8,6 +8,7 @@ import { PRESENTATION_EXTENSIONS, converterPlan, keynoteScript, libreOfficeArgs,
 import { mediaDir } from './library'
 import { renderPdfPages } from './pdf'
 import { renderPptxSlides } from './pptx'
+import { t } from '../shared/i18n'
 
 export interface ImportedPresentation { title: string; slides: string[] }
 
@@ -19,7 +20,7 @@ function run(cmd: string, args: string[], input?: string): Promise<void> {
     const child = execFile(cmd, args, { timeout: CONVERT_TIMEOUT_MS, windowsHide: true, maxBuffer: 1 << 20 }, (err, _out, stderr) => {
       if (!err) return resolve()
       const e = err as NodeJS.ErrnoException & { killed?: boolean }
-      reject(new Error(e.code === 'ENOENT' ? `${cmd} is not installed` : e.killed ? 'it took too long' : (stderr || e.message).trim().split('\n').slice(-3).join(' ')))
+      reject(new Error(e.code === 'ENOENT' ? t('main.presentations.cmdMissing', { cmd }) : e.killed ? t('main.presentations.tookTooLong') : (stderr || e.message).trim().split('\n').slice(-3).join(' ')))
     })
     if (input !== undefined) child.stdin?.end(input)
   })
@@ -39,7 +40,7 @@ const NAMES: Record<Converter, string> = { builtin: 'PreStreamer', keynote: 'Key
 async function convert(which: Converter, input: string, outDir: string, platform: Platform): Promise<string> {
   const out = join(outDir, `${basename(input, extname(input))}.pdf`)
   if (which === 'keynote' || which === 'powerpoint-mac') {
-    if (!existsSync(MAC_APPS[which])) throw new Error(`${NAMES[which]} is not installed`)
+    if (!existsSync(MAC_APPS[which])) throw new Error(t('main.presentations.appMissing', { name: NAMES[which] }))
     await run('osascript', ['-'], which === 'keynote' ? keynoteScript(input, out) : powerPointMacScript(input, out))
   } else if (which === 'powerpoint-windows') {
     await run('powershell.exe', powerShellArgs(powerPointWindowsScript(input, out)))
@@ -51,7 +52,7 @@ async function convert(which: Converter, input: string, outDir: string, platform
     }
     if (last) throw last
   }
-  if (!existsSync(out) || statSync(out).size === 0) throw new Error(`${NAMES[which]} did not produce a PDF`)
+  if (!existsSync(out) || statSync(out).size === 0) throw new Error(t('main.presentations.noPdf', { name: NAMES[which] }))
   return out
 }
 
@@ -65,7 +66,7 @@ export async function importPresentationFile(path: string, onStatus: (message: s
   const title = basename(path, extname(path))
   const stamp = randomUUID()
   const nameFor = (i: number) => `${stamp}-${String(i + 1).padStart(3, '0')}.png`
-  const drawing = (done: number, total: number) => onStatus(`Drawing slide ${done} of ${total}…`)
+  const drawing = (done: number, total: number) => onStatus(t('main.presentations.drawing', { done, total }))
   const tmp = mkdtempSync(join(tmpdir(), 'prestreamer-deck-'))
   try {
     let pdf: string | null = ext === 'pdf' ? path : null
@@ -77,22 +78,22 @@ export async function importPresentationFile(path: string, onStatus: (message: s
         try {
           if (which === 'builtin') {
             // Read by PreStreamer itself: nothing else is started.
-            onStatus('Reading the presentation…')
+            onStatus(t('main.presentations.reading'))
             const { files } = await renderPptxSlides(readFileSync(path), mediaDir(), nameFor, drawing)
-            if (!files.length) throw new Error('it has no slides')
+            if (!files.length) throw new Error(t('main.presentations.noSlidesIt'))
             return { title, slides: files }
           }
-          onStatus(which === 'keynote' || which === 'powerpoint-mac' ? `Opening in ${NAMES[which]}… (macOS may ask you to allow it)` : `Opening in ${NAMES[which]}…`)
+          onStatus(which === 'keynote' || which === 'powerpoint-mac' ? t('main.presentations.openingMac', { name: NAMES[which] }) : t('main.presentations.opening', { name: NAMES[which] }))
           pdf = await convert(which, path, tmp, platform)
           break
         } catch (e) {
           failures.push(`${NAMES[which]}: ${(e as Error).message}`)
         }
       }
-      if (!pdf) throw new Error(`Could not read this file (${failures.join('; ')}). ${unsupportedMessage(path, platform)}`)
+      if (!pdf) throw new Error(t('main.presentations.couldNotRead', { failures: failures.join('; '), hint: unsupportedMessage(path, platform) }))
     }
     const files = await renderPdfPages(readFileSync(pdf), mediaDir(), nameFor, drawing)
-    if (!files.length) throw new Error('The file has no slides')
+    if (!files.length) throw new Error(t('main.presentations.noSlides'))
     return { title, slides: files }
   } finally {
     rmSync(tmp, { recursive: true, force: true })
@@ -101,9 +102,9 @@ export async function importPresentationFile(path: string, onStatus: (message: s
 
 export async function pickPresentation(parent: BrowserWindow | null, onStatus: (message: string) => void): Promise<ImportedPresentation | null> {
   const options: Electron.OpenDialogOptions = {
-    title: 'Choose a presentation (PowerPoint, Keynote, PDF)',
+    title: t('main.presentations.pickTitle'),
     properties: ['openFile'],
-    filters: [{ name: 'Presentations', extensions: PRESENTATION_EXTENSIONS }],
+    filters: [{ name: t('main.presentations.filterName'), extensions: PRESENTATION_EXTENSIONS }],
   }
   // PRESTREAMER_PRESENTATION_FILE stands in for the file dialog in the end-to-end tests.
   const forced = process.env.PRESTREAMER_PRESENTATION_FILE

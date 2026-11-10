@@ -1,4 +1,5 @@
 import { atemAddress, canSend, idleAtem, sanitizeAtemButtons, sanitizeAtemSettings, switchableInputs, type AtemButtons, type AtemCommand, type AtemSettings, type AtemStatus } from '../shared/atem'
+import { t } from '../shared/i18n'
 
 /** The few parts of atem-connection's `Atem` that are used, so a fake can stand in for it in tests. */
 export interface AtemClient {
@@ -74,7 +75,7 @@ export class AtemController {
   async setAddress(raw: unknown): Promise<AtemStatus> {
     const text = typeof raw === 'string' ? raw.trim() : ''
     const parsed = text === '' ? { address: '' } : sanitizeAtemSettings({ address: text })
-    if (text !== '' && parsed.address === '') return this.update({ message: `"${text}" is not an IP address or host name` })
+    if (text !== '' && parsed.address === '') return this.update({ message: t('main.atem.invalidAddress', { text }) })
     const next: AtemSettings = { address: parsed.address, buttons: this.settings.buttons }
     this.settings = next
     this.saveSettings(next)
@@ -96,13 +97,13 @@ export class AtemController {
       else await c.autoTransition()
       return true
     } catch (err) {
-      this.update({ message: `ATEM command failed: ${(err as Error).message}` })
+      this.update({ message: t('main.atem.commandFailed', { error: (err as Error).message }) })
       return false
     }
   }
 
   private searching(): string {
-    return `No ATEM found at ${atemAddress(this.settings)}`
+    return t('main.atem.notFound', { address: atemAddress(this.settings) })
   }
 
   private clearTimer(): void {
@@ -124,7 +125,7 @@ export class AtemController {
       c = this.makeClient()
     } catch (err) {
       // The library could not even be loaded: stay disabled instead of crashing the app.
-      this.update({ state: 'searching', message: `ATEM control is unavailable: ${(err as Error).message}` })
+      this.update({ state: 'searching', message: t('main.atem.unavailable', { error: (err as Error).message }) })
       return
     }
     this.client = c
@@ -164,7 +165,7 @@ export class AtemController {
       program: me?.programInput ?? 0,
       preview: me?.previewInput ?? 0,
       inTransition: me?.inTransition ?? false,
-      message: `Connected to ${st.info?.productIdentifier ?? 'ATEM'} at ${atemAddress(this.settings)}`,
+      message: t('main.atem.connected', { model: st.info?.productIdentifier ?? 'ATEM', address: atemAddress(this.settings) }),
     })
   }
 

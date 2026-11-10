@@ -1,3 +1,4 @@
+import { t } from './i18n'
 /**
  * Bible model and the pure logic around it: parsing Zefania XML (the format Quelea uses), finding books by name
  * (diacritics-insensitive, so "jan" finds "Ján"), parsing references such as "Ján 3,16-18", and cutting a passage into slides.
@@ -93,7 +94,7 @@ export function parseZefania(xml: string, fallbackName: string): Bible {
     }
   }
   const usable = books.filter((b) => b.chapters.some((c) => c.verses.length))
-  if (!usable.length) throw new Error('No Bible books found. Expected a Zefania XML file.')
+  if (!usable.length) throw new Error(t('bible.error.noBooks'))
   return { id: bibleId(name), name, books: usable }
 }
 

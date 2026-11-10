@@ -1,5 +1,6 @@
 /** How the outgoing stream is encoded. Everything here is validated before it reaches ffmpeg. */
 
+import { t } from './i18n'
 import type { StreamMode } from './types'
 
 export type EncoderChoice = 'auto' | 'libx264' | 'h264_videotoolbox' | 'h264_nvenc' | 'h264_qsv' | 'h264_amf'
@@ -7,8 +8,8 @@ export type X264Preset = 'ultrafast' | 'superfast' | 'veryfast' | 'faster' | 'fa
 
 /** Where the stream goes: out to YouTube, or into a file on this computer. */
 export const STREAM_MODES: { value: StreamMode; label: string }[] = [
-  { value: 'youtube', label: 'Stream to YouTube' },
-  { value: 'file', label: 'Record to a file on this computer' },
+  { value: 'youtube', get label() { return t('stream.mode.youtube') } },
+  { value: 'file', get label() { return t('stream.mode.file') } },
 ]
 
 export interface StreamSettings {
@@ -40,8 +41,8 @@ export const FPS_CHOICES = [24, 25, 30, 50, 60] as const
 export const AUDIO_KBPS_CHOICES = [96, 128, 160, 192, 256] as const
 export const PRESETS: X264Preset[] = ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium']
 export const ENCODER_CHOICES: { value: EncoderChoice; label: string }[] = [
-  { value: 'auto', label: 'Automatic (hardware if it works)' },
-  { value: 'libx264', label: 'Software (x264)' },
+  { value: 'auto', get label() { return t('stream.encoder.auto') } },
+  { value: 'libx264', get label() { return t('stream.encoder.software') } },
   { value: 'h264_videotoolbox', label: 'Apple VideoToolbox (Mac)' },
   { value: 'h264_nvenc', label: 'NVIDIA NVENC' },
   { value: 'h264_qsv', label: 'Intel Quick Sync' },
@@ -105,8 +106,8 @@ export const dataPerHourMB = (videoKbps: number, audioKbps: number): number => M
 export function settingsWarnings(s: StreamSettings): string[] {
   const out: string[] = []
   const range = youtubeRange(s.height, s.fps)
-  if (s.videoKbps < range.min) out.push(`Below YouTube's usual range for ${s.height}p${s.fps} (${range.min}-${range.max} kb/s): the picture may look soft.`)
-  if (s.videoKbps > range.max) out.push(`Above YouTube's usual range for ${s.height}p${s.fps} (${range.min}-${range.max} kb/s): it may not be accepted, and needs more upload speed.`)
-  if (s.fps > 30 && s.encoder === 'libx264' && s.preset !== 'ultrafast' && s.preset !== 'superfast' && s.preset !== 'veryfast') out.push('60 fps with a slow x264 preset is heavy: choose a faster preset or hardware encoding.')
+  if (s.videoKbps < range.min) out.push(t('stream.warn.below', { height: s.height, fps: s.fps, min: range.min, max: range.max }))
+  if (s.videoKbps > range.max) out.push(t('stream.warn.above', { height: s.height, fps: s.fps, min: range.min, max: range.max }))
+  if (s.fps > 30 && s.encoder === 'libx264' && s.preset !== 'ultrafast' && s.preset !== 'superfast' && s.preset !== 'veryfast') out.push(t('stream.warn.slowPreset'))
   return out
 }
