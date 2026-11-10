@@ -1,0 +1,7 @@
+title: PreStreamer guide
+description: How to run a church service with PreStreamer, step by step, with pictures
+theme: jekyll-theme-minimal
+show_downloads: false
+# The repository's other documentation files are not part of the site.
+exclude:
+  - screenshots/icon.png
