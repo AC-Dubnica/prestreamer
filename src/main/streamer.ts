@@ -22,10 +22,10 @@ export interface StreamTarget {
   label: string
 }
 
-export const youtubeTarget = (streamKey: string): StreamTarget => ({
-  url: `${YOUTUBE_INGEST}/${streamKey}`,
+export const youtubeTarget = (streamKey: string, address = YOUTUBE_INGEST): StreamTarget => ({
+  url: `${address}/${streamKey}`,
   format: 'flv',
-  label: 'YouTube (rtmp://a.rtmp.youtube.com)',
+  label: `YouTube (${address.replace(/^rtmps?:\/\//, '').split('/')[0]})`,
 })
 
 export const fileTarget = (path: string): StreamTarget => ({ url: path, format: 'matroska', label: path })

@@ -11,6 +11,7 @@ import { openAnnounceDialog } from './announce-dialog'
 import { createBibleView } from './bible'
 import { createAtemPanel } from './atem-panel'
 import { createDmxPanel } from './dmx-panel'
+import { createYoutubePanel } from './youtube-panel'
 import { askText, confirmDialog } from './dialogs'
 import { createMixerView, type MixerDeps } from './mixer'
 import { createMonitorView } from './monitor'
@@ -816,6 +817,8 @@ const streamUi = {
   button: el<HTMLButtonElement>('button'),
   status: el('div', { className: 'status' }),
   cameraNote: el('div', { className: 'status' }),
+  /** A scheduled YouTube broadcast (start, preview, go live, end), shown instead of the plain Start button while a YouTube account is connected. */
+  youtube: el('div', { className: 'ytpanel' }),
 }
 
 // --- Stream health (what OBS calls the Stats dock) -------------------------------------------------------------------
@@ -958,6 +961,11 @@ const streamScreen = (): ScreenConfig | undefined => {
   return virtuals.find((x) => x.id === streamSettings.screenId) ?? virtuals[0]
 }
 
+const ytPanel = createYoutubePanel(prestreamer, streamUi.youtube, {
+  screenId: () => streamScreen()?.id,
+  ensureMixer: async () => { if (audioStatus.state !== 'running') await setMixerRunning(true) },
+})
+
 /** Everything about the stream is set on one page, Settings → Stream. The Stream section here only starts and stops it. */
 let streamPageChanged: () => void = () => {}
 const streamPageDeps = {
@@ -972,7 +980,11 @@ function buildStream(): void {
   streamUi.button.onclick = async () => {
     const active = streamStatus.state === 'running' || streamStatus.state === 'starting'
     try {
-      if (active) await prestreamer.streamStop()
+      if (active) {
+        // Ending a YouTube stream can end the live broadcast for good, so it is asked first (a recording to a file is not).
+        if (streamSettings.mode === 'youtube' && !(await confirmDialog({ title: t('stream.yt.stopAsk'), message: t('stream.yt.stopMsg'), confirm: t('operator.stream.stop'), danger: true }))) return
+        await prestreamer.streamStop()
+      }
       else {
         const screen = streamScreen()
         if (!screen) throw new Error(t('operator.stream.noScreenError'))
@@ -986,7 +998,7 @@ function buildStream(): void {
     }
   }
   // The controls sit in a panel that looks like the health panel below it.
-  const panel = el('div', { className: 'panelbox' }, streamUi.summary, el('div', { className: 'streamgo' }, streamUi.button), streamUi.audio, streamUi.cameraNote, streamUi.status)
+  const panel = el('div', { className: 'panelbox' }, streamUi.summary, streamUi.youtube, el('div', { className: 'streamgo' }, streamUi.button), streamUi.audio, streamUi.cameraNote, streamUi.status)
   $('stream').replaceChildren(panel)
   $('healthsec').replaceChildren(healthHead, healthRoot)
 }
@@ -999,7 +1011,10 @@ function renderStream(): void {
   const youtube = streamSettings.mode === 'youtube'
   const screen = streamScreen()
   // Say plainly what Start will do: which screen goes where.
-  const missingKey = youtube && !keySaved
+  const managed = youtube && ytPanel.status.signedIn && !ytPanel.status.unavailable // the broadcast is run through the YouTube account
+  streamUi.youtube.hidden = !managed
+  streamUi.button.parentElement!.hidden = managed
+  const missingKey = youtube && !keySaved && !managed
   streamUi.summary.replaceChildren(
     el('div', {}, screen ? t('operator.stream.summaryTo', { name: screen.name, width: streamSettings.width, height: streamSettings.height }) : t('operator.stream.noScreen'), el('b', { textContent: screen ? (youtube ? 'YouTube' : t('operator.stream.toFile')) : '' })),
     ...(missingKey ? [el('div', { className: 'streamwarn', textContent: t('operator.stream.noKey') })] : []),
@@ -1465,6 +1480,8 @@ void prestreamer.streamSettingsGet().then((next) => { streamSettings = next; ren
 buildStream()
 createAtemPanel($('atem'), prestreamer, $('atemsec'))
 createDmxPanel($('dmx'), prestreamer, $('dmxsec'))
+void prestreamer.youtubeGet().then((s) => { ytPanel.update(s); renderStream() })
+prestreamer.onYoutube((s) => { ytPanel.update(s); renderStream() })
 prestreamer.onAppearance((a) => { appearance = a; settingsView.setAppearance(a); renderAll() })
 prestreamer.appearanceGet().then((a) => { appearance = a; settingsView.setAppearance(a); renderAll() })
 prestreamer.onAudio((s) => { audioStatus = s; renderAudio() })

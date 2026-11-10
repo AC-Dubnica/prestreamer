@@ -6,7 +6,10 @@ import { join, resolve } from 'node:path'
 import { AUDIO_IPC, IPC, type PlaybackCommand, MEDIA_SCHEME, type AudioConfig, type MediaKind, type ScreenConfig, type Service, type Slide, type Song, type StreamStartRequest } from '../shared/types'
 import { deleteFromLibrary, listLibrary, pickMedia, pickPictures, serveMedia } from './library'
 import { ListStore, writeJsonAtomic } from './store'
-import { streamKey } from './secrets'
+import { streamKey, youtubeToken } from './secrets'
+import { YoutubeController } from './youtube'
+import { authorize } from './youtube-auth'
+import { noYoutubeClient, sanitizeYoutubeClient, type YoutubeCommand } from '../shared/youtube'
 import { SEED_QUICK_MESSAGES, sanitizeAnnounceRequest, sanitizeQuickMessage, type QuickMessage } from '../shared/announce'
 import { defaultScreens } from '../shared/screens'
 import { SEED_SERVICES, SEED_SONGS } from '../shared/songs'
@@ -71,6 +74,7 @@ let audio: AudioBridge
 let playback: Playback
 let atem: AtemController
 let dmx: DmxController
+let youtube: YoutubeController
 // Interface language: the saved choice, else the computer's. Tests and the dev hooks stay in English unless PRESTREAMER_LANG says otherwise.
 let languageSetting: LanguageSetting = 'auto'
 let language = resolveLanguage('auto', 'en')
@@ -174,7 +178,8 @@ function presentSlide(slide: Slide | null): void {
   playback.load(slide?.video ?? null)
 }
 
-async function startStream(req: StreamStartRequest): Promise<void> {
+/** `ingest`: the address and key YouTube gave for a scheduled broadcast (held in memory only); without it a key typed or saved earlier is used. */
+async function startStream(req: StreamStartRequest, ingest?: { address: string; key: string }): Promise<void> {
   const cfg = screens.getState().screens.find((s) => s.id === req.screenId)
   if (!cfg || cfg.kind !== 'virtual') throw new Error(t('main.stream.needsVirtual'))
   if (!screens.getState().live.includes(cfg.id)) screens.setLive(cfg.id, true)
@@ -182,7 +187,8 @@ async function startStream(req: StreamStartRequest): Promise<void> {
   // PRESTREAMER_RTMP_URL points the stream at a local RTMP server (the end-to-end tests run one), never at YouTube.
   const testServer = process.env.PRESTREAMER_RTMP_URL
   let key = ''
-  if (req.mode === 'youtube' && !testServer) {
+  if (req.mode === 'youtube' && ingest) key = ingest.key
+  else if (req.mode === 'youtube' && !testServer) {
     // A typed key is remembered (encrypted); otherwise the saved one is used.
     const typed = req.streamKey?.trim()
     if (typed) streamKey.save(typed)
@@ -192,7 +198,7 @@ async function startStream(req: StreamStartRequest): Promise<void> {
   const target = testServer
     ? { url: testServer, format: 'flv' as const, label: t('main.stream.localTest') }
     : req.mode === 'youtube'
-      ? youtubeTarget(key)
+      ? youtubeTarget(key, ingest?.address)
       : fileTarget(req.filePath || join(app.getPath('videos'), `PreStreamer ${new Date().toISOString().slice(0, 16).replace('T', ' ').replace(':', '-')}.mkv`))
   // Always the mixer's port: it carries silence while the mixer is off, so the mixer can be started at any time.
   const settings = streamSettings // fixed for the whole stream, whatever is edited meanwhile
@@ -302,6 +308,9 @@ ipcMain.handle(IPC.languageSet, (_e, raw: unknown) => {
 ipcMain.handle(IPC.dmxGet, () => dmx.command({ type: 'rescan' }))
 ipcMain.handle(IPC.dmxSetSettings, (_e, settings: unknown) => dmx.setSettings(settings))
 ipcMain.handle(IPC.dmxCommand, (_e, cmd: DmxCommand) => dmx.command(cmd))
+ipcMain.handle(IPC.youtubeGet, () => youtube.getStatus())
+ipcMain.handle(IPC.youtubeSetClient, (_e, client: unknown) => youtube.setClient(client))
+ipcMain.handle(IPC.youtubeCommand, (_e, cmd: YoutubeCommand) => youtube.command(cmd))
 ipcMain.handle(IPC.streamKeyState, () => streamKey.has())
 ipcMain.handle(IPC.streamKeyForget, () => streamKey.forget())
 ipcMain.handle(IPC.streamKeySet, (_e, key: unknown) => { const k = typeof key === 'string' ? key.trim() : ''; if (k) streamKey.save(k) })
@@ -348,6 +357,7 @@ app.whenReady().then(() => {
   streamer = new Streamer((status) => {
     screens.setStreamLive(status.state === 'running')
     operator?.webContents.send(IPC.streamStatus, status)
+    youtube?.streamChanged()
   })
   audio = new AudioBridge(
     (status) => operator?.webContents.send(AUDIO_IPC.status, status),
@@ -383,6 +393,30 @@ app.whenReady().then(() => {
     dmxSettings,
   )
   dmx.start()
+
+  const youtubePath = join(userData(), 'youtube.json')
+  // PRESTREAMER_YOUTUBE_API=http://127.0.0.1:port points every Google request at a pretend server (scripts/fake-youtube.mjs), with a pretend sign-in.
+  const youtubeFake = process.env.PRESTREAMER_YOUTUBE_API
+  let youtubeClient = noYoutubeClient
+  try { youtubeClient = sanitizeYoutubeClient(JSON.parse(readFileSync(youtubePath, 'utf8'))) } catch { /* nothing saved yet */ }
+  youtube = new YoutubeController(
+    (status) => operator?.webContents.send(IPC.youtubeState, status),
+    {
+      fetch: (url, init) => fetch(youtubeFake ? url.replace(/^https:\/\/(www|oauth2)\.googleapis\.com/, youtubeFake) : url, init),
+      authorize: youtubeFake ? async () => ({ code: 'fake', redirectUri: 'http://127.0.0.1:1', verifier: 'v' }) : authorize,
+      loadRefreshToken: () => youtubeToken.load(),
+      saveRefreshToken: (token) => youtubeToken.save(token),
+      startStream: (ingest, screenId) => startStream({ screenId, mode: 'youtube', audio: 'mixer' }, ingest),
+      stopStream: () => streamer.stop(),
+      isStreaming: () => { const s = streamer.getStatus().state; return s === 'running' || s === 'starting' },
+      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+      now: () => Date.now(),
+      // Tests use a scratch data folder and must never reach Google.
+      unavailable: () => (process.env.PRESTREAMER_USER_DATA && !youtubeFake ? t('stream.yt.testing') : ''),
+    },
+    (next) => { try { writeJsonAtomic(youtubePath, next) } catch { /* a convenience */ } },
+    youtubeClient,
+  )
 
   createOperator()
   restoreScreens()

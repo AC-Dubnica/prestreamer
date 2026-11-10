@@ -30,9 +30,9 @@ export interface ScreenDialogDeps {
   onClose(): void
 }
 
-const SAMPLE: Slide = { label: 'Preview', text: 'Amazing grace, how sweet the sound\nThat saved a wretch like me' }
+const SAMPLE: Slide = { label: 'Preview', text: 'Amazing grace, how sweet the sound\nThat saved a wretch like me', chords: '  G               D\nAmazing grace, how sweet the sound\n  G            Em\nThat saved a wretch like me' }
 
-const SAMPLE_NEXT: Slide = { label: 'Preview', text: 'I once was lost, but now am found\nWas blind, but now I see' }
+const SAMPLE_NEXT: Slide = { label: 'Preview', text: 'I once was lost, but now am found\nWas blind, but now I see', chords: '  G              D\nI once was lost, but now am found\n  G           Em\nWas blind, but now I see' }
 
 /** Unapplied changes handed from one screen dialog to the next (see the picture picker). */
 let carried: { id: string; draft: Partial<Look> } | null = null
@@ -101,6 +101,8 @@ export function openScreenDialog(id: string, deps: ScreenDialogDeps): { refresh(
   box.oninput = () => patch({ textBoxOpacity: Number(box.value) })
   const badge = el<HTMLInputElement>('input', { type: 'checkbox' })
   badge.onchange = () => patch({ liveBadge: badge.checked })
+  const chords = el<HTMLInputElement>('input', { type: 'checkbox' })
+  chords.onchange = () => patch({ showChords: chords.checked })
   const label = el<HTMLInputElement>('input', { type: 'checkbox' })
   label.onchange = () => patch({ showLabel: label.checked })
 
@@ -137,7 +139,7 @@ export function openScreenDialog(id: string, deps: ScreenDialogDeps): { refresh(
       el('div', { className: 'sdbody' },
         previewBox,
         group(t('settings.dialog.background'), swatches, row(t('settings.dialog.pictureOrVideo'), chooseBg, bgNow, clearBg)),
-        group(t('settings.dialog.text'), row(t('settings.dialog.layout'), layout), row(t('settings.dialog.textBox'), box), row(t('settings.dialog.fontSize'), size), row(t('settings.dialog.colour'), color), row(t('settings.dialog.sectionLabel'), label), row(t('settings.dialog.liveBadge'), badge, el('span', { className: 'dim', textContent: t('settings.dialog.liveBadgeHint') }))),
+        group(t('settings.dialog.text'), row(t('settings.dialog.layout'), layout), row(t('settings.dialog.textBox'), box), row(t('settings.dialog.fontSize'), size), row(t('settings.dialog.colour'), color), row(t('settings.dialog.sectionLabel'), label), row(t('settings.dialog.chords'), chords, el('span', { className: 'dim', textContent: t('settings.dialog.chordsHint') })), row(t('settings.dialog.liveBadge'), badge, el('span', { className: 'dim', textContent: t('settings.dialog.liveBadgeHint') }))),
         group(t('settings.dialog.video'), row(t('settings.dialog.slideBackgrounds'), media, el('span', { className: 'dim', textContent: t('settings.dialog.slideBackgroundsHint') })), row(t('settings.dialog.liveSource'), source), row('', detect)),
         group(t('settings.form.sound'), row(t('settings.form.videoSound'), sound, el('span', { className: 'dim', textContent: t('settings.form.videoSoundHint') })), row(t('settings.dialog.output'), output)),
       ),
@@ -172,6 +174,7 @@ export function openScreenDialog(id: string, deps: ScreenDialogDeps): { refresh(
     set(box, String(look.textBoxOpacity))
     label.checked = look.showLabel
     badge.checked = look.liveBadge
+    chords.checked = look.showChords
     pv.setStreamLive(true) // the preview always shows the badge as it will look on air
     media.checked = look.showMedia
     sound.checked = look.videoAudio

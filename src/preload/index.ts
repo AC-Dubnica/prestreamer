@@ -4,6 +4,7 @@ import type { Appearance } from '../shared/appearance'
 import type { AtemButtons, AtemCommand, AtemStatus } from '../shared/atem'
 import type { Lang, LanguageSetting } from '../shared/i18n'
 import type { DmxCommand, DmxSettings, DmxStatus } from '../shared/dmx'
+import type { YoutubeClient, YoutubeCommand, YoutubeStatus } from '../shared/youtube'
 import type { MixerConfig } from '../shared/mixer'
 import type { NativeInput } from '../shared/native-audio'
 import type { StreamSettings } from '../shared/stream-settings'
@@ -102,6 +103,12 @@ const api = {
   },
   dmxSetSettings: (settings: DmxSettings): Promise<DmxStatus> => ipcRenderer.invoke(IPC.dmxSetSettings, settings),
   dmxCommand: (cmd: DmxCommand): Promise<DmxStatus> => ipcRenderer.invoke(IPC.dmxCommand, cmd),
+  youtubeGet: (): Promise<YoutubeStatus> => ipcRenderer.invoke(IPC.youtubeGet),
+  onYoutube: (cb: (s: YoutubeStatus) => void) => {
+    ipcRenderer.on(IPC.youtubeState, (_e, s: YoutubeStatus) => cb(s))
+  },
+  youtubeSetClient: (client: YoutubeClient): Promise<YoutubeStatus> => ipcRenderer.invoke(IPC.youtubeSetClient, client),
+  youtubeCommand: (cmd: YoutubeCommand): Promise<YoutubeStatus> => ipcRenderer.invoke(IPC.youtubeCommand, cmd),
   mediaRemove: (file: string): Promise<boolean> => ipcRenderer.invoke(IPC.mediaRemove, file),
   picturesImport: (): Promise<{ title: string; slides: string[] } | null> => ipcRenderer.invoke(IPC.picturesImport),
   mediaList: (): Promise<import('../shared/types').MediaEntry[]> => ipcRenderer.invoke(IPC.mediaList),

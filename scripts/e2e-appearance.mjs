@@ -100,7 +100,7 @@ if (!line) {
 const r = JSON.parse(line[1])
 const j = JSON.stringify
 const checks = [
-  ['Settings lists its categories down the left (Visuals, Screens, Stream, ATEM) with Visuals open first', JSON.stringify(r.cats.names) === JSON.stringify(['Visuals', 'Screens', 'Stream', 'ATEM']) && JSON.stringify(r.cats.selected) === JSON.stringify(['Visuals']), j(r.cats)],
+  ['Settings lists its categories down the left (Visuals, Screens, Stream, YouTube, ATEM, DMX, Language) with Visuals open first', JSON.stringify(r.cats.names) === JSON.stringify(['Visuals', 'Screens', 'Stream', 'YouTube', 'ATEM', 'DMX', 'Language']) && JSON.stringify(r.cats.selected) === JSON.stringify(['Visuals']), j(r.cats)],
   ['Screens also lists the connected displays (Identify displays), Visuals does not, and the open category is remembered when the tab is left', r.cat2.onScreens.cards && r.cat2.onScreens.noLook && r.cat2.onScreens.selected && r.cat2.onDisplays.identify && r.cat2.onDisplays.noCards && r.cat2.remembered, j(r.cat2)],
   ['Settings has rows for the songs background, the scripture background and the logo, all empty at first; the Logo button is disabled', r.rows.every(Boolean) && r.empty.songBackground === null && r.empty.logo === null && r.logoDisabled === true, j([r.rows, r.empty, r.logoDisabled])],
   ['choosing a picture for songs saves it and shows its thumbnail, scripture untouched', r.songs.set && r.songs.thumb && r.songs.scriptureUntouched, j(r.songs)],

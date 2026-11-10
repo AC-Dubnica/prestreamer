@@ -4,6 +4,10 @@ export default defineMessages(
   {
     'devices.dmx.title': 'DMX lighting',
     'devices.dmx.off': 'DMX lighting is switched off',
+    'devices.dmx.opening': 'Opening {port}…',
+    'devices.dmx.sending': 'Sending DMX through {port}',
+    'devices.dmx.ready': 'Ready. The lights are left alone until you recall a scene or move a fader.',
+    'devices.dmx.addLights': 'Add your lights in Settings → DMX.',
     'devices.dmx.kind.dimmer': 'Dimmer (1 channel)',
     'devices.dmx.kind.rgb': 'RGB light (3 channels: red, green, blue)',
     'devices.dmx.kind.rgbw': 'RGBW light (4 channels: red, green, blue, white)',
@@ -165,6 +169,10 @@ export default defineMessages(
   {
     'devices.dmx.title': 'DMX osvetlenie',
     'devices.dmx.off': 'DMX osvetlenie je vypnuté',
+    'devices.dmx.opening': 'Otvára sa {port}…',
+    'devices.dmx.sending': 'DMX sa odosiela cez {port}',
+    'devices.dmx.ready': 'Pripravené. Svetlá sa nechávajú tak, kým nevyvoláte scénu alebo nepohnete fádrom.',
+    'devices.dmx.addLights': 'Pridajte svoje svetlá v Nastavenia → DMX.',
     'devices.dmx.kind.dimmer': 'Stmievač (1 kanál)',
     'devices.dmx.kind.rgb': 'RGB svetlo (3 kanály: červená, zelená, modrá)',
     'devices.dmx.kind.rgbw': 'RGBW svetlo (4 kanály: červená, zelená, modrá, biela)',

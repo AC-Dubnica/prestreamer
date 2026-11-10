@@ -137,7 +137,7 @@ export default defineMessages(
     'operator.editor.add': 'Add to service',
     'operator.editor.details': 'Song details: number, author, copyright, CCLI, key, capo, notes',
     'operator.editor.title': 'Title',
-    'operator.editor.text': 'Text — [Label] starts a section, a blank line starts a new slide',
+    'operator.editor.text': 'Text — [Label] starts a section, a blank line starts a new slide, a line of chord names above a lyric line is a chord line',
     'operator.editor.slides': 'Slides — the picture button sets a picture or video for one slide',
     'operator.editor.slidesNote': 'Pictures and videos are saved with the song, by slide position: adding or removing a slide above one shifts them.',
 
@@ -376,7 +376,7 @@ export default defineMessages(
     'operator.editor.add': 'Pridať do bohoslužby',
     'operator.editor.details': 'Podrobnosti piesne: číslo, autor, autorské práva, CCLI, tónina, kapodaster, poznámky',
     'operator.editor.title': 'Názov',
-    'operator.editor.text': 'Text — [Názov] začína časť, prázdny riadok začína novú snímku',
+    'operator.editor.text': 'Text — [Názov] začína časť, prázdny riadok začína novú snímku, riadok s akordmi nad textom je riadok akordov',
     'operator.editor.slides': 'Snímky — tlačidlom s obrázkom nastavíte obrázok alebo video pre jednu snímku',
     'operator.editor.slidesNote': 'Obrázky a videá sa ukladajú spolu s piesňou podľa poradia snímky: pridanie alebo odstránenie snímky nad nimi ich posunie.',
 

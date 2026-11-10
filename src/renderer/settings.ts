@@ -5,6 +5,7 @@ import type { DisplayInfo, ScreenConfig, ScreenState } from '../shared/types'
 import { idleAtem, type AtemStatus } from '../shared/atem'
 import { idleDmx } from '../shared/dmx'
 import { createDmxSettings } from './dmx-settings'
+import { createYoutubeSettings } from './youtube-settings'
 import { createLanguageSettings } from './language-settings'
 import { t } from '../shared/i18n'
 import { askText, confirmDialog } from './dialogs'
@@ -52,12 +53,14 @@ export function createSettingsView(root: HTMLElement, api: PrestreamerApi, toggl
   let streamPage: ReturnType<typeof createStreamSettings> | null = null
   const dmxPage = createDmxSettings(api, idleDmx)
   const languagePage = createLanguageSettings(api)
+  const youtubePage = createYoutubeSettings(api)
   let appearanceNote = ''
   // The categories listed down the left side; the one open is remembered.
   const CATEGORIES = [
     { id: 'visuals', label: t('settings.cat.visuals.label'), icon: 'image', hint: t('settings.cat.visuals.hint') },
     { id: 'screens', label: t('settings.cat.screens.label'), icon: 'present', hint: t('settings.cat.screens.hint') },
     { id: 'stream', label: t('settings.cat.stream.label'), icon: 'play', hint: t('settings.cat.stream.hint') },
+    { id: 'youtube', label: 'YouTube', icon: 'youtube', hint: t('settings.cat.youtube.hint') },
     { id: 'atem', label: 'ATEM', icon: 'camera', hint: t('settings.cat.atem.hint') },
     { id: 'dmx', label: 'DMX', icon: 'bulb', hint: t('settings.cat.dmx.hint') },
     { id: 'language', label: t('settings.cat.language.label'), icon: 'globe', hint: t('settings.cat.language.hint') },
@@ -227,13 +230,15 @@ export function createSettingsView(root: HTMLElement, api: PrestreamerApi, toggl
       return b
     }))
     // The connected monitors come first: they are what the screens below are bound to.
-    root.replaceChildren(nav, el('div', { className: 'setbody', role: 'tabpanel' }, ...(category === 'visuals' ? [lookSection()] : category === 'stream' ? [streamSection()] : category === 'atem' ? [atemSection()] : category === 'dmx' ? [dmxPage.root] : category === 'language' ? [languagePage.root] : [displays, screens])))
+    root.replaceChildren(nav, el('div', { className: 'setbody', role: 'tabpanel' }, ...(category === 'visuals' ? [lookSection()] : category === 'stream' ? [streamSection()] : category === 'atem' ? [atemSection()] : category === 'dmx' ? [dmxPage.root] : category === 'youtube' ? [youtubePage.root] : category === 'language' ? [languagePage.root] : [displays, screens])))
   }
 
   void api.atemGet().then((s) => { atemStatus = s; if (category === 'atem' && lastState) render(lastState, true) })
   api.onAtem((s) => { atemStatus = s; if (category === 'atem' && lastState) render(lastState, true) })
   void api.dmxGet().then((s) => dmxPage.update(s))
   api.onDmx((s) => dmxPage.update(s))
+  void api.youtubeGet().then((s) => youtubePage.update(s))
+  api.onYoutube((s) => youtubePage.update(s))
 
   return {
     render,

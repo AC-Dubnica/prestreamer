@@ -111,6 +111,7 @@ export function sanitizeLook(raw: unknown): Look {
     videoMuted: bool(r.videoMuted, d.videoMuted),
     backgroundMedia: sanitizeBackgroundMedia(r.backgroundMedia),
     liveBadge: bool(r.liveBadge, d.liveBadge),
+    showChords: bool(r.showChords, d.showChords),
     source: sanitizeSource(r.source),
   }
 }

@@ -2,6 +2,7 @@ import {
   blendLevels, defaultDmxSettings, dmxNoInterface, fitLevels, idleDmx, renderUniverse, sanitizeDmxSettings, sceneFade,
   type DmxCommand, type DmxSettings, type DmxStatus, type Levels,
 } from '../shared/dmx'
+import { t } from '../shared/i18n'
 
 /** A running output: 512-slot blocks go in, it repeats the newest one at a steady rate. */
 export interface DmxLink {
@@ -208,13 +209,13 @@ export class DmxController {
       return
     }
     this.state = 'starting'
-    this.message = `Opening ${port}…`
+    this.message = t('devices.dmx.opening', { port })
     this.last = ''
     const link = this.deps.open(port, {
       ready: () => {
         if (this.link !== link) return
         this.state = 'sending'
-        this.message = `Sending DMX through ${port}`
+        this.message = t('devices.dmx.sending', { port })
         this.push()
       },
       failed: (message) => {
@@ -254,7 +255,7 @@ export class DmxController {
 
   private idleMessage(): string {
     if (!this.settings.enabled) return idleDmx.message
-    return this.settings.fixtures.length ? 'Ready. The lights are left alone until you recall a scene or move a fader.' : 'Add your lights in Settings → DMX.'
+    return this.settings.fixtures.length ? t('devices.dmx.ready') : t('devices.dmx.addLights')
   }
 
   private push(): void {

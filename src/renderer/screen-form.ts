@@ -42,6 +42,7 @@ export function openScreenForm(api: PrestreamerApi, getState: () => ScreenState,
   // These become the screen's saved name, so they stay English like the default screens' names.
   const suggestion = (): string => {
     if (kind === 'virtual') return `Virtual screen ${count((s) => s.kind === 'virtual')}`
+    if (role.kind === 'own' && chords.checked) return `Chords screen ${count((s) => s.kind !== 'virtual' && !s.mirrorOf && s.look.showChords)}`
     if (kind === 'ndi' && role.kind === 'own') return `NDI screen ${count((s) => s.kind === 'ndi' && !s.mirrorOf && roleOf(s).kind === 'own')}`
     if (kind === 'ndi' && role.kind === 'stage') return `NDI stage monitor ${count((s) => s.kind === 'ndi' && roleOf(s).kind === 'stage')}`
     if (role.kind === 'stage') return `Stage monitor ${count((s) => roleOf(s).kind === 'stage')}`
@@ -91,6 +92,10 @@ export function openScreenForm(api: PrestreamerApi, getState: () => ScreenState,
   display.onchange = () => { displayId = display.value ? Number(display.value) : null; sync() }
   const displayWarn = el('div', { className: 'warn' })
 
+  // Chord lines (typed above the lyrics in a song) are drawn by this screen: a screen for the band, or the stage monitor with chords.
+  const chords = el<HTMLInputElement>('input', { type: 'checkbox', checked: existing?.look.showChords ?? false })
+  chords.onchange = () => { if (!nameTouched) name.value = ''; sync() }
+
   const soundRow = () => row(t('settings.form.videoSound'), sound, el('span', { className: 'dim', textContent: t('settings.form.videoSoundHint') }))
   const sound = el<HTMLInputElement>('input', { type: 'checkbox', checked: existing?.look.videoAudio ?? false })
   const ndiSound = el<HTMLSelectElement>('select', { title: t('settings.form.ndiSoundTitle') })
@@ -118,7 +123,7 @@ export function openScreenForm(api: PrestreamerApi, getState: () => ScreenState,
 
   const row = (label: string, ...controls: HTMLElement[]) => el('label', { className: 'sdrow' }, el('span', { textContent: label }), el('span', { className: 'inl' }, ...controls))
   const typeRow = el('div', { className: 'sdgroup' }, el('h4', { textContent: t('settings.form.type') }), existing ? kindFixed : el('div', { className: 'kindrow' }, ...kinds.map((k) => k.b)))
-  const rolesGroup = el('div', { className: 'sdgroup' }, el('h4', { textContent: t('settings.form.whatItShows') }), row(t('settings.form.shows'), shows), showsHint)
+  const rolesGroup = el('div', { className: 'sdgroup' }, el('h4', { textContent: t('settings.form.whatItShows') }), row(t('settings.form.shows'), shows), row(t('settings.dialog.chords'), chords, el('span', { className: 'dim', textContent: t('settings.dialog.chordsHint') })), showsHint)
   const displayGroup = el('div', { className: 'sdgroup' }, el('h4', { textContent: t('settings.form.displayGroup') }), row(t('settings.form.displayGroup'), display), displayWarn)
   const soundGroup = el('div', { className: 'sdgroup' }, el('h4', { textContent: t('settings.form.sound') }), soundRow())
   const ndiNote = el('div', { className: 'dim sfhint', textContent: t('settings.form.ndiNote') })
@@ -137,6 +142,8 @@ export function openScreenForm(api: PrestreamerApi, getState: () => ScreenState,
     virtualGroup.hidden = kind === 'display'
     ndiNote.hidden = ndiSoundRow.hidden = kind !== 'ndi'
     sound.disabled = role.kind !== 'own'
+    chords.disabled = role.kind === 'mirror' // a mirror shows what the followed screen shows
+    chords.closest('label')!.hidden = role.kind === 'mirror'
     showsHint.textContent = role.kind === 'stage' ? t('settings.form.hint.stage') : role.kind === 'mirror' ? t('settings.form.hint.mirror') : ''
     const bound = state0.displays.find((d) => d.id === displayId)
     displayWarn.hidden = !bound?.primary
@@ -157,11 +164,11 @@ export function openScreenForm(api: PrestreamerApi, getState: () => ScreenState,
       const size = clampSize(Number(w.value), Number(h.value))
       const cur: ScreenConfig = existing ?? (await api.addNdiScreen(finalName, size) as ScreenConfig)
       const patch = rolePatch(role, cur)
-      await api.updateScreen(cur.id, { name: finalName, ...size, ndiSound: ndiSound.value as NdiSound, mirrorOf: patch.mirrorOf, ...(patch.look ? { look: patch.look } : {}) })
+      await api.updateScreen(cur.id, { name: finalName, ...size, ndiSound: ndiSound.value as NdiSound, mirrorOf: patch.mirrorOf, ...(role.kind !== 'mirror' ? { look: { ...(patch.look ?? {}), showChords: chords.checked } as Look } : patch.look ? { look: patch.look } : {}) })
     } else {
       const cur: ScreenConfig = existing ?? (await api.addDisplayScreen(finalName, {}) as ScreenConfig)
       const patch = rolePatch(role, cur)
-      const look = { ...(patch.look ?? cur.look), ...(role.kind === 'own' ? { videoAudio: sound.checked } : {}) } as Look
+      const look = { ...(patch.look ?? cur.look), ...(role.kind === 'own' ? { videoAudio: sound.checked } : {}), ...(role.kind !== 'mirror' ? { showChords: chords.checked } : {}) } as Look
       await api.updateScreen(cur.id, { name: finalName, displayId, mirrorOf: patch.mirrorOf, look })
     }
     close()

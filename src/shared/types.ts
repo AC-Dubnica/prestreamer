@@ -66,6 +66,8 @@ export interface Look {
   backgroundMedia: MediaBackground | null
   /** Show a "LIVE" badge on this screen while the stream is running, so the room knows the service is being broadcast. */
   liveBadge: boolean
+  /** Show the chords above the lyrics (for songs whose text has chord lines), e.g. on the band's monitor. */
+  showChords: boolean
   source: VideoSource
 }
 
@@ -84,6 +86,8 @@ export type Background =
 export interface Slide {
   label: string
   text: string
+  /** The same slide with its chord lines (chord names above the lyrics), when the song has any; shown by screens that have `showChords` on. */
+  chords?: string
   background?: Background | null
   /** Schedule item this slide belongs to (so identical text in two items stays distinguishable). */
   itemId?: string
@@ -257,6 +261,7 @@ export const defaultLook: Look = {
   videoMuted: false,
   backgroundMedia: null,
   liveBadge: false,
+  showChords: false,
   source: { type: 'none' },
 }
 
@@ -336,6 +341,10 @@ export const IPC = {
   dmxState: 'dmx:state',
   dmxSetSettings: 'dmx:set-settings',
   dmxCommand: 'dmx:command',
+  youtubeGet: 'youtube:get',
+  youtubeState: 'youtube:state',
+  youtubeSetClient: 'youtube:set-client',
+  youtubeCommand: 'youtube:command',
 } as const
 
 export interface OutputPayload {

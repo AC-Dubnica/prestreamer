@@ -34,6 +34,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
  *   PRESTREAMER_ATEM=1             look for an ATEM even with PRESTREAMER_USER_DATA set (tests normally send no network packets)
  *   PRESTREAMER_LANG=en|sk         the interface language (with PRESTREAMER_USER_DATA set the tests run in English otherwise)
  *   PRESTREAMER_DMX_FAKE=file      runs DMX output into a file (its latest frame: start code, then 512 slots) instead of a USB interface
+ *   PRESTREAMER_YOUTUBE_API=url   sends every Google/YouTube request to a pretend server (scripts/fake-youtube.mjs); the sign-in is pretended too
  *   PRESTREAMER_NO_AUTO_OPEN=1     with SNAPSHOT/EVAL: do not open the screens or show a slide first (to test how the app opens)
  *   PRESTREAMER_STREAMTEST=out.mkv stream the test pattern to a file (PRESTREAMER_SECONDS, PRESTREAMER_AUDIO=test|multitest,
  *                                  PRESTREAMER_AUDIO_STOP=seconds, PRESTREAMER_LAYOUT=lower-third)

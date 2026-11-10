@@ -1,5 +1,6 @@
 import type { Background, Service, Slide, Song } from './types'
 import { t } from './i18n'
+import { isChordLine } from './song-import'
 
 /**
  * Song text format:
@@ -12,6 +13,7 @@ import { t } from './i18n'
  *   [Chorus]
  *   ...
  * A blank line starts a new slide; text before any [Label] gets the label "Slide".
+ * Lines of chord names only (G  Em  C/G) may stand above the lyrics: `text` leaves them out, `chords` keeps them.
  */
 export function parseSong(song: Song): Slide[] {
   const slides: Slide[] = []
@@ -19,8 +21,10 @@ export function parseSong(song: Song): Slide[] {
   let lines: string[] = []
 
   const flush = () => {
-    const text = lines.join('\n').trim()
-    if (text) slides.push({ label, text, background: song.slideBackgrounds?.[slides.length] ?? song.background })
+    const lyrics = lines.filter((l) => !isChordLine(l))
+    const text = lyrics.join('\n').trim()
+    const withChords = lyrics.length < lines.length ? lines.join('\n').replace(/\s+$/, '') : undefined
+    if (text) slides.push({ label, text, ...(withChords ? { chords: withChords } : {}), background: song.slideBackgrounds?.[slides.length] ?? song.background })
     lines = []
   }
 

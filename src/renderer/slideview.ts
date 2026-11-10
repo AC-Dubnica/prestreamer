@@ -28,6 +28,7 @@ export class SlideView {
   private pictureFile = ''
   private readonly announceLayer = document.createElement('div')
   private readonly liveBadge = document.createElement('div')
+  private showChords = false
   private readonly stageClock = document.createElement('div')
   private readonly stageNext = document.createElement('div')
   private clockTimer: ReturnType<typeof setInterval> | null = null
@@ -128,7 +129,11 @@ export class SlideView {
     })
     this.label.textContent = (look.showLabel || stage) && slide ? slide.label : ''
     // The stage monitor never plays the video: it says what is on and shows the clock.
-    this.text.textContent = stage && slide?.video ? `▶ ${slide.video.title}` : stage && slide?.picture ? slide.label : slide?.text ?? ''
+    const chordy = look.showChords && !!slide?.chords
+    this.showChords = look.showChords
+    this.text.style.fontFamily = chordy ? 'ui-monospace, Menlo, Consolas, monospace' : ''
+    this.text.style.textAlign = chordy ? 'left' : ''
+    this.text.textContent = stage && slide?.video ? `▶ ${slide.video.title}` : stage && slide?.picture ? slide.label : (chordy ? slide?.chords : slide?.text) ?? ''
     this.hasText = this.text.textContent.trim() !== ''
     this.syncContent()
     const live = opts.liveVideo !== false
@@ -182,7 +187,7 @@ export class SlideView {
     tag.textContent = t('devices.stage.next')
     Object.assign(tag.style, { fontSize: '.6em', letterSpacing: '.12em', fontWeight: '800', opacity: '.6', marginBottom: '.2em' })
     const body = document.createElement('div')
-    body.textContent = this.nextSlide ? (this.nextSlide.video ? `▶ ${this.nextSlide.video.title}` : this.nextSlide.picture ? this.nextSlide.label : this.nextSlide.text) : t('devices.stage.end')
+    body.textContent = this.nextSlide ? (this.nextSlide.video ? `▶ ${this.nextSlide.video.title}` : this.nextSlide.picture ? this.nextSlide.label : (this.showChords && this.nextSlide.chords) || this.nextSlide.text) : t('devices.stage.end')
     if (!this.nextSlide) body.style.opacity = '.5'
     this.stageNext.replaceChildren(tag, body)
     Object.assign(this.stageNext.style, { left: `${W * 0.04}px`, right: `${W * 0.04}px`, bottom: `${H * 0.03}px`, height: `${H * 0.22}px`, fontSize: `${H * 0.05}px` })

@@ -25,3 +25,23 @@ export const streamKey = {
     rmSync(file(), { force: true })
   },
 }
+
+const tokenFile = () => join(app.getPath('userData'), 'youtube-auth.bin')
+
+/** The YouTube login (a refresh token) is encrypted the same way. It only lets this app manage broadcasts and is revoked by signing out. */
+export const youtubeToken = {
+  load(): string | null {
+    if (!existsSync(tokenFile()) || !safeStorage.isEncryptionAvailable()) return null
+    try {
+      return safeStorage.decryptString(readFileSync(tokenFile()))
+    } catch {
+      return null
+    }
+  },
+  save(token: string | null): void {
+    if (token === null) return rmSync(tokenFile(), { force: true })
+    if (!safeStorage.isEncryptionAvailable()) throw new Error(t('main.secrets.unavailable'))
+    mkdirSync(app.getPath('userData'), { recursive: true })
+    writeFileSync(tokenFile(), safeStorage.encryptString(token), { mode: 0o600 })
+  },
+}

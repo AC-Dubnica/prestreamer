@@ -39,7 +39,7 @@ final class Capture {
 func property<T>(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector, scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal, _ value: inout T) -> OSStatus {
   var address = AudioObjectPropertyAddress(mSelector: selector, mScope: scope, mElement: kAudioObjectPropertyElementMain)
   var size = UInt32(MemoryLayout<T>.size)
-  return AudioObjectGetPropertyData(object, &address, 0, nil, &size, &value)
+  return withUnsafeMutablePointer(to: &value) { AudioObjectGetPropertyData(object, &address, 0, nil, &size, $0) }
 }
 
 func inputChannels(_ device: AudioObjectID) -> Int {
